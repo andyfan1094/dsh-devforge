@@ -1,0 +1,6 @@
+# dsh-devforge bundle registration for the web profile.
+# Host half (exports ".") runs engine + /api/dsh-devforge routes + agent tools;
+# browser half (exports "./client") mounts the SSH-style panel + sidebar entry.
+- insert:
+    - id: devforge
+      name: 'dsh-devforge'

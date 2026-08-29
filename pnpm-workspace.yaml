@@ -1,0 +1,23 @@
+packages:
+  - .
+# 仅批准 SSH 传输核心的原生构建；cpu-features 为可选优化，明确保持禁用。
+allowBuilds:
+  cpu-features: false
+  # protobufjs（飞书 SDK 传递依赖）无原生模块，构建脚本仅可选优化，禁用。
+  protobufjs: false
+  ssh2: true
+
+# Keep DSH runtime packages as process singletons. The profile loads this
+# project through link:, so duplicate core copies break Symbol-based services.
+overrides:
+  '@deepseek-ai/cordis': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis
+  '@deepseek-ai/dsh-agent': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent
+  '@deepseek-ai/dsh-client-connection': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection
+  '@deepseek-ai/dsh-client-locale': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-locale
+  '@deepseek-ai/dsh-client-runtime': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-runtime
+  '@deepseek-ai/dsh-client-ui-settings': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-settings
+  '@deepseek-ai/dsh-host-webserver': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-host-webserver
+  '@deepseek-ai/dsh-llm': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm
+  '@deepseek-ai/dsh-settings': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-settings
+  '@deepseek-ai/dsh-system-prompt': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-system-prompt
+  '@deepseek-ai/dsh-tools': link:C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools
