@@ -4,6 +4,7 @@
  */
 
 import { DEVFORGE_API, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
+import type { CamofoxStatus } from '../camofox/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
@@ -95,6 +96,18 @@ export class DevforgeApi {
   async restartDsh(): Promise<{ scheduled: boolean; message: string }> {
     const data = await readJson<{ result: { scheduled: boolean; message: string } }>(await fetch(DEVFORGE_API.restart, { method: 'POST' }))
     return data.result
+  }
+
+  /** 读取 Camofox 浏览器脱敏状态。 */
+  async getCamofoxStatus(): Promise<CamofoxStatus> {
+    const data = await readJson<{ status: CamofoxStatus }>(await fetch(DEVFORGE_API.camofoxStatus))
+    return data.status
+  }
+
+  /** 仅由服务工厂面板请求本机 noVNC 入口，Agent 工具不会调用此方法。 */
+  async openCamofoxVisual(): Promise<string> {
+    const data = await readJson<{ url: string }>(await fetch(DEVFORGE_API.camofoxVisual, { method: 'POST' }))
+    return data.url
   }
 
   /** GitHub 账号摘要；Host 只返回 tokenConfigured，不返回 Token 原文。 */

@@ -21,6 +21,10 @@ export const DEVFORGE_API = {
   restart: '/api/dsh-devforge/restart',
   /** 远程运维统一主机摘要（SSH / WinRM 只读桥接）。 */
   remoteHosts: '/api/dsh-devforge/remote/hosts',
+  /** Camofox 运营浏览器脱敏状态。 */
+  camofoxStatus: '/api/dsh-devforge/camofox/status',
+  /** 仅供服务工厂面板打开的本机 noVNC 地址。 */
+  camofoxVisual: '/api/dsh-devforge/camofox/visual',
 } as const
 
 /** 远程运维 transport。 */

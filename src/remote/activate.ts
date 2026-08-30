@@ -15,6 +15,8 @@ import { SshEngine } from './ssh/engine.ts'
 import { makeRoutes as makeSshRoutes } from './ssh/routes.ts'
 import { HostStore as SshHostStore } from './ssh/store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './ssh/tools.ts'
+import { activateCamofox, type CamofoxActivation } from '../camofox/activate.ts'
+import type { CamofoxCapabilityConfig } from '../camofox/service.ts'
 import { WinRmEngine } from './winrm/engine.ts'
 import { makeRoutes as makeWinrmRoutes } from './winrm/routes.ts'
 import { HostStore as WinrmHostStore } from './winrm/store.ts'
@@ -24,6 +26,8 @@ import { winrmClusterTool, winrmDownloadTool, winrmExecTool, winrmListTool, winr
 export interface RemoteConfig {
   /** 总开关：true 时 devforge 注册 ssh_* / winrm_* 工具与旧路由前缀。 */
   enabled: boolean
+  /** Camofox 浏览器能力复用同一 SSH 连接池，确保热更新能统一撤销隧道。 */
+  camofox?: CamofoxCapabilityConfig
 }
 
 /** 一次激活产生的全部 disposer（路由/upgrade/工具）。 */
@@ -33,7 +37,7 @@ export interface RemoteActivation {
 
 /** 激活远程运维能力；调用方负责在 sync() 卸载时调用 dispose()。 */
 export function activateRemote(ctx: Context, config: RemoteConfig): RemoteActivation {
-  if (!config.enabled) return { dispose() {} }
+  if (!config.enabled && config.camofox?.enabled !== true) return { dispose() {} }
 
   // SSH：store 直接读旧 ~/.dsh/dsh-ssh.json（凭据零迁移），引擎用持久连接池。
   const sshStore = new SshHostStore()
@@ -66,26 +70,34 @@ export function activateRemote(ctx: Context, config: RemoteConfig): RemoteActiva
   disposers.push(() => { sshEngine.dispose() })
   disposers.push(() => { winrmEngine.dispose() })
 
-  const routeGroup = ctx.effect(() => {
-    const registered = [...ssh.routes, ...winrm.routes].map((route) => ctx.webServer.register(route))
-    const sshUpgrade = ctx.webServer.registerUpgrade(ssh.upgrade)
-    const winrmUpgrade = ctx.webServer.registerUpgrade(winrm.upgrade)
-    return () => {
-      for (const dispose of registered) dispose()
-      sshUpgrade()
-      winrmUpgrade()
-    }
-  }, 'dsh-devforge: remote routes')
-  disposers.push(routeGroup)
+  if (config.enabled) {
+    const routeGroup = ctx.effect(() => {
+      const registered = [...ssh.routes, ...winrm.routes].map((route) => ctx.webServer.register(route))
+      const sshUpgrade = ctx.webServer.registerUpgrade(ssh.upgrade)
+      const winrmUpgrade = ctx.webServer.registerUpgrade(winrm.upgrade)
+      return () => {
+        for (const dispose of registered) dispose()
+        sshUpgrade()
+        winrmUpgrade()
+      }
+    }, 'dsh-devforge: remote routes')
+    disposers.push(routeGroup)
 
-  const toolGroup = ctx.effect(() => {
-    const registered = [...sshTools, ...winrmTools].map((tool) => ctx.tools.register(tool))
-    return () => { for (const dispose of registered) dispose() }
-  }, 'dsh-devforge: remote tools')
-  disposers.push(toolGroup)
+    const toolGroup = ctx.effect(() => {
+      const registered = [...sshTools, ...winrmTools].map((tool) => ctx.tools.register(tool))
+      return () => { for (const dispose of registered) dispose() }
+    }, 'dsh-devforge: remote tools')
+    disposers.push(toolGroup)
+  }
+
+  // 浏览器能力必须先撤销 noVNC 隧道，再释放 SSH 引擎。
+  const camofox: CamofoxActivation | undefined = config.camofox?.enabled === true
+    ? activateCamofox(ctx, sshEngine, config.camofox)
+    : undefined
 
   return {
     dispose(): void {
+      try { camofox?.dispose() } catch { /* 浏览器清理失败不阻断远程资源释放 */ }
       for (const dispose of disposers.splice(0)) {
         try { dispose() } catch { /* 卸载期单点失败不阻断其余清理 */ }
       }

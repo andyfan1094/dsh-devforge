@@ -58,6 +58,8 @@ export interface Config {
   announceToAgent?: boolean
   /** 远程运维（SSH/WinRM 兼容接管）子配置。 */
   remote?: RemoteConfig
+  /** Camofox 持久化运营浏览器子配置。 */
+  camofox?: { enabled?: boolean; alias?: string; userId?: string; sessionKey?: string; timeoutMs?: number }
   /** GitHub 能力（兼容接管）子配置。 */
   github?: GithubCapabilityConfig
   /** 飞书能力（兼容接管）子配置；bootstrap 字段与旧 dsh-feishu patch 行一致。 */
@@ -76,6 +78,13 @@ export const Config = z.object({
   remote: z.object({
     enabled: z.boolean().default(true).description('远程运维（SSH/WinRM 兼容接管）开关'),
   }).description('远程运维配置'),
+  camofox: z.object({
+    enabled: z.boolean().default(false).description('Camofox 持久化运营浏览器开关'),
+    alias: z.string().default('my').description('固定运营服务器别名'),
+    userId: z.string().default('social-main').description('固定持久化运营档案'),
+    sessionKey: z.string().default('default').description('固定标签分组'),
+    timeoutMs: z.number().min(1000).max(60000).default(45000).description('浏览器远程请求超时（毫秒）'),
+  }).description('Camofox 浏览器配置（不包含端口或任何凭据）'),
   github: z.object({
     enabled: z.boolean().default(true).description('GitHub 能力（兼容接管）开关'),
   }).description('GitHub 配置'),
@@ -115,6 +124,13 @@ export function apply(ctx: Context, config?: Config): void {
       enabled: value.enabled ?? DEFAULTS.enabled,
       announceToAgent: value.announceToAgent ?? DEFAULTS.announceToAgent,
       remote: { enabled: value.remote?.enabled ?? false },
+      camofox: {
+        enabled: value.camofox?.enabled ?? false,
+        alias: value.camofox?.alias ?? 'my',
+        userId: value.camofox?.userId ?? 'social-main',
+        sessionKey: value.camofox?.sessionKey ?? 'default',
+        timeoutMs: value.camofox?.timeoutMs ?? 45000,
+      },
       github: { enabled: value.github?.enabled ?? false },
       feishu: { enabled: value.feishu?.enabled ?? false },
       zhipu: {
@@ -170,7 +186,8 @@ export function apply(ctx: Context, config?: Config): void {
     }, 'dsh-devforge: tools')
     // 远程运维兼容接管：注册 ssh_*/winrm_* 工具与 /api/dsh-ssh、/api/dsh-winrm 前缀。
     // 切换窗口期与旧插件互斥（同一路由前缀/工具名重复注册会冲突），切换前保持关闭。
-    disposeRemote = activateRemote(ctx, resolve().remote ?? { enabled: false }).dispose
+    // Camofox 与远程运维复用同一 SSH 引擎，避免重复连接和失控隧道。
+    disposeRemote = activateRemote(ctx, { ...(value.remote ?? { enabled: false }), camofox: value.camofox as NonNullable<Config['camofox']> & { enabled: boolean; alias: string; userId: string; sessionKey: string; timeoutMs: number } }).dispose
     // GitHub 兼容接管：注册 github_* 工具与 /api/dsh-github 前缀；与旧插件互斥。
     disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
@@ -184,12 +201,19 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { remote?: { enabled?: boolean | null }; github?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
+        const value = raw() as Config & { remote?: { enabled?: boolean | null }; camofox?: { enabled?: boolean | null; alias?: string | null; userId?: string | null; sessionKey?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
           // 子能力开关：未配置一律 false（安全默认），与 resolve() 兜底一致。
           remote: { enabled: value.remote?.enabled === true },
+          camofox: {
+            enabled: value.camofox?.enabled === true,
+            alias: value.camofox?.alias ?? 'my',
+            userId: value.camofox?.userId ?? 'social-main',
+            sessionKey: value.camofox?.sessionKey ?? 'default',
+            timeoutMs: value.camofox?.timeoutMs ?? 45000,
+          },
           github: { enabled: value.github?.enabled === true },
           feishu: { enabled: value.feishu?.enabled === true },
           zhipu: {
