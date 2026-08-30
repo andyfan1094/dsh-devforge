@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from 'schemastery'
-import type {} from '@deepseek-ai/dsh-credentials'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -34,6 +34,7 @@ import type { CamofoxStatus } from './camofox/protocol.ts'
 import type { CamofoxService } from './camofox/service.ts'
 import { makeZhipuRoutes } from './zhipu/routes.ts'
 import { ZhipuCodingPlanService, type ZhipuCapabilityConfig } from './zhipu/service.ts'
+import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
@@ -68,7 +69,7 @@ export interface Config {
   /** 飞书能力（兼容接管）子配置；bootstrap 字段与旧 dsh-feishu patch 行一致。 */
   feishu?: FeishuCapabilityConfig
   /** 智谱 Coding Plan 官方模型与额度能力。 */
-  zhipu?: ZhipuCapabilityConfig
+  zhipu?: ZhipuCapabilityConfig & { mcpTools?: boolean }
 }
 
 /** 配置默认值。 */
@@ -98,6 +99,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('智谱 Coding Plan 模型与官方额度看板'),
     apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
+    mcpTools: z.boolean().default(true).description('官方 MCP 工具：联网搜索/网页读取/Zread'),
   }).description('智谱 Coding Plan 配置'),
 }).description('dsh-devforge 配置')
 
@@ -111,6 +113,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
+  '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
 ].join('\n')
 
 /** 插件挂载（mountOnce 防重复挂载，dsh-winrm 同款）。 */
@@ -140,6 +143,7 @@ export function apply(ctx: Context, config?: Config): void {
         enabled: value.zhipu?.enabled ?? true,
         apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
         timeoutMs: value.zhipu?.timeoutMs ?? 15000,
+        mcpTools: value.zhipu?.mcpTools !== false,
       },
     }
   }
@@ -155,7 +159,7 @@ export function apply(ctx: Context, config?: Config): void {
   ctx.effect(() => () => { engine.dispose() }, 'dsh-devforge: engine')
 
   // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
-  const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000 }
+  const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
   const DISABLED_CAMOFOX: CamofoxStatus = { configured: false, reachable: false, browserRunning: false, activeTabs: 0, activeSessions: 0, visualReady: false, message: '浏览器能力未启用，请在服务工厂设置中开启' }
   let camofoxApi: Pick<CamofoxService, 'status' | 'visualUrl'> | undefined
   const camofoxApiHolder = {
@@ -181,6 +185,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeRemote: (() => void) | undefined
   let disposeGithub: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
+  let disposeZhipuMcp: (() => void) | undefined
 
   const sync = (): void => {
     // 先卸旧（热更新安全）
@@ -190,6 +195,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeRemote?.(); disposeRemote = undefined
     disposeGithub?.(); disposeGithub = undefined
     disposeFeishu?.(); disposeFeishu = undefined
+    disposeZhipuMcp?.(); disposeZhipuMcp = undefined
     // 浏览器能力随远程激活层一起重建，先断开常驻路由的句柄。
     camofoxApi = undefined
     const value = resolve()
@@ -210,6 +216,13 @@ export function apply(ctx: Context, config?: Config): void {
     // Camofox 与远程运维复用同一 SSH 引擎，避免重复连接和失控隧道。
     // capability 开关同步到常驻路由的活配置；智谱凭据按请求解析，不缓存 Key。
     Object.assign(zhipuConfig, value.zhipu)
+    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
+    disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
+      const resolved = await ctx.credentials.resolve(credentialRef(value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY'))
+      const apiKeyValue = resolved?.value.trim() ?? ''
+      if (apiKeyValue === '') throw new Error('尚未配置智谱 Coding Plan API Key，无法调用官方 MCP 工具。')
+      return apiKeyValue
+    }).dispose
     const remoteActivation = activateRemote(ctx, { ...(value.remote ?? { enabled: false }), camofox: value.camofox as NonNullable<Config['camofox']> & { enabled: boolean; alias: string; userId: string; sessionKey: string; timeoutMs: number } })
     camofoxApi = remoteActivation.camofox
     disposeRemote = remoteActivation.dispose
@@ -243,6 +256,7 @@ export function apply(ctx: Context, config?: Config): void {
             enabled: value.zhipu?.enabled !== false,
             apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
             timeoutMs: value.zhipu?.timeoutMs ?? 15000,
+            mcpTools: value.zhipu?.mcpTools !== false,
           },
         }
       }

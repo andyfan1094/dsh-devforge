@@ -28,6 +28,8 @@ export interface ZhipuCapabilityConfig {
   enabled: boolean
   apiKeyEnv: string
   timeoutMs: number
+  /** 官方 MCP 工具开关。 */
+  mcpTools: boolean
 }
 
 /** 可直接呈现给面板的分类错误；内容不得包含请求头或 Key。 */
@@ -66,6 +68,7 @@ export class ZhipuCodingPlanService {
       credentialWritable: credential.writable,
       providerConfigured: provider !== undefined,
       models: MODELS.map((model) => ({ id: model.id, configured: configuredIds.has(model.id) })),
+      mcpTools: this.config.mcpTools,
     }
   }
 

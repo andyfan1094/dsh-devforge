@@ -49,6 +49,14 @@ export interface ZhipuDashboard {
   warnings: string[]
 }
 
+/** 官方 MCP 工具描述（tools/list 规整后）。 */
+export interface ZhipuMcpToolDescriptor {
+  /** 官方原始工具名。 */
+  name: string
+  /** 官方工具说明。 */
+  description: string
+}
+
 /** 模型路由和凭据的脱敏状态。 */
 export interface ZhipuStatus {
   enabled: boolean
@@ -56,4 +64,6 @@ export interface ZhipuStatus {
   credentialWritable: boolean
   providerConfigured: boolean
   models: Array<{ id: 'glm-5.3' | 'glm-5.3-flash'; configured: boolean }>
+  /** 官方 MCP 工具（联网搜索/网页读取/Zread）是否启用。 */
+  mcpTools: boolean
 }
