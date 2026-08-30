@@ -70,5 +70,23 @@ export function makeMiniMaxRoutes(service: MiniMaxService): WebRoute[] {
         try { writeJson(res, 200, { ok: true, status: await service.ensureModels() }) } catch (error) { writeError(res, error) }
       },
     },
+    {
+      kind: 'exact',
+      path: MINIMAX_API.dashboard,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const controller = new AbortController()
+        const abort = (): void => controller.abort()
+        req.once('aborted', abort)
+        res.once('close', abort)
+        try { writeJson(res, 200, { ok: true, dashboard: await service.dashboard(controller.signal) }) } catch (error) {
+          if (!controller.signal.aborted && !res.writableEnded) writeError(res, error)
+        } finally {
+          req.off('aborted', abort)
+          res.off('close', abort)
+        }
+      },
+    },
   ]
 }

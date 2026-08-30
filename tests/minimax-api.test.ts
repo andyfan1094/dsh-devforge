@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describeBaseResp, formatSearchResult, MiniMaxApiClient, MiniMaxApiError, parseSearchResult, safeApiError } from '../src/minimax/api-client.ts'
+import { describeBaseResp, formatSearchResult, MiniMaxApiClient, MiniMaxApiError, parseRemainsPayload, parseSearchResult, safeApiError } from '../src/minimax/api-client.ts'
 import { ImageInputError, sniffImageMime, toImageDataUrl } from '../src/minimax/image-input.ts'
 import { makeMiniMaxToolDefinitions } from '../src/minimax/tools.ts'
 import { mergeMiniMaxProvider, MINIMAX_MODELS } from '../src/minimax/service.ts'
@@ -164,4 +164,66 @@ test('工具输出脱敏：错误消息不包含 Key', () => {
   const message = safeApiError(new Error('Authorization: Bearer sk-secret-token failed'))
   assert.doesNotMatch(message, /sk-secret-token/)
   assert.match(message, /Bearer \[redacted\]/)
+})
+
+test('用量规整：5h + 周双窗口与套餐名抽取', () => {
+  const fixedNow = 1788100000000
+  const dashboard = parseRemainsPayload({
+    current_subscribe_title: 'Token Plan Plus',
+    model_remains: [
+      {
+        model_name: 'general',
+        current_interval_remaining_percent: 97,
+        current_weekly_remaining_percent: 99,
+        remains_time: 15370,
+        weekly_remains_time: 602170,
+        end_time: 1788123600000,
+        weekly_end_time: 1788710400000,
+        current_interval_quota: 5000,
+        current_weekly_quota: 100000,
+      },
+      {
+        model_name: 'video',
+        current_interval_remaining_percent: 100,
+        current_weekly_remaining_percent: 100,
+        current_interval_status: 3,
+        current_weekly_status: 3,
+      },
+    ],
+    base_resp: { status_code: 0, status_msg: 'success' },
+  }, fixedNow)
+  assert.equal(dashboard.planName, 'Token Plan Plus')
+  assert.equal(dashboard.fetchedAt, fixedNow)
+  assert.deepEqual(dashboard.warnings, [])
+  const general = dashboard.models.find((m) => m.name === 'general')
+  assert.equal(general?.included, true)
+  assert.equal(general?.intervalRemainingPercent, 97)
+  assert.equal(general?.weeklyRemainingPercent, 99)
+  assert.equal(general?.intervalEndAt, 1788123600000)
+  assert.equal(general?.weeklyEndAt, 1788710400000)
+  const video = dashboard.models.find((m) => m.name === 'video')
+  assert.equal(video?.included, false)
+})
+
+test('用量规整：usage_count/total_count 推导百分比', () => {
+  const dashboard = parseRemainsPayload({
+    model_remains: [{
+      model_name: 'general',
+      current_interval_usage_count: 3,
+      current_interval_total_count: 10,
+      current_weekly_usage_count: 7,
+      current_weekly_total_count: 100,
+    }],
+    base_resp: { status_code: 0 },
+  }, 1788100000000)
+  const m = dashboard.models[0]
+  assert.equal(m.intervalRemainingPercent, 70)
+  assert.equal(m.weeklyRemainingPercent, 93)
+})
+
+test('用量规整：base_resp 鉴权失败映射为 Key 类型错误', () => {
+  assert.throws(
+    () => parseRemainsPayload({ base_resp: { status_code: 1004, status_msg: 'login fail: please carry secret key' } }),
+    (error: unknown) => error instanceof MiniMaxApiError && error.status === 401 && /订阅 Key/.test((error as Error).message),
+  )
 })

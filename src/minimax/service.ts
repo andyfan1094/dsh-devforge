@@ -2,7 +2,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import type { MiniMaxStatus } from './protocol.ts'
+import { MiniMaxApiClient } from './api-client.ts'
+import type { MiniMaxDashboard, MiniMaxStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 
@@ -83,6 +84,12 @@ export class MiniMaxService {
     }
   }
 
+  /** 查询官方订阅用量（5h + 周双窗口，一次调用返回）。 */
+  async dashboard(signal?: AbortSignal): Promise<MiniMaxDashboard> {
+    const client = new MiniMaxApiClient(() => this.resolveApiKey(), this.config.timeoutMs)
+    return await client.fetchRemains({ signal })
+  }
+
   /** 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。 */
   async ensureModels(): Promise<MiniMaxStatus> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -112,5 +119,13 @@ export class MiniMaxService {
   private reference(): ReturnType<typeof credentialRef> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.config.apiKeyEnv)) throw new MiniMaxServiceError('MiniMax 凭据引用格式无效。', 400)
     return credentialRef(this.config.apiKeyEnv)
+  }
+
+  /** 每次请求重新解析受管凭据，Key 更新无需重启。 */
+  private async resolveApiKey(): Promise<string> {
+    const resolved = await this.ctx.credentials.resolve(this.reference())
+    const value = resolved?.value.trim()
+    if (value === undefined || value === '') throw new MiniMaxServiceError('尚未配置 MiniMax 订阅 Key（用量接口必须使用订阅 Key）。', 400)
+    return value
   }
 }

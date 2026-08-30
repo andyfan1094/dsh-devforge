@@ -8,7 +8,7 @@ import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
-import { MINIMAX_API, type MiniMaxStatus } from '../minimax/protocol.ts'
+import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -220,6 +220,12 @@ export class DevforgeApi {
   async setupMiniMaxModels(signal?: AbortSignal): Promise<MiniMaxStatus> {
     const data = await readJson<{ status: MiniMaxStatus }>(await fetch(MINIMAX_API.setup, { method: 'POST', signal }))
     return data.status
+  }
+
+  /** 读取 MiniMax 订阅用量（5h + 周双窗口）。 */
+  async getMiniMaxDashboard(signal?: AbortSignal): Promise<MiniMaxDashboard> {
+    const data = await readJson<{ dashboard: MiniMaxDashboard }>(await fetch(MINIMAX_API.dashboard, { signal }))
+    return data.dashboard
   }
 
   /** 读取脱敏后的飞书配置；App Secret 只返回掩码和是否已配置。 */

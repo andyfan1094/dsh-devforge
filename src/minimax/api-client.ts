@@ -1,5 +1,5 @@
 /** MiniMax Coding Plan 官方 HTTP API 轻量客户端（官方直连，无第三方依赖）。 */
-import type { MiniMaxSearchResult } from './protocol.ts'
+import type { MiniMaxDashboard, MiniMaxRemainsModel, MiniMaxSearchResult } from './protocol.ts'
 
 /** 可直接呈现给模型的调用失败；消息已脱敏。 */
 export class MiniMaxApiError extends Error {
@@ -57,24 +57,43 @@ export class MiniMaxApiClient {
     return content
   }
 
-  /** POST JSON 并按官方 base_resp 约定解析。 */
-  private async post(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  /** 查询订阅套餐用量（5h + 周）；返回规整后看板数据。 */
+  async fetchRemains(options: { signal?: AbortSignal } = {}): Promise<MiniMaxDashboard> {
+    const data = await this.get('/v1/token_plan/remains', options.signal)
+    return parseRemainsPayload(data)
+  }
+
+  /** 调用官方接口（GET 或 POST JSON），按 base_resp 约定解析。 */
+  private async request(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const apiKey = await this.resolveApiKey()
+    const headers: Record<string, string> = {
+      'Authorization': 'Bearer ' + apiKey,
+      // 与官方 MCP 客户端保持同一来源标识。
+      'MM-API-Source': 'Minimax-MCP',
+    }
+    if (method === 'POST') {
+      headers['Content-Type'] = 'application/json'
+    } else {
+      headers['Accept'] = 'application/json'
+    }
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    const timer = setTimeout(abort, this.timeoutMs)
     let response: Response
     try {
       response = await fetch(this.baseURL + path, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + apiKey,
-          // 与官方 MCP 客户端保持同一来源标识。
-          'MM-API-Source': 'Minimax-MCP',
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
       })
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw new MiniMaxApiError('MiniMax 接口请求超时或被取消。', 504)
       throw new MiniMaxApiError('MiniMax 接口不可达：' + safeApiError(error))
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
     }
     if (!response.ok) {
       const text = safeApiError(await response.text().catch(() => ''))
@@ -93,6 +112,14 @@ export class MiniMaxApiClient {
       throw describeBaseResp(code, typeof record.base_resp?.status_msg === 'string' ? record.base_resp.status_msg : '')
     }
     return record
+  }
+
+  private async post(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.request('POST', path, body, signal)
+  }
+
+  private async get(path: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.request('GET', path, undefined, signal)
   }
 }
 
@@ -157,4 +184,133 @@ export function formatSearchResult(result: MiniMaxSearchResult): string {
   })
   if (result.related.length > 0) lines.push('相关搜索：' + result.related.join('、'))
   return lines.join('\n')
+}
+
+/** 官方 base_resp 鉴权失败消息（订阅 Key 与普通 API Key 不能混用）。 */
+const AUTH_HINT = 'MiniMax Key 无效或不是订阅 Key。订阅用量查询必须使用订阅 Key，不能使用普通按量付费 API Key。'
+
+/** 判断是否鉴权失败（提示文本或 1004 错误码）。 */
+function isAuthFailure(code: number, message: string): boolean {
+  if (code === 1004) return true
+  return /cookie is missing|log in again|unauthorized|invalid api key|invalid token/i.test(message)
+}
+
+/** 仅接纳有限数值，阻止异常响应把 NaN/Infinity 带到前端。 */
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/** 在多个候选键中按顺序取值。 */
+function pickNumber(row: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = finiteNumber(row[key])
+    if (value !== undefined) return value
+  }
+  return undefined
+}
+
+/** 把候选字符串/数字时间戳归一为毫秒。 */
+function normalizeEpochMs(value: unknown, now: number, fallbackMs: number | undefined): number | undefined {
+  const num = finiteNumber(value)
+  if (num === undefined || num <= 0) return fallbackMs
+  if (num > 1e12) return num
+  if (num > 1e9) return num * 1000
+  return fallbackMs
+}
+
+/** 夹紧 0-100。 */
+function clampPercent(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  return Math.min(100, Math.max(0, value))
+}
+
+/** 判断是否计入当前订阅：quota 字段大于 0 或 status=1（1 活跃/3 不可用/2 可能受限）。 */
+function includedByQuota(row: Record<string, unknown>): boolean {
+  const quotaCandidates = ['current_interval_quota', 'current_weekly_quota', 'interval_quota', 'weekly_quota', 'quota']
+  for (const key of quotaCandidates) {
+    const value = finiteNumber(row[key])
+    if (value !== undefined) return value > 0
+  }
+  // 没有 quota 字段时看 status：仅 status===1 视为当前订阅可用（3 表示该资源不在套餐内）。
+  const intervalStatus = finiteNumber(row.current_interval_status)
+  const weeklyStatus = finiteNumber(row.current_weekly_status)
+  if (intervalStatus !== undefined || weeklyStatus !== undefined) {
+    const statuses = [intervalStatus, weeklyStatus].filter((v): v is number => v !== undefined)
+    return statuses.every((value) => value === 1)
+  }
+  return true
+}
+
+/** 从根对象取套餐名（多字段容错）。 */
+function planNameOf(root: Record<string, unknown>, rows: Array<Record<string, unknown>>): string | undefined {
+  const rootCandidates = ['current_subscribe_title', 'plan_name', 'subscribe_title', 'plan']
+  for (const key of rootCandidates) {
+    const value = root[key]
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  for (const row of rows) {
+    for (const key of rootCandidates) {
+      const value = row[key]
+      if (typeof value === 'string' && value.trim() !== '') return value.trim()
+    }
+  }
+  return undefined
+}
+
+/** 规整官方用量响应为面板契约。 */
+export function parseRemainsPayload(data: Record<string, unknown>, now: number = Date.now()): MiniMaxDashboard {
+  const base = data.base_resp
+  if (base !== undefined && base !== null && typeof base === 'object') {
+    const code = finiteNumber((base as { status_code?: unknown }).status_code) ?? 0
+    const msg = (base as { status_msg?: unknown }).status_msg
+    if (code !== 0) {
+      const raw = typeof msg === 'string' ? msg : 'MiniMax 用量接口返回错误（' + code + '）。'
+      throw new MiniMaxApiError(isAuthFailure(code, raw) ? AUTH_HINT : raw, code === 1004 ? 401 : 502)
+    }
+  }
+  const rowsRaw = Array.isArray(data.model_remains) ? data.model_remains : Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : []
+  const rows: Array<Record<string, unknown>> = []
+  for (const entry of rowsRaw) {
+    if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) rows.push(entry as Record<string, unknown>)
+  }
+  const warnings: string[] = []
+  if (rows.length === 0) warnings.push('用量接口未返回任何资源。')
+  const models: MiniMaxRemainsModel[] = []
+  for (const row of rows) {
+    const name = (typeof row.model_name === 'string' && row.model_name !== '' ? row.model_name : typeof row.name === 'string' ? row.name : typeof row.model === 'string' ? row.model : '').trim()
+    if (name === '') continue
+    let intervalRemaining = clampPercent(pickNumber(row, ['current_interval_remaining_percent', 'interval_remaining_percent', 'current_interval_remain_percent']))
+    let weeklyRemaining = clampPercent(pickNumber(row, ['current_weekly_remaining_percent', 'weekly_remaining_percent', 'current_weekly_remain_percent']))
+    if (weeklyRemaining === undefined) {
+      const used = pickNumber(row, ['current_weekly_usage_count', 'weekly_usage_count'])
+      const total = pickNumber(row, ['current_weekly_total_count', 'weekly_total_count'])
+      if (used !== undefined && total !== undefined && total > 0) weeklyRemaining = clampPercent(((total - used) / total) * 100)
+    }
+    if (intervalRemaining === undefined) {
+      const used = pickNumber(row, ['current_interval_usage_count', 'interval_usage_count'])
+      const total = pickNumber(row, ['current_interval_total_count', 'interval_total_count'])
+      if (used !== undefined && total !== undefined && total > 0) {
+        const derived = clampPercent(((total - used) / total) * 100)
+        if (derived !== undefined) intervalRemaining = derived
+      }
+    }
+    const intervalRemainsSec = pickNumber(row, ['remains_time', 'current_interval_remains_time', 'interval_remains_time'])
+    const weeklyRemainsSec = pickNumber(row, ['weekly_remains_time', 'current_weekly_remains_time'])
+    const intervalEndAt = normalizeEpochMs(row.end_time ?? row.current_interval_end_time, now, intervalRemainsSec !== undefined ? now + intervalRemainsSec * 1000 : undefined)
+    const weeklyEndAt = normalizeEpochMs(row.weekly_end_time ?? row.current_weekly_end_time, now, weeklyRemainsSec !== undefined ? now + weeklyRemainsSec * 1000 : undefined)
+    models.push({
+      name,
+      included: includedByQuota(row),
+      ...(intervalRemaining !== undefined ? { intervalRemainingPercent: intervalRemaining } : {}),
+      ...(weeklyRemaining !== undefined ? { weeklyRemainingPercent: weeklyRemaining } : {}),
+      ...(intervalEndAt !== undefined ? { intervalEndAt } : {}),
+      ...(weeklyEndAt !== undefined ? { weeklyEndAt } : {}),
+    })
+  }
+  return {
+    ...(planNameOf(data, rows) !== undefined ? { planName: planNameOf(data, rows) as string } : {}),
+    models,
+    fetchedAt: now,
+    warnings,
+  }
 }
