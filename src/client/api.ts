@@ -6,6 +6,7 @@
 import { DEVFORGE_API, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
+import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -161,6 +162,24 @@ export class DevforgeApi {
       body: JSON.stringify(action),
     }))
     return data.result
+  }
+
+  /** 读取智谱凭据和最新模型的脱敏状态。 */
+  async getZhipuStatus(signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.status, { signal }))
+    return data.status
+  }
+
+  /** 读取智谱官方额度、模型和 MCP 用量。 */
+  async getZhipuDashboard(window: ZhipuUsageWindow, signal?: AbortSignal): Promise<ZhipuDashboard> {
+    const data = await readJson<{ dashboard: ZhipuDashboard }>(await fetch(ZHIPU_API.dashboard + '?window=' + encodeURIComponent(window), { signal }))
+    return data.dashboard
+  }
+
+  /** 补齐 zai-coding-cn 的 GLM-5.3 与 GLM-5.3-Flash。 */
+  async setupZhipuModels(signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.setup, { method: 'POST', signal }))
+    return data.status
   }
 
   /** 读取脱敏后的飞书配置；App Secret 只返回掩码和是否已配置。 */

@@ -30,6 +30,7 @@ const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_
 const HOST_EXTERNALS = [
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-host-webserver',
+  '@deepseek-ai/dsh-credentials',
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-settings',
   '@deepseek-ai/dsh-system-prompt',
@@ -105,7 +106,7 @@ const client: UserConfig = {
   platform: 'browser',
   target: 'es2022',
   dts: false,
-  sourcemap: true,
+  sourcemap: false,
   clean: false,
   external: [...CLIENT_EXTERNALS],
   noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),

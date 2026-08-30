@@ -125,8 +125,29 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .metricRow span { color: var(--dsw-alias-label-secondary, #667085); white-space: nowrap; }
 .metricRow strong { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 智谱 Coding Plan：额度与用量保持平面、紧凑、适合重复查看。 */
+.zhipuWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 12px; overflow: auto; }
+.quotaHeader { display: flex; min-height: 32px; align-items: center; gap: 10px; }
+.quotaHeader > div { display: flex; align-items: baseline; gap: 8px; }
+.quotaList { display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.quotaRow { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(220px, 2fr); align-items: center; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.quotaMeta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.quotaMeta strong { font-size: 13px; }
+.quotaMeta span { overflow-wrap: anywhere; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; }
+.progressTrack { position: relative; height: 8px; overflow: hidden; background: var(--dsw-alias-bg-layer-2, #eef2f6); border-radius: 4px; }
+.progressFill { position: absolute; inset: 0 auto 0 0; min-width: 2px; background: var(--dsw-alias-state-business-primary, #2563eb); border-radius: inherit; transition: width 180ms ease; }
+.progressFill[data-level="warning"] { background: var(--dsw-alias-state-warning-primary, #ca8a04); }
+.progressFill[data-level="danger"] { background: var(--dsw-alias-state-error-primary, #dc2626); }
+.usageToolbar { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; }
+.segmented { display: inline-flex; flex: none; padding: 2px; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 6px; }
+.segmented button { min-height: 26px; padding: 3px 9px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
+.segmented button[data-active] { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); font-weight: 600; }
+.usageGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.usageSection { display: flex; min-width: 0; flex-direction: column; }
+
 @media (max-width: 960px) {
-  .githubSplit, .feishuGrid { grid-template-columns: minmax(0, 1fr); }
+  .githubSplit, .feishuGrid, .usageGrid { grid-template-columns: minmax(0, 1fr); }
+  .quotaRow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .gitGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .toolbar { flex-wrap: wrap; }
 }

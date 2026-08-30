@@ -4,7 +4,7 @@
  * 省略的 CJS 前导（var module/exports），产物 lib/client.js 由加载器
  * 在 /plugins/dsh-devforge/client.js 提供服务。
  */
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
@@ -27,10 +27,11 @@ const wrapped = [
   '\t\treturn module.exports;',
   '\t}',
   '});',
-  '//# sourceMappingURL=client.js.map',
   '',
 ].join('\n')
 
 writeFileSync(join(lib, 'client.js'), wrapped)
-try { renameSync(join(lib, 'client.cjs'), join(lib, 'client.cjs.bak')) } catch { /* 保留亦可 */ }
+// 中间 CJS 只服务本次包装；删除而不是保留备份，避免进入发布包。
+try { unlinkSync(join(lib, 'client.cjs')) } catch { /* 已不存在 */ }
+try { unlinkSync(join(lib, 'client.cjs.bak')) } catch { /* 清理旧构建遗留 */ }
 console.log('postbuild: wrapped lib/client.js (' + wrapped.length + 'B)')

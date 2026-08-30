@@ -1,9 +1,20 @@
 {
   "name": "dsh-devforge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DSH 规范驱动服务工厂：注入版本化开发规范、一键创建服务生成子代理，并提供服务工厂操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "standards",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE",
+    "LICENSES"
+  ],
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -13,7 +24,8 @@
   "scripts": {
     "build": "tsdown && node scripts/postbuild.mjs",
     "prepare": "pnpm run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "dsh": {
     "bundle": {
@@ -39,6 +51,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8",

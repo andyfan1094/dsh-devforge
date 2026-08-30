@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from 'schemastery'
+import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -31,6 +32,8 @@ import { makeRoutes } from './routes.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
+import { activateZhipu } from './zhipu/activate.ts'
+import type { ZhipuCapabilityConfig } from './zhipu/service.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -40,7 +43,7 @@ export const name = 'devforge'
  * 标题和附件服务。这里必须保持与原 dsh-feishu 注入集合一致，避免能力延迟到运行时才报错。
  */
 export const inject = [
-  'webServer', 'tools', 'systemPrompt', 'agents', 'agentDefaultModel', 'llm', 'agentPresets',
+  'webServer', 'tools', 'systemPrompt', 'credentials', 'agents', 'agentDefaultModel', 'llm', 'agentPresets',
   'workspaceRegistry', 'sessionPersistence', 'sessionTitle', 'attachments',
 ]
 
@@ -59,6 +62,8 @@ export interface Config {
   github?: GithubCapabilityConfig
   /** 飞书能力（兼容接管）子配置；bootstrap 字段与旧 dsh-feishu patch 行一致。 */
   feishu?: FeishuCapabilityConfig
+  /** 智谱 Coding Plan 官方模型与额度能力。 */
+  zhipu?: ZhipuCapabilityConfig
 }
 
 /** 配置默认值。 */
@@ -77,6 +82,11 @@ export const Config = z.object({
   feishu: z.object({
     enabled: z.boolean().default(true).description('飞书能力（兼容接管）开关；启用前必须停用旧 dsh-feishu'),
   }).description('飞书配置'),
+  zhipu: z.object({
+    enabled: z.boolean().default(true).description('智谱 Coding Plan 模型与官方额度看板'),
+    apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
+    timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
+  }).description('智谱 Coding Plan 配置'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -107,6 +117,11 @@ export function apply(ctx: Context, config?: Config): void {
       remote: { enabled: value.remote?.enabled ?? false },
       github: { enabled: value.github?.enabled ?? false },
       feishu: { enabled: value.feishu?.enabled ?? false },
+      zhipu: {
+        enabled: value.zhipu?.enabled ?? true,
+        apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
+        timeoutMs: value.zhipu?.timeoutMs ?? 15000,
+      },
     }
   }
 
@@ -129,6 +144,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeRemote: (() => void) | undefined
   let disposeGithub: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
+  let disposeZhipu: (() => void) | undefined
 
   const sync = (): void => {
     // 先卸旧（热更新安全）
@@ -138,6 +154,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeRemote?.(); disposeRemote = undefined
     disposeGithub?.(); disposeGithub = undefined
     disposeFeishu?.(); disposeFeishu = undefined
+    disposeZhipu?.(); disposeZhipu = undefined
     const value = resolve()
     if (!value.enabled) return
     if (value.announceToAgent) {
@@ -158,6 +175,8 @@ export function apply(ctx: Context, config?: Config): void {
     disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
     disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose
+    // 智谱官方模型与额度看板：凭据按请求解析，不缓存 Key。
+    disposeZhipu = activateZhipu(ctx, resolve().zhipu ?? { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000 }).dispose
   }
 
   // ---- 设置面板接线（改配置即热更新）----
@@ -165,7 +184,7 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { remote?: { enabled?: boolean | null }; github?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null } }
+        const value = raw() as Config & { remote?: { enabled?: boolean | null }; github?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
@@ -173,6 +192,11 @@ export function apply(ctx: Context, config?: Config): void {
           remote: { enabled: value.remote?.enabled === true },
           github: { enabled: value.github?.enabled === true },
           feishu: { enabled: value.feishu?.enabled === true },
+          zhipu: {
+            enabled: value.zhipu?.enabled !== false,
+            apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
+            timeoutMs: value.zhipu?.timeoutMs ?? 15000,
+          },
         }
       }
       current = source

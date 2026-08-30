@@ -6,14 +6,16 @@
 
 1. **通用开发规范库**：版本化 Markdown 规范存放于 `standards/`，通过系统提示和 `devforge_standards` 工具提供给 Agent；创建服务时按模板注入生成子代理。
 2. **一键生成服务**：`devforge_jobs` 工具和“新建服务”页创建独立子代理。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。
-3. **服务工厂操作台**：侧边栏“服务工厂”入口提供开发规范、生成任务、新建服务、远程运维、GitHub 和飞书能力。
-4. **本机 DSH 重启**：操作台“重启 DSH”按钮和 `devforge_restart` 工具仅在用户明确要求时使用。重启接口要求 loopback 与同源请求，复用现有启动参数，启动日志写入 `$DSH_HOME/logs/dsh-web-restart.log`。
+3. **服务工厂操作台**：侧边栏“服务工厂”入口提供开发规范、智谱 Coding Plan、生成任务、新建服务、远程运维、GitHub 和飞书能力。
+4. **智谱 Coding Plan**：复用 DSH 受管凭据 `ZAI_CODING_CN_API_KEY`，一键补齐 `zai-coding-cn` 的 GLM-5.3 与 GLM-5.3-Flash；Host 直连智谱官方监控接口，展示 5 小时、周额度、重置倒计时、近 24 小时／7 天模型和 MCP 用量。Key 不进入浏览器、日志或普通配置。
+5. **本机 DSH 重启**：操作台“重启 DSH”按钮和 `devforge_restart` 工具仅在用户明确要求时使用。重启接口要求 loopback 与同源请求，复用现有启动参数，启动日志写入 `$DSH_HOME/logs/dsh-web-restart.log`。
 
 ## 开发
 
 ```sh
 pnpm install
 pnpm run typecheck
+pnpm test
 pnpm run build
 ```
 
