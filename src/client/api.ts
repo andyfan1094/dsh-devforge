@@ -8,6 +8,7 @@ import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
+import { MINIMAX_API, type MiniMaxStatus } from '../minimax/protocol.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -206,6 +207,18 @@ export class DevforgeApi {
   /** 补齐 zai-coding-cn 的 GLM-5.3 与 GLM-5.3-Flash。 */
   async setupZhipuModels(signal?: AbortSignal): Promise<ZhipuStatus> {
     const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.setup, { method: 'POST', signal }))
+    return data.status
+  }
+
+  /** 读取 MiniMax 凭据和模型路由的脱敏状态。 */
+  async getMiniMaxStatus(signal?: AbortSignal): Promise<MiniMaxStatus> {
+    const data = await readJson<{ status: MiniMaxStatus }>(await fetch(MINIMAX_API.status, { signal }))
+    return data.status
+  }
+
+  /** 补齐 minimax-cn 的最新模型路由。 */
+  async setupMiniMaxModels(signal?: AbortSignal): Promise<MiniMaxStatus> {
+    const data = await readJson<{ status: MiniMaxStatus }>(await fetch(MINIMAX_API.setup, { method: 'POST', signal }))
     return data.status
   }
 
