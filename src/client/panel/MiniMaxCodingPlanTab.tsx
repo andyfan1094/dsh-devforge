@@ -24,18 +24,20 @@ function formatCountdown(timestamp: number | undefined, now: number): string {
   return mins + ' 分钟后重置'
 }
 
-/** 一行用量条目：单窗口（5h 或周）的进度条。 */
+/** 一行用量条目：单窗口（5h 或周）的进度条（按已用百分比填充）。 */
 function UsageRow({ label, percent, endAt, now }: { label: string; percent: number | undefined; endAt: number | undefined; now: number }): JSX.Element {
-  const value = Math.max(0, Math.min(100, percent ?? 0))
-  const level = value >= 95 ? 'danger' : value >= 80 ? 'warning' : 'normal'
+  /** percent 是剩余百分比；进度条与颜色按已用百分比展示。 */
+  const remaining = Math.max(0, Math.min(100, percent ?? 0))
+  const used = 100 - remaining
+  const level = used >= 95 ? 'danger' : used >= 80 ? 'warning' : 'normal'
   return (
     <div className={css['quotaRow']}>
       <div className={css['quotaMeta']}>
         <strong>{label}</strong>
-        <span>{(100 - value).toFixed(1)}% 已用 · {value.toFixed(1)}% 剩余 · {formatCountdown(endAt, now)}</span>
+        <span>{used.toFixed(1)}% 已用 · {remaining.toFixed(1)}% 剩余 · {formatCountdown(endAt, now)}</span>
       </div>
-      <div className={css['progressTrack']} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
-        <span className={css['progressFill']} data-level={level} style={{ width: value + '%' }} />
+      <div className={css['progressTrack']} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={used}>
+        <span className={css['progressFill']} data-level={level} style={{ width: used + '%' }} />
       </div>
     </div>
   )
