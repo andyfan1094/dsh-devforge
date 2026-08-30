@@ -6,8 +6,11 @@ import { writeJson } from '../remote/shared/http.ts'
 import { CAMOFOX_API } from './protocol.ts'
 import type { CamofoxService } from './service.ts'
 
+/** 面板路由只依赖两个读取能力，便于在能力未启用时由宿主注入占位实现。 */
+export type CamofoxRoutesService = Pick<CamofoxService, 'status' | 'visualUrl'>
+
 /** 浏览器面板只需要状态与一次性本地 noVNC 地址。 */
-export function makeCamofoxRoutes(service: CamofoxService): WebRoute[] {
+export function makeCamofoxRoutes(service: CamofoxRoutesService): WebRoute[] {
   const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
     if (!isLoopbackRequest(req)) { writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' }); return false }
     if (req.method !== method) { writeJson(res, 405, { ok: false, error: 'method not allowed' }); return false }
@@ -18,7 +21,7 @@ export function makeCamofoxRoutes(service: CamofoxService): WebRoute[] {
     { kind: 'exact', path: CAMOFOX_API.visual, handler: async (req, res) => {
       if (!guard(req, res, 'POST')) return
       try { writeJson(res, 200, { url: await service.visualUrl() }) }
-      catch { writeJson(res, 502, { ok: false, error: '无法建立运营浏览器可视连接' }) }
+      catch (error) { writeJson(res, 502, { ok: false, error: error instanceof Error ? error.message : '无法建立运营浏览器可视连接' }) }
     } },
   ]
 }

@@ -111,6 +111,7 @@ export class CamofoxService {
 
   /** 为服务工厂面板创建 noVNC 隧道，URL 不会由 Agent 工具返回。 */
   async visualUrl(): Promise<string> {
+    if (!this.config.enabled) throw new Error('浏览器能力未启用')
     const tunnel = this.visualTunnelId === undefined ? undefined : this.ssh.listTunnels().find(item => item.id === this.visualTunnelId && item.state === 'forwarding')
     if (tunnel === undefined) {
       const opened = await this.ssh.startTunnel(this.config.alias, { remoteHost: '127.0.0.1', remotePort: CAMOFOX_VNC_PORT })

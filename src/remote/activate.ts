@@ -16,7 +16,7 @@ import { makeRoutes as makeSshRoutes } from './ssh/routes.ts'
 import { HostStore as SshHostStore } from './ssh/store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './ssh/tools.ts'
 import { activateCamofox, type CamofoxActivation } from '../camofox/activate.ts'
-import type { CamofoxCapabilityConfig } from '../camofox/service.ts'
+import type { CamofoxCapabilityConfig, CamofoxService } from '../camofox/service.ts'
 import { WinRmEngine } from './winrm/engine.ts'
 import { makeRoutes as makeWinrmRoutes } from './winrm/routes.ts'
 import { HostStore as WinrmHostStore } from './winrm/store.ts'
@@ -30,8 +30,10 @@ export interface RemoteConfig {
   camofox?: CamofoxCapabilityConfig
 }
 
-/** 一次激活产生的全部 disposer（路由/upgrade/工具）。 */
+/** 一次激活产生的全部 disposer（路由/upgrade/工具）与浏览器服务句柄。 */
 export interface RemoteActivation {
+  /** 浏览器能力启用时的脱敏服务；宿主把它接进常驻面板路由。 */
+  camofox?: CamofoxService
   dispose(): void
 }
 
@@ -96,6 +98,7 @@ export function activateRemote(ctx: Context, config: RemoteConfig): RemoteActiva
     : undefined
 
   return {
+    camofox: camofox?.camofox,
     dispose(): void {
       try { camofox?.dispose() } catch { /* 浏览器清理失败不阻断远程资源释放 */ }
       for (const dispose of disposers.splice(0)) {

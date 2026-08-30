@@ -29,11 +29,14 @@ import { activateRemote, type RemoteConfig } from './remote/activate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
 import { makeRoutes } from './routes.ts'
+import { makeCamofoxRoutes } from './camofox/routes.ts'
+import type { CamofoxStatus } from './camofox/protocol.ts'
+import type { CamofoxService } from './camofox/service.ts'
+import { makeZhipuRoutes } from './zhipu/routes.ts'
+import { ZhipuCodingPlanService, type ZhipuCapabilityConfig } from './zhipu/service.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
-import { activateZhipu } from './zhipu/activate.ts'
-import type { ZhipuCapabilityConfig } from './zhipu/service.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -43,7 +46,7 @@ export const name = 'devforge'
  * 标题和附件服务。这里必须保持与原 dsh-feishu 注入集合一致，避免能力延迟到运行时才报错。
  */
 export const inject = [
-  'webServer', 'tools', 'systemPrompt', 'credentials', 'agents', 'agentDefaultModel', 'llm', 'agentPresets',
+  'webServer', 'tools', 'systemPrompt', 'credentials', 'settings', 'agents', 'agentDefaultModel', 'llm', 'agentPresets',
   'workspaceRegistry', 'sessionPersistence', 'sessionTitle', 'attachments',
 ]
 
@@ -151,8 +154,26 @@ export function apply(ctx: Context, config?: Config): void {
   const engine = new ForgeEngine(ctx, ctx as unknown as ForgeHostServices, standards, join(pluginRoot, '.devforge'))
   ctx.effect(() => () => { engine.dispose() }, 'dsh-devforge: engine')
 
+  // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
+  const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000 }
+  const DISABLED_CAMOFOX: CamofoxStatus = { configured: false, reachable: false, browserRunning: false, activeTabs: 0, activeSessions: 0, visualReady: false, message: '浏览器能力未启用，请在服务工厂设置中开启' }
+  let camofoxApi: Pick<CamofoxService, 'status' | 'visualUrl'> | undefined
+  const camofoxApiHolder = {
+    status: async (): Promise<CamofoxStatus> => camofoxApi === undefined ? DISABLED_CAMOFOX : await camofoxApi.status(),
+    visualUrl: async (): Promise<string> => {
+      if (camofoxApi === undefined) throw new Error('浏览器能力未启用，请在服务工厂设置中开启')
+      return await camofoxApi.visualUrl()
+    },
+  }
+
   // ---- 可重挂表面（路由/工具/系统提示）----
-  const routes = [...makeRoutes(engine, standards, restartManager), ...makeRemoteRoutes(remoteRegistry)]
+  const routes = [
+    ...makeRoutes(engine, standards, restartManager),
+    ...makeRemoteRoutes(remoteRegistry),
+    // 智谱与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
+    ...makeZhipuRoutes(new ZhipuCodingPlanService(ctx, zhipuConfig)),
+    ...makeCamofoxRoutes(camofoxApiHolder),
+  ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
@@ -160,7 +181,6 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeRemote: (() => void) | undefined
   let disposeGithub: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
-  let disposeZhipu: (() => void) | undefined
 
   const sync = (): void => {
     // 先卸旧（热更新安全）
@@ -170,7 +190,8 @@ export function apply(ctx: Context, config?: Config): void {
     disposeRemote?.(); disposeRemote = undefined
     disposeGithub?.(); disposeGithub = undefined
     disposeFeishu?.(); disposeFeishu = undefined
-    disposeZhipu?.(); disposeZhipu = undefined
+    // 浏览器能力随远程激活层一起重建，先断开常驻路由的句柄。
+    camofoxApi = undefined
     const value = resolve()
     if (!value.enabled) return
     if (value.announceToAgent) {
@@ -187,13 +208,15 @@ export function apply(ctx: Context, config?: Config): void {
     // 远程运维兼容接管：注册 ssh_*/winrm_* 工具与 /api/dsh-ssh、/api/dsh-winrm 前缀。
     // 切换窗口期与旧插件互斥（同一路由前缀/工具名重复注册会冲突），切换前保持关闭。
     // Camofox 与远程运维复用同一 SSH 引擎，避免重复连接和失控隧道。
-    disposeRemote = activateRemote(ctx, { ...(value.remote ?? { enabled: false }), camofox: value.camofox as NonNullable<Config['camofox']> & { enabled: boolean; alias: string; userId: string; sessionKey: string; timeoutMs: number } }).dispose
+    // capability 开关同步到常驻路由的活配置；智谱凭据按请求解析，不缓存 Key。
+    Object.assign(zhipuConfig, value.zhipu)
+    const remoteActivation = activateRemote(ctx, { ...(value.remote ?? { enabled: false }), camofox: value.camofox as NonNullable<Config['camofox']> & { enabled: boolean; alias: string; userId: string; sessionKey: string; timeoutMs: number } })
+    camofoxApi = remoteActivation.camofox
+    disposeRemote = remoteActivation.dispose
     // GitHub 兼容接管：注册 github_* 工具与 /api/dsh-github 前缀；与旧插件互斥。
     disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
     disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose
-    // 智谱官方模型与额度看板：凭据按请求解析，不缓存 Key。
-    disposeZhipu = activateZhipu(ctx, resolve().zhipu ?? { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000 }).dispose
   }
 
   // ---- 设置面板接线（改配置即热更新）----
