@@ -28,8 +28,9 @@ import { activateRemote, type RemoteConfig } from './remote/activate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
 import { makeRoutes } from './routes.ts'
+import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
-import { devforgeJobsTool, devforgeStandardsTool } from './tools.ts'
+import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -86,6 +87,7 @@ const DEVFORGE_GUIDANCE = [
   '本机安装了 dsh-devforge 插件（规范驱动服务生成）：',
   '- devforge_standards 工具：列出/读取内置开发规范（写代码前先查对应规范）。',
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
+  '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
 ].join('\n')
 
@@ -112,14 +114,15 @@ export function apply(ctx: Context, config?: Config): void {
   // 规范库根目录 = 本文件上级的 standards/（lib/index.js → ../standards）
   const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
   const standards = new StandardsStore(join(pluginRoot, 'standards'))
+  const restartManager = new DshWebRestartManager()
   // 第一阶段只读桥接旧 SSH/WinRM store；不搬运、不回写任何凭据。
   const remoteRegistry = new LegacyRemoteRegistry()
   const engine = new ForgeEngine(ctx, ctx as unknown as ForgeHostServices, standards, join(pluginRoot, '.devforge'))
   ctx.effect(() => () => { engine.dispose() }, 'dsh-devforge: engine')
 
   // ---- 可重挂表面（路由/工具/系统提示）----
-  const routes = [...makeRoutes(engine, standards), ...makeRemoteRoutes(remoteRegistry)]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards)]
+  const routes = [...makeRoutes(engine, standards, restartManager), ...makeRemoteRoutes(remoteRegistry)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

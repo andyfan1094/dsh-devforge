@@ -17,6 +17,8 @@ export const DEVFORGE_API = {
   job: '/api/dsh-devforge/jobs/item',
   /** 服务模板清单。 */
   templates: '/api/dsh-devforge/templates',
+  /** 本机 DSH Web 重启请求。 */
+  restart: '/api/dsh-devforge/restart',
   /** 远程运维统一主机摘要（SSH / WinRM 只读桥接）。 */
   remoteHosts: '/api/dsh-devforge/remote/hosts',
 } as const

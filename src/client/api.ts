@@ -90,6 +90,12 @@ export class DevforgeApi {
     return data.job
   }
 
+  /** 请求本机 DSH Web 重启；成功后当前连接会短暂断开。 */
+  async restartDsh(): Promise<{ scheduled: boolean; message: string }> {
+    const data = await readJson<{ result: { scheduled: boolean; message: string } }>(await fetch(DEVFORGE_API.restart, { method: 'POST' }))
+    return data.result
+  }
+
   /** GitHub 账号摘要；Host 只返回 tokenConfigured，不返回 Token 原文。 */
   async listGithubAccounts(): Promise<AccountSummary[]> {
     const data = await readJson<{ accounts: AccountSummary[] }>(await fetch(GITHUB_API.accounts))

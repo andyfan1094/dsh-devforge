@@ -7,6 +7,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ForgeEngine } from './forge.ts'
 import type { ForgeJob, StandardSummary } from './protocol.ts'
+import type { DshWebRestartManager } from './restart.ts'
 import type { StandardsStore } from './standards.ts'
 
 /** 纯文本输出块。 */
@@ -60,7 +61,7 @@ export function devforgeJobsTool(engine: ForgeEngine) {
       name: { type: 'string', description: 'create：任务名。' },
       templateId: { type: 'string', description: 'create：模板 id（web-service / frontend-app）。' },
       targetDir: { type: 'string', description: 'create：目标绝对路径（服务落地目录）。' },
-      standardIds: { type: 'string', description: 'create：逗号分隔规范 id（缺省用模板默认，如 v1/common,v1/api）。' },
+      standardIds: { type: 'string', description: 'create：逗号分隔规范 id（缺省用模板默认，如 v1/common.zh,v1/api.zh）。' },
       requirements: { type: 'string', description: 'create：需求描述。' },
       id: { type: 'string', description: 'cancel：任务 id。' },
     },
@@ -162,6 +163,40 @@ export function devforgeStandardsTool(standards: StandardsStore) {
         result.content = standards.get(args.id)?.content ?? ''
       }
       return result
+    },
+  })
+}
+
+/** 本机 DSH Web 重启工具输出。 */
+interface RestartToolOutput {
+  scheduled: boolean
+  message: string
+}
+
+/**
+ * 安排本机 DSH Web 重启。
+ *
+ * 此工具会短暂中断当前 GUI，只能在用户明确要求重启时调用；不会接受命令参数，
+ * 不会执行远程重启，也不会推送或修改项目代码。
+ */
+export function devforgeRestartTool(restartManager: DshWebRestartManager) {
+  return defineTool({
+    name: 'devforge_restart',
+    description: 'Schedule a local DSH Web restart. Use only when the user explicitly asks to restart DSH; the GUI disconnects briefly and returns automatically.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          scheduled: { type: 'boolean', required: true },
+          message: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value: RestartToolOutput) => text(value.message),
+    },
+    async execute(): Promise<RestartToolOutput> {
+      return restartManager.requestRestart()
     },
   })
 }

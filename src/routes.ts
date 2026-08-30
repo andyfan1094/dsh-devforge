@@ -10,6 +10,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
+import type { DshWebRestartManager } from './restart.ts'
 
 /** JSON 请求体上限。 */
 const MAX_BODY = 256 * 1024
@@ -50,9 +51,40 @@ function guard(req: import('node:http').IncomingMessage, res: import('node:http'
   return false
 }
 
+/** 重启是破坏性操作，除 loopback 外还必须由当前 GUI 同源页面发起。 */
+function guardRestart(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
+  if (!guard(req, res)) return false
+  const host = req.headers.host
+  const origin = req.headers.origin
+  const referer = req.headers.referer
+  if (!host || (typeof origin !== 'string' && typeof referer !== 'string')) {
+    writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
+    return false
+  }
+  const requestOrigin = 'http://' + host
+  try {
+    const sourceOrigin = typeof origin === 'string' ? origin : new URL(referer as string).origin
+    if (sourceOrigin === requestOrigin) return true
+  } catch {
+    // 非法来源按拒绝处理，不能让异常穿透到 Host。
+  }
+  writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
+  return false
+}
+
 /** 组装路由族。 */
-export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore): WebRoute[] {
+export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore, restartManager: DshWebRestartManager): WebRoute[] {
   return [
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/restart',
+      handler: async (req, res) => {
+        if (!guardRestart(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        const result = restartManager.requestRestart()
+        writeJson(res, 202, { ok: true, result })
+      },
+    },
     {
       kind: 'exact',
       path: '/api/dsh-devforge/standards',

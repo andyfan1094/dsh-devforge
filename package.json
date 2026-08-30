@@ -1,7 +1,7 @@
 {
   "name": "dsh-devforge",
-  "version": "0.1.0",
-  "description": "Spec-driven service forge for DSH: versioned coding standards injected into the agent system prompt, one-click subagent service creation, and an SSH-style operations panel.",
+  "version": "0.1.1",
+  "description": "DSH 规范驱动服务工厂：注入版本化开发规范、一键创建服务生成子代理，并提供服务工厂操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
   "main": "lib/index.js",
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsdown && node scripts/postbuild.mjs",
+    "prepare": "pnpm run build",
     "typecheck": "tsc --noEmit"
   },
   "dsh": {

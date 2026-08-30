@@ -18,6 +18,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ForgeJob, ForgeJobCreateRequest, ForgeTemplate } from './protocol.ts'
 import type { StandardsStore } from './standards.ts'
@@ -44,14 +45,14 @@ export const BUILTIN_TEMPLATES: ForgeTemplate[] = [
     id: 'web-service',
     name: 'Web 服务（规范约束）',
     description: '按挂载规范生成一个 Web/API 服务：目录结构、入口、中文注释、异常边界全部按规范执行。',
-    defaultStandardIds: ['v1/common', 'v1/api', 'v1/web-service'],
+    defaultStandardIds: ['v1/common.zh', 'v1/api.zh', 'v1/web-service.zh'],
     promptTemplate: [
       '你是服务生成子代理，必须严格遵循系统提示中的开发规范完成以下任务。',
       '目标目录：{targetDir}',
       '需求描述：{requirements}',
       '硬性要求：',
       '1. 先列出实施清单再动工；2. 所有新增代码写清晰中文注释（入口/关键流程/异常处理）；',
-      '3. 完成后自检并输出交付摘要（文件清单+启动方式）。',
+      '3. 完成后自检并输出交付摘要（文件清单+启动方式）；4. 目标为可提交 Git 仓库时，验证通过后按规范自动创建中文提交。',
     ].join('\n'),
     builtin: true,
   },
@@ -59,12 +60,12 @@ export const BUILTIN_TEMPLATES: ForgeTemplate[] = [
     id: 'frontend-app',
     name: '前端应用（规范约束）',
     description: '按挂载规范生成前端应用脚手架与核心页面。',
-    defaultStandardIds: ['v1/common', 'v1/frontend'],
+    defaultStandardIds: ['v1/common.zh', 'v1/frontend.zh'],
     promptTemplate: [
       '你是前端生成子代理，必须严格遵循系统提示中的开发规范完成以下任务。',
       '目标目录：{targetDir}',
       '需求描述：{requirements}',
-      '硬性要求：组件职责单一、样式与逻辑分离、关键流程写中文注释、完成后输出交付摘要。',
+      '硬性要求：组件职责单一、样式与逻辑分离、关键流程写中文注释、完成后输出交付摘要；目标为可提交 Git 仓库时，验证通过后按规范自动创建中文提交。',
     ].join('\n'),
     builtin: true,
   },
@@ -124,7 +125,7 @@ export class ForgeEngine {
   async createJob(req: ForgeJobCreateRequest): Promise<ForgeJob> {
     const template = BUILTIN_TEMPLATES.find((t) => t.id === req.templateId)
     if (!template) throw new Error('unknown template: ' + req.templateId)
-    if (typeof req.targetDir !== 'string' || !/^[A-Za-z]:[\\/]/.test(req.targetDir)) {
+    if (typeof req.targetDir !== 'string' || !isAbsolute(req.targetDir)) {
       throw new Error('targetDir 必须是绝对路径')
     }
     const normalizedDir = req.targetDir.replace(/\\/g, '/')

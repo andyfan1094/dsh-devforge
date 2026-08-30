@@ -30,6 +30,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
   const [jobs, setJobs] = useState<ForgeJob[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
   const [busy, setBusy] = useState(false)
+  const [restarting, setRestarting] = useState(false)
   const [error, setError] = useState('')
   /** 首次三个面板数据是否都已返回，避免慢请求期间误报“为空”。 */
   const [loaded, setLoaded] = useState(false)
@@ -116,6 +117,36 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
     }
   }
 
+  /** 请求 DSH 重启，并在 Host 恢复后刷新当前 GUI。 */
+  const restartDsh = async (): Promise<void> => {
+    if (restarting) return
+    try {
+      setError('')
+      setRestarting(true)
+      await api.restartDsh()
+
+      const waitForHost = async (attemptsLeft: number): Promise<void> => {
+        try {
+          await api.listStandards()
+          window.location.reload()
+        } catch {
+          if (attemptsLeft === 0) {
+            setRestarting(false)
+            setError('DSH 未在预期时间内恢复，请稍后手动刷新页面。')
+            return
+          }
+          window.setTimeout(() => { void waitForHost(attemptsLeft - 1) }, 500)
+        }
+      }
+
+      // 旧 Host 先退出，独立进程随后启动新 Host；延迟避免仍命中旧服务。
+      window.setTimeout(() => { void waitForHost(20) }, 750)
+    } catch (e) {
+      setRestarting(false)
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   /** 取消尚未结束的生成任务。 */
   const cancel = async (id: string): Promise<void> => {
     try {
@@ -140,6 +171,15 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
           <span>返回会话</span>
         </button>
         <h2 className={css['panelTitle']}>服务工厂</h2>
+        <button
+          type="button"
+          className={css['ghostButton']}
+          title="重启本机 DSH Web 服务"
+          disabled={restarting}
+          onClick={() => { void restartDsh() }}
+        >
+          {restarting ? '正在重启…' : '重启 DSH'}
+        </button>
       </div>
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
