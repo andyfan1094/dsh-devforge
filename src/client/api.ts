@@ -4,7 +4,7 @@
  */
 
 import { DEVFORGE_API, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
-import type { CamofoxStatus } from '../camofox/protocol.ts'
+import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
@@ -98,16 +98,30 @@ export class DevforgeApi {
     return data.result
   }
 
-  /** 读取 Camofox 浏览器脱敏状态。 */
-  async getCamofoxStatus(): Promise<CamofoxStatus> {
-    const data = await readJson<{ status: CamofoxStatus }>(await fetch(DEVFORGE_API.camofoxStatus))
+  /** 读取本地浏览器脱敏状态（不拉起浏览器进程）。 */
+  async getBrowserStatus(): Promise<BrowserStatus> {
+    const data = await readJson<{ status: BrowserStatus }>(await fetch(BROWSER_API.status))
     return data.status
   }
 
-  /** 仅由服务工厂面板请求本机 noVNC 入口，Agent 工具不会调用此方法。 */
-  async openCamofoxVisual(): Promise<string> {
-    const data = await readJson<{ url: string }>(await fetch(DEVFORGE_API.camofoxVisual, { method: 'POST' }))
-    return data.url
+  /** 面板导航：打开 http(s) 地址并返回页面快照。 */
+  async browserNavigate(url: string): Promise<{ ok: boolean; snapshot: string }> {
+    return await readJson(await fetch(BROWSER_API.navigate, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) }))
+  }
+
+  /** 面板读取当前页快照。 */
+  async getBrowserSnapshot(): Promise<{ ok: boolean; snapshot: string }> {
+    return await readJson(await fetch(BROWSER_API.snapshot))
+  }
+
+  /** 面板截图：返回可直接显示的 data URL。 */
+  async browserScreenshot(): Promise<{ ok: boolean; image: string }> {
+    return await readJson(await fetch(BROWSER_API.screenshot, { method: 'POST' }))
+  }
+
+  /** 停止本地浏览器会话；用户档案保留，登录状态不丢失。 */
+  async browserStop(): Promise<void> {
+    await readJson(await fetch(BROWSER_API.stop, { method: 'POST' }))
   }
 
   /** GitHub 账号摘要；Host 只返回 tokenConfigured，不返回 Token 原文。 */

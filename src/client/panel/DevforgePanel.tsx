@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { StandardDetail, StandardSummary } from '../../protocol.ts'
 import type { PanelController } from './controller.ts'
-import { CamofoxTab } from './CamofoxTab.tsx'
+import { BrowserTab } from './BrowserTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { GithubTab } from './GithubTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
@@ -131,7 +131,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
         <button type="button" role="tab" aria-selected={tab === 'standards'} data-active={tab === 'standards' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('standards') }}>开发规范</button>
-        <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}>运营浏览器</button>
+        <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}>浏览器</button>
         <button type="button" role="tab" aria-selected={tab === 'zhipu'} data-active={tab === 'zhipu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('zhipu') }}>智谱 Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}>远程运维</button>
         <button type="button" role="tab" aria-selected={tab === 'github'} data-active={tab === 'github' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('github') }}>GitHub</button>
@@ -168,7 +168,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
           </section>
         )}
 
-        {tab === 'browser' && <CamofoxTab api={api} />}
+        {tab === 'browser' && <BrowserTab api={api} />}
 
         {tab === 'zhipu' && <ZhipuCodingPlanTab api={api} />}
 
