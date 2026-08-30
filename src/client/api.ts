@@ -9,6 +9,7 @@ import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, t
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
+import { CREDENTIALS_API } from '../credentials-routes.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -226,6 +227,25 @@ export class DevforgeApi {
   async getMiniMaxDashboard(signal?: AbortSignal): Promise<MiniMaxDashboard> {
     const data = await readJson<{ dashboard: MiniMaxDashboard }>(await fetch(MINIMAX_API.dashboard, { signal }))
     return data.dashboard
+  }
+
+  /** 拉取智谱官方在售模型清单并合并进 provider。 */
+  async fetchZhipuModels(signal?: AbortSignal): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
+    return await readJson(await fetch(ZHIPU_API.fetchModels, { method: 'POST', signal }))
+  }
+
+  /** 拉取 MiniMax 官方在售模型清单并合并进 provider。 */
+  async fetchMiniMaxModels(signal?: AbortSignal): Promise<{ status: MiniMaxStatus; added: string[]; kept: string[]; total: number }> {
+    return await readJson(await fetch(MINIMAX_API.fetchModels, { method: 'POST', signal }))
+  }
+
+  /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */
+  async setCredential(ref: string, value: string): Promise<{ created: boolean; updated: boolean }> {
+    return await readJson(await fetch(CREDENTIALS_API.set, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref, value }),
+    }))
   }
 
   /** 读取脱敏后的飞书配置；App Secret 只返回掩码和是否已配置。 */

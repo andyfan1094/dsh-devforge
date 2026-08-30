@@ -172,9 +172,9 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
 
         {tab === 'browser' && <BrowserTab api={api} />}
 
-        {tab === 'zhipu' && <ZhipuCodingPlanTab api={api} />}
+        {tab === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" />}
 
-        {tab === 'minimax' && <MiniMaxCodingPlanTab api={api} />}
+        {tab === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" />}
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}
 

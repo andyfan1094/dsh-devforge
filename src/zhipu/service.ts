@@ -61,15 +61,45 @@ export class ZhipuCodingPlanService {
     const credential = await this.ctx.credentials.describe(reference)
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
     const provider = section?.providers?.[PROVIDER_ID]
-    const configuredIds = new Set((provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+    const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
+    const configuredIds = new Set(liveIds)
+    /** 优先展示 settings 中实际配置的模型，未配置任何模型时回退到内置常量。 */
+    const displayIds = liveIds.length > 0 ? liveIds : MODELS.map((model) => model.id)
     return {
       enabled: this.config.enabled,
       credentialConfigured: credential.configured,
       credentialWritable: credential.writable,
       providerConfigured: provider !== undefined,
-      models: MODELS.map((model) => ({ id: model.id, configured: configuredIds.has(model.id) })),
+      models: displayIds.map((id) => ({ id, configured: configuredIds.has(id) })),
       mcpTools: this.config.mcpTools,
     }
+  }
+
+  /** 调官方 /api/paas/v4/models 拉取在售模型清单，合并进 provider，返回更新后状态。 */
+  async fetchModelsFromOfficial(): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
+    const apiKey = await this.resolveApiKey()
+    const controller = new AbortController()
+    const timer = setTimeout(controller.abort.bind(controller), this.config.timeoutMs)
+    let response: Response
+    try {
+      response = await fetch(this.baseURL + '/api/paas/v4/models', {
+        headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+        signal: controller.signal,
+      })
+    } catch (error) {
+      throw new ZhipuServiceError('智谱官方 models 接口不可达：' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new ZhipuServiceError('智谱官方 models 接口 HTTP ' + response.status + '：' + text.slice(0, 200), response.status === 401 ? 401 : 502)
+    }
+    const payload = await response.json().catch(() => null) as { data?: unknown } | null
+    const official = parseZhipuModelList(payload)
+    if (official.length === 0) throw new ZhipuServiceError('智谱官方 models 接口未返回有效数据。', 502)
+    const next = await this.mergeFetchedModels(official)
+    return next
   }
 
   /** 查询额度和选定时间窗内的模型、MCP 用量。 */
@@ -129,6 +159,40 @@ export class ZhipuCodingPlanService {
     return credentialRef(this.config.apiKeyEnv)
   }
 
+  /** 把官方 models 合并进 provider；写 settings 复用并发重试。 */
+  private async mergeFetchedModels(official: Array<Record<string, unknown>>): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
+      const provider = current?.providers?.[PROVIDER_ID]
+      const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
+      const existingIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+      const additions = official.filter((model) => {
+        const id = typeof model.id === 'string' ? model.id : ''
+        return id !== '' && !existingIds.has(id)
+      })
+      const merged = [...existing, ...additions]
+      const added = additions.map((model) => typeof model.id === 'string' ? model.id : '').filter((id) => id !== '')
+      const kept = existing.map((model) => typeof model.id === 'string' ? model.id : '').filter((id) => id !== '')
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
+          op: 'set',
+          path: ['providers', PROVIDER_ID, 'models'],
+          value: merged,
+        }], descriptor.revision)
+        return { status: await this.status(), added, kept, total: merged.length }
+      } catch (error) {
+        if (error instanceof SettingsConflictError) {
+          if (attempt === 1) throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+          continue
+        }
+        throw error
+      }
+    }
+    throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+  }
+
   /** 每次请求重新解析凭据，Key 更新无需重启。 */
   private async resolveApiKey(): Promise<string> {
     const resolved = await this.ctx.credentials.resolve(this.reference())
@@ -136,6 +200,7 @@ export class ZhipuCodingPlanService {
     if (value === undefined || value === '') throw new ZhipuServiceError('尚未配置智谱 Coding Plan API Key。', 400)
     return value
   }
+
 
   /** 访问官方监控接口，限制响应大小并分类常见错误。 */
   private async get(path: string, apiKey: string, signal?: AbortSignal): Promise<unknown> {
@@ -238,4 +303,21 @@ export class ZhipuCodingPlanService {
       zread: typeof total.totalZreadMcpCount === 'number' ? total.totalZreadMcpCount : 0,
     }
   }
+}
+
+/** 把智谱官方 /v4/models 响应规整为最小可用模型字典。 */
+export function parseZhipuModelList(payload: unknown): Array<Record<string, unknown>> {
+  if (payload === null || typeof payload !== 'object') return []
+  const data = Array.isArray((payload as { data?: unknown }).data) ? (payload as { data: unknown[] }).data : []
+  const result: Array<Record<string, unknown>> = []
+  for (const entry of data) {
+    if (entry === null || typeof entry !== 'object') continue
+    const row = entry as { id?: unknown; name?: unknown; owned_by?: unknown }
+    if (typeof row.id !== 'string' || row.id === '') continue
+    const record: Record<string, unknown> = { id: row.id }
+    if (typeof row.name === 'string' && row.name !== '') record.name = row.name
+    if (typeof row.owned_by === 'string' && row.owned_by !== '') record.owned_by = row.owned_by
+    result.push(record)
+  }
+  return result
 }

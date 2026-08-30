@@ -5,6 +5,7 @@ export const ZHIPU_API = {
   status: '/api/dsh-devforge/zhipu/status',
   dashboard: '/api/dsh-devforge/zhipu/dashboard',
   setup: '/api/dsh-devforge/zhipu/setup',
+  fetchModels: '/api/dsh-devforge/zhipu/fetch-models',
 } as const
 
 /** 用量查询窗口。 */
@@ -63,7 +64,7 @@ export interface ZhipuStatus {
   credentialConfigured: boolean
   credentialWritable: boolean
   providerConfigured: boolean
-  models: Array<{ id: 'glm-5.3' | 'glm-5.3-flash'; configured: boolean }>
+  models: Array<{ id: string; configured: boolean }>
   /** 官方 MCP 工具（联网搜索/网页读取/Zread）是否启用。 */
   mcpTools: boolean
 }

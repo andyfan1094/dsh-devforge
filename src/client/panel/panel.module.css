@@ -143,7 +143,17 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .segmented button { min-height: 26px; padding: 3px 9px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
 .segmented button[data-active] { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); font-weight: 600; }
 .usageGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-.usageSection { display: flex; min-width: 0; flex-direction: column; }
+.usageSection { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+
+/* API Key 输入与官方拉取模型按钮：紧凑行内表单。 */
+.keyInputRow { display: flex; gap: 8px; align-items: center; padding: 6px 0 2px; }
+.keyInput { flex: 1; min-width: 0; min-height: 30px; padding: 5px 9px; font: inherit; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-specific-input-major, #fff); border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 6px; outline: none; }
+.keyInput:focus { border-color: var(--dsw-alias-state-business-primary, #2563eb); }
+.keyInput::placeholder { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.modelToolbar { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; }
+
+.metricRow strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
+.metricRow strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 
 @media (max-width: 960px) {
   .githubSplit, .feishuGrid, .usageGrid { grid-template-columns: minmax(0, 1fr); }

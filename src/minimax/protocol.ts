@@ -5,6 +5,7 @@ export const MINIMAX_API = {
   status: '/api/dsh-devforge/minimax/status',
   dashboard: '/api/dsh-devforge/minimax/dashboard',
   setup: '/api/dsh-devforge/minimax/setup',
+  fetchModels: '/api/dsh-devforge/minimax/fetch-models',
 } as const
 
 /** 凭据与模型路由的脱敏状态（不含任何 Key）。 */

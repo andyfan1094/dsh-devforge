@@ -39,6 +39,7 @@ import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
 import { makeMiniMaxRoutes } from './minimax/routes.ts'
 import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.ts'
 import { activateMiniMaxTools } from './minimax/tools.ts'
+import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
@@ -214,6 +215,7 @@ export function apply(ctx: Context, config?: Config): void {
     // 智谱、MiniMax 与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(new ZhipuCodingPlanService(ctx, zhipuConfig)),
     ...makeMiniMaxRoutes(new MiniMaxService(ctx, minimaxConfig)),
+    ...makeCredentialsRoutes(),
     ...makeBrowserRoutes(browserHolder),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager)]

@@ -6,6 +6,8 @@ import css from './panel.module.css'
 /** MiniMax 页签属性。 */
 export interface MiniMaxCodingPlanTabProps {
   api: DevforgeApi
+  /** 当前生效的受管凭据引用名（用于面板展示）。 */
+  apiKeyEnv: string
 }
 
 /** 把时间戳转成中文短倒计时（不足 1 天显示 h/分，否则显示 x 天 y 小时）。 */
@@ -49,24 +51,25 @@ function modelLabel(name: string): string {
   return name
 }
 
-/**
- * MiniMax Coding Plan 用量与状态页签。
- * 套餐用量接口已实测可用（GET /v1/token_plan/remains，Bearer 订阅 Key）；
- * 这里同时展示凭据、模型路由与官方 5h/周双窗口用量。
- */
-export function MiniMaxCodingPlanTab({ api }: MiniMaxCodingPlanTabProps): JSX.Element {
+/** MiniMax Coding Plan 用量与状态页签。 */
+export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabProps): JSX.Element {
   const [status, setStatus] = useState<MiniMaxStatus | null>(null)
   const [dashboard, setDashboard] = useState<MiniMaxDashboard | null>(null)
   const [loading, setLoading] = useState(true)
   const [settingUp, setSettingUp] = useState(false)
+  const [fetching, setFetching] = useState(false)
+  const [savingKey, setSavingKey] = useState(false)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
   const mounted = useRef(true)
   const refreshGeneration = useRef(0)
   const refreshController = useRef<AbortController | null>(null)
   const setupController = useRef<AbortController | null>(null)
+  const fetchController = useRef<AbortController | null>(null)
+  const keyController = useRef<AbortController | null>(null)
 
-  /** 同时读取脱敏状态与官方用量；Key 永不进入浏览器。 */
   const refresh = useCallback(async (): Promise<void> => {
     const generation = refreshGeneration.current + 1
     refreshGeneration.current = generation
@@ -97,6 +100,8 @@ export function MiniMaxCodingPlanTab({ api }: MiniMaxCodingPlanTabProps): JSX.El
       refreshGeneration.current += 1
       refreshController.current?.abort()
       setupController.current?.abort()
+      fetchController.current?.abort()
+      keyController.current?.abort()
     }
   }, [refresh])
   useEffect(() => {
@@ -104,7 +109,6 @@ export function MiniMaxCodingPlanTab({ api }: MiniMaxCodingPlanTabProps): JSX.El
     return () => window.clearInterval(timer)
   }, [])
 
-  /** 一键补齐 minimax-cn provider 与最新模型，不覆盖已有字段。 */
   const setupModels = async (): Promise<void> => {
     if (settingUp) return
     setupController.current?.abort()
@@ -115,10 +119,49 @@ export function MiniMaxCodingPlanTab({ api }: MiniMaxCodingPlanTabProps): JSX.El
     try {
       const nextStatus = await api.setupMiniMaxModels(controller.signal)
       if (mounted.current) setStatus(nextStatus)
+      if (mounted.current) setNotice({ kind: 'success', text: '模型路由已补齐。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (mounted.current) setSettingUp(false)
+    }
+  }
+
+  const fetchOfficialModels = async (): Promise<void> => {
+    if (fetching) return
+    fetchController.current?.abort()
+    const controller = new AbortController()
+    fetchController.current = controller
+    setFetching(true)
+    setError('')
+    try {
+      const result = await api.fetchMiniMaxModels(controller.signal)
+      if (mounted.current) setStatus(result.status)
+      if (mounted.current) setNotice({ kind: 'success', text: '从 MiniMax 官方拉取成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (mounted.current) setFetching(false)
+    }
+  }
+
+  const saveKey = async (): Promise<void> => {
+    const value = keyDraft.trim()
+    if (value === '') { setNotice({ kind: 'error', text: 'API Key 不能为空。' }); return }
+    keyController.current?.abort()
+    const controller = new AbortController()
+    keyController.current = controller
+    setSavingKey(true)
+    setError('')
+    try {
+      await api.setCredential(apiKeyEnv, value)
+      setKeyDraft('')
+      if (mounted.current) setNotice({ kind: 'success', text: 'API Key 已保存到 ' + apiKeyEnv + '。' })
+      await refresh()
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setSavingKey(false)
     }
   }
 
@@ -138,48 +181,73 @@ export function MiniMaxCodingPlanTab({ api }: MiniMaxCodingPlanTabProps): JSX.El
       </div>
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
+      {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
       {loading && status === null && <div className={css['empty']} data-loading="">正在读取 MiniMax 状态…</div>}
-      {!loading && status?.credentialConfigured !== true && <div className={css['banner']} data-kind="warning">请先在 DSH 凭据中配置 MINIMAX_CN_API_KEY（用量接口必须使用订阅 Key，不能使用普通按量付费 API Key）。</div>}
 
-      {status !== null && (
-        <div className={css['usageGrid']}>
-          <section className={css['usageSection']}>
-            <h3 className={css['sectionTitle']}>模型路由（minimax-cn）</h3>
-            {status.models.map((model) => (
-              <div key={model.id} className={css['metricRow']}>
-                <span>{model.id}</span>
-                <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
-              </div>
-            ))}
-          </section>
-          <section className={css['usageSection']}>
-            <h3 className={css['sectionTitle']}>官方工具</h3>
-            <div className={css['metricRow']}><span>minimax_web_search</span><strong>{status.tools ? '已启用' : '已关闭'}</strong></div>
-            <div className={css['metricRow']}><span>minimax_understand_image</span><strong>{status.tools ? '已启用' : '已关闭'}</strong></div>
-            <div className={css['metricRow']}><span>模型端点</span><strong>api.minimaxi.com</strong></div>
-          </section>
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>API Key 配置</h3>
+        <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
+        <div className={css['keyInputRow']}>
+          <input
+            type="password"
+            className={css['keyInput']}
+            placeholder={status?.credentialConfigured === true ? '已配置 · 输入新 Key 可覆盖' : '粘贴 MINIMAX_CN_API_KEY（订阅 Key）'}
+            value={keyDraft}
+            onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === ''} onClick={() => { void saveKey() }}>{savingKey ? '保存中…' : '保存 Key'}</button>
         </div>
-      )}
+      </section>
+
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>模型路由（minimax-cn）</h3>
+        <div className={css['modelToolbar']}>
+          <button type="button" className={css['ghostButton']} disabled={fetching || !status?.credentialConfigured} onClick={() => { void fetchOfficialModels() }} title="调官方 /v1/models 拉取最新模型并合并进 provider">{fetching ? '拉取中…' : '从官方拉取模型'}</button>
+        </div>
+        {status?.models.length === 0 ? (
+          <div className={css['empty']}>尚未配置任何模型。</div>
+        ) : (
+          status?.models.map((model) => (
+            <div key={model.id} className={css['metricRow']}>
+              <span>{model.id}</span>
+              <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
+            </div>
+          ))
+        )}
+      </section>
+
+      {status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">请先在上方 API Key 配置区填写 MINIMAX_CN_API_KEY（必须使用订阅 Key，不能使用普通按量付费 API Key）。</div>}
+
+      <div className={css['usageGrid']}>
+        <section className={css['usageSection']}>
+          <h3 className={css['sectionTitle']}>官方工具</h3>
+          <div className={css['metricRow']}><span>minimax_web_search</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+          <div className={css['metricRow']}><span>minimax_understand_image</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+          <div className={css['metricRow']}><span>模型端点</span><strong>api.minimaxi.com</strong></div>
+        </section>
+        {status !== null && dashboard !== null && (
+          <section className={css['usageSection']}>
+            <h3 className={css['sectionTitle']}>套餐用量</h3>
+            <div className={css['metricRow']}><span>套餐</span><strong>{dashboard.planName ?? '订阅 Key'}</strong></div>
+            <div className={css['metricRow']}><span>更新于</span><strong>{new Date(dashboard.fetchedAt).toLocaleTimeString('zh-CN')}</strong></div>
+          </section>
+        )}
+      </div>
 
       {dashboard !== null && dashboard.warnings.map((warning) => <div key={warning} className={css['banner']} data-kind="warning">{warning}</div>)}
       {dashboard !== null && visibleModels.length > 0 && (
-        <>
-          <div className={css['quotaHeader']}>
-            <div><span className={css['sectionHint']}>套餐用量</span><strong>{dashboard.planName ?? '订阅 Key'}</strong></div>
-            <span className={css['toolbarSpacer']} />
-            <span className={css['sectionHint']}>更新于 {new Date(dashboard.fetchedAt).toLocaleTimeString('zh-CN')}</span>
-          </div>
-          <div className={css['quotaList']}>
-            {visibleModels.flatMap((model) => [
-              model.intervalRemainingPercent !== undefined ? (
-                <UsageRow key={model.name + '-interval'} label={modelLabel(model.name) + ' · 5 小时窗口'} percent={model.intervalRemainingPercent} endAt={model.intervalEndAt} now={now} />
-              ) : null,
-              model.weeklyRemainingPercent !== undefined ? (
-                <UsageRow key={model.name + '-week'} label={modelLabel(model.name) + ' · 每周窗口'} percent={model.weeklyRemainingPercent} endAt={model.weeklyEndAt} now={now} />
-              ) : null,
-            ])}
-          </div>
-        </>
+        <div className={css['quotaList']}>
+          {visibleModels.flatMap((model) => [
+            model.intervalRemainingPercent !== undefined ? (
+              <UsageRow key={model.name + '-interval'} label={modelLabel(model.name) + ' · 5 小时窗口'} percent={model.intervalRemainingPercent} endAt={model.intervalEndAt} now={now} />
+            ) : null,
+            model.weeklyRemainingPercent !== undefined ? (
+              <UsageRow key={model.name + '-week'} label={modelLabel(model.name) + ' · 每周窗口'} percent={model.weeklyRemainingPercent} endAt={model.weeklyEndAt} now={now} />
+            ) : null,
+          ])}
+        </div>
       )}
       {dashboard !== null && visibleModels.length === 0 && dashboard.warnings.length === 0 && <div className={css['banner']} data-kind="warning">当前订阅未包含用量接口覆盖的资源类型。</div>}
     </section>

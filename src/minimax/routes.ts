@@ -72,6 +72,18 @@ export function makeMiniMaxRoutes(service: MiniMaxService): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: MINIMAX_API.fetchModels,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const result = await service.fetchModelsFromOfficial()
+          writeJson(res, 200, { ok: true, status: result.status, added: result.added, kept: result.kept, total: result.total })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
       path: MINIMAX_API.dashboard,
       handler: async (req, res) => {
         if (!guard(req, res)) return

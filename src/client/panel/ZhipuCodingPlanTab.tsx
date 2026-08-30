@@ -6,6 +6,8 @@ import css from './panel.module.css'
 /** 智谱页签属性。 */
 export interface ZhipuCodingPlanTabProps {
   api: DevforgeApi
+  /** 当前生效的受管凭据引用名（用于面板展示）。 */
+  apiKeyEnv: string
 }
 
 /** 格式化数量，避免大 Token 数撑破布局。 */
@@ -38,18 +40,24 @@ function quotaLabel(kind: ZhipuQuotaLimit['kind']): string {
 }
 
 /** 智谱 Coding Plan 模型与官方用量面板。 */
-export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Element {
+export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps): JSX.Element {
   const [status, setStatus] = useState<ZhipuStatus | null>(null)
   const [dashboard, setDashboard] = useState<ZhipuDashboard | null>(null)
   const [usageWindow, setUsageWindow] = useState<ZhipuUsageWindow>('day')
   const [loading, setLoading] = useState(true)
   const [settingUp, setSettingUp] = useState(false)
+  const [fetching, setFetching] = useState(false)
+  const [savingKey, setSavingKey] = useState(false)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
   const mounted = useRef(true)
   const refreshGeneration = useRef(0)
   const refreshController = useRef<AbortController | null>(null)
   const setupController = useRef<AbortController | null>(null)
+  const fetchController = useRef<AbortController | null>(null)
+  const keyController = useRef<AbortController | null>(null)
 
   /** 同时读取脱敏状态和官方用量；Key 永不进入浏览器。 */
   const refresh = useCallback(async (): Promise<void> => {
@@ -82,6 +90,8 @@ export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Elemen
       refreshGeneration.current += 1
       refreshController.current?.abort()
       setupController.current?.abort()
+      fetchController.current?.abort()
+      keyController.current?.abort()
     }
   }, [refresh])
   useEffect(() => {
@@ -89,7 +99,7 @@ export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Elemen
     return () => window.clearInterval(timer)
   }, [])
 
-  /** 一键补齐 provider 和两条最新模型，不切默认模型。 */
+  /** 一键补齐 provider 和硬编码的 GLM-5.3/Flash（用于初次接入）。 */
   const setupModels = async (): Promise<void> => {
     if (settingUp) return
     setupController.current?.abort()
@@ -100,6 +110,7 @@ export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Elemen
     try {
       const nextStatus = await api.setupZhipuModels(controller.signal)
       if (mounted.current) setStatus(nextStatus)
+      if (mounted.current) setNotice({ kind: 'success', text: '模型路由已补齐。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -107,7 +118,47 @@ export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Elemen
     }
   }
 
-  const modelsReady = useMemo(() => status?.providerConfigured === true && status.models.every((model) => model.configured), [status])
+  /** 调官方 /v4/models 拉取最新模型清单，合并进 provider。 */
+  const fetchOfficialModels = async (): Promise<void> => {
+    if (fetching) return
+    fetchController.current?.abort()
+    const controller = new AbortController()
+    fetchController.current = controller
+    setFetching(true)
+    setError('')
+    try {
+      const result = await api.fetchZhipuModels(controller.signal)
+      if (mounted.current) setStatus(result.status)
+      if (mounted.current) setNotice({ kind: 'success', text: '从智谱官方拉取成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (mounted.current) setFetching(false)
+    }
+  }
+
+  /** 把面板输入的 Key 写入受管凭据；写入成功后仅刷新状态，不在面板显示明文。 */
+  const saveKey = async (): Promise<void> => {
+    const value = keyDraft.trim()
+    if (value === '') { setNotice({ kind: 'error', text: 'API Key 不能为空。' }); return }
+    keyController.current?.abort()
+    const controller = new AbortController()
+    keyController.current = controller
+    setSavingKey(true)
+    setError('')
+    try {
+      await api.setCredential(apiKeyEnv, value)
+      setKeyDraft('')
+      if (mounted.current) setNotice({ kind: 'success', text: 'API Key 已保存到 ' + apiKeyEnv + '。' })
+      await refresh()
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setSavingKey(false)
+    }
+  }
+
+  const modelsReady = useMemo(() => status?.providerConfigured === true && status.models.length > 0 && status.models.every((model) => model.configured), [status])
 
   return (
     <section className={css['zhipuWorkspace']}>
@@ -122,8 +173,44 @@ export function ZhipuCodingPlanTab({ api }: ZhipuCodingPlanTabProps): JSX.Elemen
       </div>
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
-      {loading && dashboard === null && <div className={css['empty']} data-loading="">正在读取智谱官方额度…</div>}
-      {!loading && status?.credentialConfigured !== true && <div className={css['banner']} data-kind="warning">请先在 DSH 模型设置中配置 zai-coding-cn 的 API Key。</div>}
+      {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
+      {loading && status === null && <div className={css['empty']} data-loading="">正在读取智谱官方额度…</div>}
+
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>API Key 配置</h3>
+        <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
+        <div className={css['keyInputRow']}>
+          <input
+            type="password"
+            className={css['keyInput']}
+            placeholder={status?.credentialConfigured === true ? '已配置 · 输入新 Key 可覆盖' : '粘贴 ZAI_CODING_CN_API_KEY'}
+            value={keyDraft}
+            onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === ''} onClick={() => { void saveKey() }}>{savingKey ? '保存中…' : '保存 Key'}</button>
+        </div>
+      </section>
+
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>模型路由（zai-coding-cn）</h3>
+        <div className={css['modelToolbar']}>
+          <button type="button" className={css['ghostButton']} disabled={fetching || !status?.credentialConfigured} onClick={() => { void fetchOfficialModels() }} title="调官方 /v4/models 拉取最新模型并合并进 provider">{fetching ? '拉取中…' : '从官方拉取模型'}</button>
+        </div>
+        {status?.models.length === 0 ? (
+          <div className={css['empty']}>尚未配置任何模型。</div>
+        ) : (
+          status?.models.map((model) => (
+            <div key={model.id} className={css['metricRow']}>
+              <span>{model.id}</span>
+              <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
+            </div>
+          ))
+        )}
+      </section>
+
+      {status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">请先在上方 API Key 配置区填写 ZAI_CODING_CN_API_KEY。</div>}
 
       {dashboard !== null && (
         <>
