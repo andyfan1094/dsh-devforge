@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { buildPlaywrightArgs, normalizeMcpCallResult, PLAYWRIGHT_MCP_PACKAGE } from '../src/browser/mcp-stdio.ts'
 import { isSafeHttpUrl } from '../src/browser/protocol.ts'
-import { buildElementTargetArgs, normalizeBrowserConfig, pickCurrentTab } from '../src/browser/service.ts'
+import { buildElementTargetArgs, normalizeBrowserConfig, parseBrowserTabs, parseScopedElementRef, pickCurrentTab, scopeSnapshotRefs } from '../src/browser/service.ts'
 
 test('buildPlaywrightArgs 默认有头并固定用户档案目录', () => {
   const args = buildPlaywrightArgs({ headless: false, channel: 'chrome', profileDir: '/tmp/profile', outputDir: '/tmp/out' })
@@ -58,6 +58,20 @@ test('normalizeBrowserConfig 收敛非法通道并补默认档案目录', () => 
   assert.equal(config.profileDir, join(homedir(), '.dsh', 'devforge', 'browser-profile'))
   assert.equal(config.outputDir, join(homedir(), '.dsh', 'devforge', 'browser-profile') + '-output')
   assert.equal(config.timeoutMs, 5000)
+})
+
+test('parseBrowserTabs 保留标签索引、当前状态和地址', () => {
+  const tabs = '### Result\n- 0: [首页](https://a.example/)\n- 1: (current) [消息](https://b.example/im)'
+  assert.deepEqual(parseBrowserTabs(tabs), [
+    { index: 0, current: false, title: '首页', url: 'https://a.example/' },
+    { index: 1, current: true, title: '消息', url: 'https://b.example/im' },
+  ])
+})
+
+test('scopeSnapshotRefs 为相同原始引用绑定不同标签身份', () => {
+  assert.equal(scopeSnapshotRefs('- button [ref=e1]', 2, 3), '- button [ref=t2g3:e1]')
+  assert.equal(scopeSnapshotRefs('- button [ref=e1]', 5, 1), '- button [ref=t5g1:e1]')
+  assert.deepEqual(parseScopedElementRef('t2g3:e1'), { tabId: 2, generation: 3, rawRef: 'e1' })
 })
 
 test('pickCurrentTab 解析新版多标签页当前页面', () => {

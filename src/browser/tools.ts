@@ -13,12 +13,12 @@ export function browserStatusTool(service: BrowserService) {
 
 /** 打开或跳转页面，并返回页面快照。 */
 export function browserOpenTool(service: BrowserService) {
-  return defineTool({ name: 'browser_open', description: '在服务工厂托管的本地浏览器中打开 http(s) 地址，返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.navigate(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
+  return defineTool({ name: 'browser_open', description: '在服务工厂托管的本地浏览器中打开 http(s) 地址，返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.openTab(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
 }
 
 /** 读取当前页快照。 */
 export function browserSnapshotTool(service: BrowserService) {
-  return defineTool({ name: 'browser_snapshot', description: '读取本地浏览器当前页的无障碍文本快照和稳定元素引用。必须先快照再用引用点击或输入。', parameters: {}, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '快照失败：' + (value.error ?? '未知错误')) }, async execute() { try { return { ok: true, snapshot: await service.withExclusive(() => service.snapshot()) } } catch (error) { return { ok: false, error: safeError(error) } } } })
+  return defineTool({ name: 'browser_snapshot', description: '读取标签页快照。传入该标签页任一旧引用时会自动切回对应页面；返回的新引用已绑定标签身份。', parameters: { ref: { type: 'string', description: '该标签页之前快照中的任一作用域引用；省略时读取当前标签页。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '快照失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.snapshot(args.ref)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
 }
 
 /** 安全元素操作的共同包装。 */
@@ -26,8 +26,32 @@ function actionTool(name: string, description: string, parameters: Record<string
   return defineTool({ name, description, parameters, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? '操作完成' : '操作失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { await execute(args); return { ok: true } } catch (error) { return { ok: false, error: safeError(error) } } } })
 }
 
-export function browserClickTool(service: BrowserService) { return actionTool('browser_click', '点击最近一次快照中的元素引用。', { ref: { type: 'string', required: true, description: '快照里的元素引用，例如 e5。' } }, async args => { await service.withExclusive(() => service.click(args.ref)) }) }
-export function browserTypeTool(service: BrowserService) { return actionTool('browser_type', '向最近一次快照中的输入元素填写文本。', { ref: { type: 'string', required: true, description: '快照里的元素引用。' }, text: { type: 'string', required: true, description: '要输入的文本。' }, submit: { type: 'boolean', description: '填写后是否按 Enter。' } }, async args => { await service.withExclusive(() => service.type(args.ref, args.text, args.submit === true)) }) }
+/** 点击作用域引用并返回操作后的新快照。 */
+export function browserClickTool(service: BrowserService) {
+  return defineTool({
+    name: 'browser_click',
+    description: '点击作用域引用所属标签页的元素，并返回操作后的新快照。引用失效时拒绝猜测。',
+    parameters: { ref: { type: 'string', required: true, description: '快照里的标签绑定引用，例如 t2g1:e5。' } },
+    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '点击失败：' + (value.error ?? '未知错误')) },
+    async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.click(args.ref)) } } catch (error) { return { ok: false, error: safeError(error) } } },
+  })
+}
+
+/** 输入文本并返回该标签页的刷新快照。 */
+export function browserTypeTool(service: BrowserService) {
+  return defineTool({
+    name: 'browser_type',
+    description: '向作用域引用所属标签页输入文本，并返回刷新后的新快照。',
+    parameters: { ref: { type: 'string', required: true, description: '快照里的标签绑定引用。' }, text: { type: 'string', required: true, description: '要输入的文本。' }, submit: { type: 'boolean', description: '填写后是否按 Enter。' } },
+    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '输入失败：' + (value.error ?? '未知错误')) },
+    async execute(args) {
+      try {
+        const snapshot = await service.withExclusive(async () => { await service.type(args.ref, args.text, args.submit === true); return await service.snapshot(args.ref) })
+        return { ok: true, snapshot }
+      } catch (error) { return { ok: false, error: safeError(error) } }
+    },
+  })
+}
 /** 管理同一可见 Chrome 中的标签页。 */
 export function browserTabsTool(service: BrowserService) {
   return defineTool({
@@ -52,7 +76,18 @@ export function browserTabsTool(service: BrowserService) {
 
 /** 上传图片到当前页已打开的文件选择器。 */
 export function browserUploadTool(service: BrowserService) {
-  return actionTool('browser_upload', '上传本机图片到当前页已打开的文件选择器。会校验类型、大小并暂存到 MCP 允许目录。', { filePath: { type: 'string', required: true, description: '本机图片绝对路径。' } }, async args => { await service.withExclusive(() => service.upload(args.filePath)) })
+  return defineTool({
+    name: 'browser_upload',
+    description: '在引用所属标签页点击上传入口并上传本机图片；点击、上传和刷新快照在同一原子操作内完成。',
+    parameters: { ref: { type: 'string', required: true, description: '快照中的上传入口作用域引用。' }, filePath: { type: 'string', required: true, description: '本机图片绝对路径。' } },
+    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '上传失败：' + (value.error ?? '未知错误')) },
+    async execute(args) {
+      try {
+        const snapshot = await service.withExclusive(async () => { await service.clickAndUpload(args.ref, args.filePath); return await service.snapshot(args.ref) })
+        return { ok: true, snapshot }
+      } catch (error) { return { ok: false, error: safeError(error) } }
+    },
+  })
 }
 
 export function browserCloseTool(service: BrowserService) { return actionTool('browser_close', '停止本地浏览器会话。用户档案保留，登录状态不丢失。', {}, async args => { await service.withExclusive(async () => { await service.stop() }) }) }

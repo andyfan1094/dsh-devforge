@@ -133,7 +133,7 @@ export class PlaywrightMcpStdio {
       child.on('exit', () => { this.failAll(new Error('浏览器 MCP 进程已退出：' + this.stderrTail.trim().split('\n').pop())) })
       // 握手超时：避免 npx 首次下载或浏览器启动卡死拖住调用方。
       const bootTimer = setTimeout(() => { reject(new Error('浏览器 MCP 启动超时：' + this.stderrTail.trim().split('\n').pop())) }, Math.max(this.timeoutMs, 60000))
-      void this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dsh-devforge', version: '0.4.0' } })
+      void this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dsh-devforge', version: '0.5.0' } })
         .then(async () => {
           this.notify('notifications/initialized', {})
           this.initialized = true
