@@ -44,9 +44,12 @@ export function normalizeMcpCallResult(rawContent: unknown, isError: boolean): M
   return image === undefined ? { isError, text } : { isError, text, image }
 }
 
+/** 已验证的 Playwright MCP 版本；固定版本避免工具参数在无人值守时漂移。 */
+export const PLAYWRIGHT_MCP_PACKAGE = '@playwright/mcp@0.0.79'
+
 /** 由配置生成 playwright-mcp 启动参数（纯函数，供测试）。 */
 export function buildPlaywrightArgs(options: { headless: boolean; channel: string; profileDir: string; outputDir: string }): string[] {
-  const args = ['-y', '@playwright/mcp@latest', '--browser', options.channel, '--output-dir', options.outputDir]
+  const args = ['-y', PLAYWRIGHT_MCP_PACKAGE, '--browser', options.channel, '--output-dir', options.outputDir]
   if (options.headless) args.push('--headless')
   args.push('--user-data-dir', options.profileDir)
   return args
@@ -130,7 +133,7 @@ export class PlaywrightMcpStdio {
       child.on('exit', () => { this.failAll(new Error('浏览器 MCP 进程已退出：' + this.stderrTail.trim().split('\n').pop())) })
       // 握手超时：避免 npx 首次下载或浏览器启动卡死拖住调用方。
       const bootTimer = setTimeout(() => { reject(new Error('浏览器 MCP 启动超时：' + this.stderrTail.trim().split('\n').pop())) }, Math.max(this.timeoutMs, 60000))
-      void this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dsh-devforge', version: '0.3.0' } })
+      void this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dsh-devforge', version: '0.4.0' } })
         .then(async () => {
           this.notify('notifications/initialized', {})
           this.initialized = true

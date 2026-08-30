@@ -4,10 +4,19 @@
  * 边界：浏览器进程运行在本机用户会话中，操作实时可见；固定用户档案目录
  * 保存登录状态；所有方法只返回页面快照文本或截图数据，不暴露进程参数之外的任何系统信息。
  */
-import { join } from 'node:path'
+import { copyFile, mkdir, stat, unlink } from 'node:fs/promises'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 import { BROWSER_API, isSafeHttpUrl, type BrowserStatus } from './protocol.ts'
 import { buildPlaywrightArgs, PlaywrightMcpStdio } from './mcp-stdio.ts'
+
+/**
+ * 把 DSH 快照引用转换为 Playwright MCP 当前版本的元素参数。
+ * Playwright MCP 0.0.79 起使用 target，旧版 ref 字段会导致点击与输入失败。
+ */
+export function buildElementTargetArgs(ref: string): { element: string; target: string } {
+  return { element: '快照元素 ' + ref, target: ref }
+}
 
 /** 浏览器 capability 的可配置项。 */
 export interface BrowserCapabilityConfig {
@@ -36,10 +45,16 @@ export function normalizeBrowserConfig(config: BrowserCapabilityConfig): Require
 }
 
 /** 从 playwright-mcp 页面清单中取当前页信息；解析失败不视为错误。 */
-function pickCurrentTab(lines: string): { currentUrl?: string; pageTitle?: string } {
+export function pickCurrentTab(lines: string): { currentUrl?: string; pageTitle?: string } {
+  const tabLines = lines.split('\n').filter((line) => /^- \d+:/.test(line.trim()))
+  const selected = tabLines.find((line) => line.includes('(current)')) ?? tabLines[0]
+  if (selected !== undefined) {
+    const current = selected.match(/- \d+:\s*(?:\(current\)\s*)?\[([^\]]*)\]\(([^)]+)\)/)
+    if (current !== null) return { pageTitle: current[1]!.trim(), currentUrl: current[2]!.trim() }
+  }
   for (const line of lines.split('\n')) {
-    const match = line.match(/- \d+\.\s*\[([^\]]*)\]\s*(\S+)(?:\s+\(.*\))?/)
-    if (match !== null) return { pageTitle: match[1]!.trim(), currentUrl: match[2]!.trim() }
+    const legacy = line.match(/- \d+\.\s*\[([^\]]*)\]\s*(\S+)(?:\s+\(.*\))?/)
+    if (legacy !== null) return { pageTitle: legacy[1]!.trim(), currentUrl: legacy[2]!.trim() }
   }
   return {}
 }
@@ -47,6 +62,7 @@ function pickCurrentTab(lines: string): { currentUrl?: string; pageTitle?: strin
 /** 本地浏览器服务：启动/停止 playwright-mcp 并映射常用页面操作。 */
 export class BrowserService {
   private client: PlaywrightMcpStdio | undefined
+  private operationTail: Promise<void> = Promise.resolve()
   private readonly resolved: ReturnType<typeof normalizeBrowserConfig>
 
   constructor(config: BrowserCapabilityConfig) {
@@ -61,6 +77,21 @@ export class BrowserService {
   /** 是否启用。 */
   get enabled(): boolean { return this.resolved.enabled }
 
+  /**
+   * 将跨页面操作串行化；多个会话可以排队，但不能同时操控同一个可见页面。
+   */
+  async withExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    let release: (() => void) | undefined
+    const previous = this.operationTail
+    this.operationTail = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release?.()
+    }
+  }
+
   /** 被动读取状态：不拉起浏览器进程。 */
   async status(): Promise<BrowserStatus> {
     if (!this.resolved.enabled) return { enabled: false, running: false, ready: false, profileDir: this.resolved.profileDir, message: '浏览器能力未启用，请在服务工厂设置中开启' }
@@ -68,7 +99,7 @@ export class BrowserService {
       return { enabled: true, running: false, ready: false, profileDir: this.resolved.profileDir, message: '浏览器未启动；使用打开/导航等操作时会自动拉起' }
     }
     try {
-      const tabs = await this.client.callTool('browser_tab_list', {})
+      const tabs = await this.client.callTool('browser_tabs', { action: 'list' })
       const current = pickCurrentTab(tabs.text)
       return { enabled: true, running: true, ready: true, profileDir: this.resolved.profileDir, ...current }
     } catch (error) {
@@ -93,16 +124,52 @@ export class BrowserService {
 
   /** 点击快照中的元素引用。 */
   async click(ref: string): Promise<string> {
-    const result = await this.ensureClient().callTool('browser_click', { element: '快照元素 ' + ref, ref })
+    const result = await this.ensureClient().callTool('browser_click', buildElementTargetArgs(ref))
     if (result.isError) throw new Error(this.safeError(result.text))
     return result.text
   }
 
   /** 向快照元素输入文本，可选回车提交。 */
   async type(ref: string, text: string, submit = false): Promise<string> {
-    const result = await this.ensureClient().callTool('browser_type', { element: '快照元素 ' + ref, ref, text, submit })
+    const result = await this.ensureClient().callTool('browser_type', { ...buildElementTargetArgs(ref), text, submit })
     if (result.isError) throw new Error(this.safeError(result.text))
     return result.text
+  }
+
+  /** 管理同一可见浏览器中的标签页；调用方必须在互斥区内切换和操作。 */
+  async tabs(action: 'list' | 'new' | 'close' | 'select', index?: number, url?: string): Promise<string> {
+    const args: Record<string, unknown> = { action }
+    if (index !== undefined) args.index = index
+    if (url !== undefined) {
+      if (!isSafeHttpUrl(url)) throw new Error('新标签页只允许打开 http(s) 地址')
+      args.url = url
+    }
+    const result = await this.ensureClient().callTool('browser_tabs', args)
+    if (result.isError) throw new Error(this.safeError(result.text))
+    return result.text
+  }
+
+  /**
+   * 将本机图片暂存到 MCP 允许的输出目录后上传；不把任意路径直接交给浏览器进程。
+   */
+  async upload(filePath: string): Promise<string> {
+    if (!isAbsolute(filePath)) throw new Error('商品图片必须是本机绝对路径')
+    const extension = extname(filePath).toLowerCase()
+    if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extension)) throw new Error('商品图片仅支持 png、jpg、jpeg、webp 或 gif')
+    const file = await stat(filePath)
+    if (!file.isFile()) throw new Error('商品图片不是普通文件')
+    if (file.size > 20 * 1024 * 1024) throw new Error('商品图片不能超过 20 MB')
+    await mkdir(this.resolved.outputDir, { recursive: true })
+    const safeName = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_') || 'image' + extension
+    const stagedPath = join(this.resolved.outputDir, 'upload-' + Date.now() + '-' + safeName)
+    await copyFile(filePath, stagedPath)
+    try {
+      const result = await this.ensureClient().callTool('browser_file_upload', { paths: [stagedPath] })
+      if (result.isError) throw new Error(this.safeError(result.text))
+      return result.text
+    } finally {
+      try { await unlink(stagedPath) } catch { /* 临时文件已被移除时忽略 */ }
+    }
   }
 
   /** 截取当前页 PNG，返回面板可直接显示的 data URL。 */

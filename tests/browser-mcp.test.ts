@@ -3,14 +3,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { buildPlaywrightArgs, normalizeMcpCallResult } from '../src/browser/mcp-stdio.ts'
+import { buildPlaywrightArgs, normalizeMcpCallResult, PLAYWRIGHT_MCP_PACKAGE } from '../src/browser/mcp-stdio.ts'
 import { isSafeHttpUrl } from '../src/browser/protocol.ts'
-import { normalizeBrowserConfig } from '../src/browser/service.ts'
+import { buildElementTargetArgs, normalizeBrowserConfig, pickCurrentTab } from '../src/browser/service.ts'
 
 test('buildPlaywrightArgs 默认有头并固定用户档案目录', () => {
   const args = buildPlaywrightArgs({ headless: false, channel: 'chrome', profileDir: '/tmp/profile', outputDir: '/tmp/out' })
   assert.equal(args[0], '-y')
-  assert.ok(args.includes('@playwright/mcp@latest'))
+  assert.ok(args.includes(PLAYWRIGHT_MCP_PACKAGE))
+  assert.equal(args.includes('@playwright/mcp@latest'), false)
   assert.deepEqual(args.slice(args.indexOf('--browser'), args.indexOf('--browser') + 2), ['--browser', 'chrome'])
   assert.equal(args.includes('--headless'), false)
   assert.deepEqual(args.slice(args.indexOf('--user-data-dir'), args.indexOf('--user-data-dir') + 2), ['--user-data-dir', '/tmp/profile'])
@@ -57,4 +58,16 @@ test('normalizeBrowserConfig 收敛非法通道并补默认档案目录', () => 
   assert.equal(config.profileDir, join(homedir(), '.dsh', 'devforge', 'browser-profile'))
   assert.equal(config.outputDir, join(homedir(), '.dsh', 'devforge', 'browser-profile') + '-output')
   assert.equal(config.timeoutMs, 5000)
+})
+
+test('pickCurrentTab 解析新版多标签页当前页面', () => {
+  const tabs = '### Result\n- 0: [闲鱼](https://www.goofish.com/)\n- 1: (current) [聊天_闲鱼](https://www.goofish.com/im)'
+  assert.deepEqual(pickCurrentTab(tabs), { pageTitle: '聊天_闲鱼', currentUrl: 'https://www.goofish.com/im' })
+})
+
+test('buildElementTargetArgs 使用新版 Playwright MCP 的 target 参数', () => {
+  assert.deepEqual(buildElementTargetArgs('f11e180'), {
+    element: '快照元素 f11e180',
+    target: 'f11e180',
+  })
 })
