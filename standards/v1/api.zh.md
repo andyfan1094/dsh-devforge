@@ -1,4 +1,4 @@
-# 后端 API 与分层规范（FhDoc v1）
+# 后端 API 与分层规范（v1）
 
 tags: api, service, 后端, 分层, DAL, BLL, Utility
 

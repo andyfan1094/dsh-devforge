@@ -1,6 +1,6 @@
-# Web 后端服务脚手架规范（FhDoc v1）
+# Web 后端服务脚手架规范（v1）
 
-tags: service, 脚手架, web, 分层, FhDoc
+tags: service, 脚手架, web, 分层
 
 ## 1. 必备工程结构
 

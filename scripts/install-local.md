@@ -21,4 +21,4 @@ GitHub 安装会运行插件的 `prepare` 脚本构建产物。若 pnpm 提示�
 2. 检查 `~/.dsh/profiles/web/dsh.profile` 或等价 manifest 的 bundles 中存在 `dsh-devforge`。
 3. 重启 DSH Web Host，刷新浏览器后确认侧边栏出现“服务工厂”。
 4. 本机访问 `http://127.0.0.1:3080/api/dsh-devforge/standards`，确认返回规范清单。
-5. 在服务工厂查看“开发规范”，确认显示 FhDoc 分层版标题；使用“重启 DSH”时，确认页面短暂断开后能够恢复。
+5. 在服务工厂查看“开发规范”，确认显示通用开发规范标题；使用“重启 DSH”时，确认页面短暂断开后能够恢复。
