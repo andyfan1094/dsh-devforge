@@ -36,6 +36,9 @@ import type { BrowserRoutesService } from './browser/service.ts'
 import { makeZhipuRoutes } from './zhipu/routes.ts'
 import { ZhipuCodingPlanService, type ZhipuCapabilityConfig } from './zhipu/service.ts'
 import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
+import { makeMiniMaxRoutes } from './minimax/routes.ts'
+import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.ts'
+import { activateMiniMaxTools } from './minimax/tools.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
@@ -71,6 +74,8 @@ export interface Config {
   feishu?: FeishuCapabilityConfig
   /** 智谱 Coding Plan 官方模型与额度能力。 */
   zhipu?: ZhipuCapabilityConfig & { mcpTools?: boolean }
+  /** MiniMax Coding Plan 官方模型与工具能力。 */
+  minimax?: MiniMaxCapabilityConfig
 }
 
 /** 配置默认值。 */
@@ -102,6 +107,12 @@ export const Config = z.object({
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
     mcpTools: z.boolean().default(true).description('官方 MCP 工具：联网搜索/网页读取/Zread'),
   }).description('智谱 Coding Plan 配置'),
+  minimax: z.object({
+    enabled: z.boolean().default(true).description('MiniMax Coding Plan 模型路由与官方工具'),
+    apiKeyEnv: z.string().default('MINIMAX_CN_API_KEY').description('MiniMax 受管凭据引用'),
+    timeoutMs: z.number().min(1000).max(120000).default(30000).description('MiniMax 官方接口超时（毫秒）'),
+    tools: z.boolean().default(true).description('官方工具：联网搜索/图像理解'),
+  }).description('MiniMax Coding Plan 配置'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -115,6 +126,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
+  '- minimax_web_search / minimax_understand_image：MiniMax Coding Plan 官方工具（联网搜索/图像理解，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
@@ -150,6 +162,12 @@ export function apply(ctx: Context, config?: Config): void {
         timeoutMs: value.zhipu?.timeoutMs ?? 15000,
         mcpTools: value.zhipu?.mcpTools !== false,
       },
+      minimax: {
+        enabled: value.minimax?.enabled ?? true,
+        apiKeyEnv: value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
+        timeoutMs: value.minimax?.timeoutMs ?? 30000,
+        tools: value.minimax?.tools !== false,
+      },
     }
   }
 
@@ -165,6 +183,7 @@ export function apply(ctx: Context, config?: Config): void {
 
   // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
   const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
+  const minimaxConfig = { enabled: true, apiKeyEnv: 'MINIMAX_CN_API_KEY', timeoutMs: 30000, tools: true }
   const DISABLED_BROWSER: BrowserStatus = { enabled: false, running: false, ready: false, profileDir: '', message: '浏览器能力未启用，请在服务工厂设置中开启' }
   let browserApi: Pick<BrowserRoutesService, 'status' | 'navigate' | 'snapshot' | 'screenshot' | 'stop'> | undefined
   const browserHolder: BrowserRoutesService = {
@@ -192,8 +211,9 @@ export function apply(ctx: Context, config?: Config): void {
   const routes = [
     ...makeRoutes(engine, standards, restartManager),
     ...makeRemoteRoutes(remoteRegistry),
-    // 智谱与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
+    // 智谱、MiniMax 与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(new ZhipuCodingPlanService(ctx, zhipuConfig)),
+    ...makeMiniMaxRoutes(new MiniMaxService(ctx, minimaxConfig)),
     ...makeBrowserRoutes(browserHolder),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager)]
@@ -204,6 +224,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeGithub: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
   let disposeZhipuMcp: (() => void) | undefined
+  let disposeMiniMaxTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
 
   const sync = (): void => {
@@ -215,6 +236,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeGithub?.(); disposeGithub = undefined
     disposeFeishu?.(); disposeFeishu = undefined
     disposeZhipuMcp?.(); disposeZhipuMcp = undefined
+    disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
@@ -236,6 +258,18 @@ export function apply(ctx: Context, config?: Config): void {
     // 本地浏览器能力独立于远程运维，直接挂载在宿主进程。
     // capability 开关同步到常驻路由的活配置；智谱凭据按请求解析，不缓存 Key。
     Object.assign(zhipuConfig, value.zhipu)
+    Object.assign(minimaxConfig, value.minimax)
+    // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。
+    disposeMiniMaxTools = activateMiniMaxTools(ctx, {
+      enabled: value.enabled && value.minimax?.tools !== false,
+      apiKeyEnv: value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
+      timeoutMs: Math.max(value.minimax?.timeoutMs ?? 30000, 10000),
+    }, async () => {
+      const resolved = await ctx.credentials.resolve(credentialRef(value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY'))
+      const apiKeyValue = resolved?.value.trim() ?? ''
+      if (apiKeyValue === '') throw new Error('尚未配置 MiniMax Coding Plan API Key，无法调用官方工具。')
+      return apiKeyValue
+    }).dispose
     // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
     disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
       const resolved = await ctx.credentials.resolve(credentialRef(value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY'))
@@ -286,6 +320,12 @@ export function apply(ctx: Context, config?: Config): void {
             apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
             timeoutMs: value.zhipu?.timeoutMs ?? 15000,
             mcpTools: value.zhipu?.mcpTools !== false,
+          },
+          minimax: {
+            enabled: value.minimax?.enabled !== false,
+            apiKeyEnv: value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
+            timeoutMs: value.minimax?.timeoutMs ?? 30000,
+            tools: value.minimax?.tools !== false,
           },
         }
       }
