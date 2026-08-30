@@ -121,6 +121,83 @@ export class MiniMaxApiClient {
   private async get(path: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return await this.request('GET', path, undefined, signal)
   }
+
+  /** 文本生成图片：返回官方 image_urls 数组。 */
+  async imageGeneration(prompt: string, options: { model?: string; width?: number; height?: number; referenceImages?: string[]; signal?: AbortSignal } = {}): Promise<string[]> {
+    const payload: Record<string, unknown> = { prompt }
+    if (options.model !== undefined) payload.model = options.model
+    if (options.width !== undefined) payload.width = options.width
+    if (options.height !== undefined) payload.height = options.height
+    if (Array.isArray(options.referenceImages) && options.referenceImages.length > 0) payload.reference_images = options.referenceImages
+    const data = await this.post('/v1/image_generation', payload, options.signal)
+    const urls = Array.isArray((data as { data?: unknown }).data) ? (data as { data: unknown[] }).data : []
+    const inner = (data as { data?: { image_urls?: unknown } }).data
+    const list = Array.isArray(inner?.image_urls) ? inner.image_urls : []
+    if (Array.isArray(list) && list.length > 0) return list.filter((value): value is string => typeof value === 'string')
+    return urls.filter((value): value is string => typeof value === 'string')
+  }
+
+  /** 同步文本转语音：返回十六进制编码的音频字节（hex string）。 */
+  async textToSpeech(text: string, options: { model?: string; voiceId?: string; speed?: number; pitch?: number; format?: string; sampleRate?: number; bitrate?: number; signal?: AbortSignal } = {}): Promise<{ hex: string; mime: string; bytes: number }> {
+    const voiceSetting: Record<string, unknown> = {}
+    if (options.voiceId !== undefined) voiceSetting.voice_id = options.voiceId
+    if (options.speed !== undefined) voiceSetting.speed = options.speed
+    if (options.pitch !== undefined) voiceSetting.pitch = options.pitch
+    const audioSetting: Record<string, unknown> = {}
+    if (options.format !== undefined) audioSetting.format = options.format
+    if (options.sampleRate !== undefined) audioSetting.sample_rate = options.sampleRate
+    if (options.bitrate !== undefined) audioSetting.bitrate = options.bitrate
+    const payload: Record<string, unknown> = { text, stream: false }
+    if (options.model !== undefined) payload.model = options.model
+    if (Object.keys(voiceSetting).length > 0) payload.voice_setting = voiceSetting
+    if (Object.keys(audioSetting).length > 0) payload.audio_setting = audioSetting
+    const data = await this.post('/v1/t2a_v2', payload, options.signal)
+    const inner = (data as { data?: unknown }).data
+    const dataObj = (inner !== null && typeof inner === 'object') ? inner as { audio?: unknown; audio_hex?: unknown; mime_type?: unknown } : {}
+    const hex = typeof dataObj.audio === 'string' ? dataObj.audio : (typeof dataObj.audio_hex === 'string' ? dataObj.audio_hex : '')
+    if (hex === '') throw new MiniMaxApiError('MiniMax 语音接口返回为空。')
+    const mime = typeof dataObj.mime_type === 'string' ? dataObj.mime_type : 'audio/mpeg'
+    return { hex, mime, bytes: hex.length / 2 }
+  }
+
+  /** 创建视频生成任务（异步）。返回 task_id；后续用 queryVideoGeneration 查进度。 */
+  async createVideoGeneration(prompt: string, options: { model?: string; duration?: number; resolution?: string; firstFrameImage?: string; lastFrameImage?: string; signal?: AbortSignal } = {}): Promise<{ taskId: string }> {
+    const payload: Record<string, unknown> = { prompt }
+    if (options.model !== undefined) payload.model = options.model
+    const parameters: Record<string, unknown> = {}
+    if (options.duration !== undefined) parameters.duration = options.duration
+    if (options.resolution !== undefined) parameters.resolution = options.resolution
+    if (Object.keys(parameters).length > 0) payload.parameters = parameters
+    const content: Array<Record<string, unknown>> = []
+    if (options.firstFrameImage !== undefined) content.push({ type: 'first_frame', image_url: options.firstFrameImage })
+    if (options.lastFrameImage !== undefined) content.push({ type: 'last_frame', image_url: options.lastFrameImage })
+    if (content.length > 0) {
+      payload.content = content
+    }
+    const data = await this.post('/v1/video_generation', payload, options.signal)
+    const taskId = (data as { task_id?: unknown }).task_id
+    if (typeof taskId !== 'string' || taskId === '') throw new MiniMaxApiError('MiniMax 视频生成任务创建失败。')
+    return { taskId }
+  }
+
+  /** 查询视频生成任务状态。 */
+  async queryVideoGeneration(taskId: string, options: { signal?: AbortSignal } = {}): Promise<{ status: string; fileId?: string; videoUrl?: string; raw: Record<string, unknown> }> {
+    const data = await this.get('/v1/query/video_generation?task_id=' + encodeURIComponent(taskId), options.signal)
+    const status = (data as { status?: unknown }).status
+    const fileId = (data as { file_id?: unknown }).file_id
+    const raw = (data as { data?: unknown }).data
+    let videoUrl: string | undefined
+    if (raw !== null && typeof raw === 'object') {
+      const url = (raw as { video_url?: unknown }).video_url
+      if (typeof url === 'string') videoUrl = url
+    }
+    return {
+      status: typeof status === 'string' ? status : 'unknown',
+      ...(typeof fileId === 'string' && fileId !== '' ? { fileId } : {}),
+      ...(videoUrl !== undefined ? { videoUrl } : {}),
+      raw: data,
+    }
+  }
 }
 
 /** 按字节流式读取响应，超过 4 MiB 立即取消，避免无界内存占用。 */
