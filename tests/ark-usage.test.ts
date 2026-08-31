@@ -44,6 +44,32 @@ test('方舟用量响应：规整额度窗口与重置时间', () => {
 })
 
 /** OpenAPI 业务错误只返回短错误，不透传完整响应对象。 */
+test('方舟用量响应：适配真实 AFP 具名桶与 Coding Plan 未订阅响应', () => {
+  const agent = parseArkUsageResponse('agent-plan', 200, JSON.stringify({
+    Result: {
+      AFPDaily: { Used: 10, Quota: 100, ResetTime: 1_800_000_000_000 },
+      AFPFiveHour: { Used: 125, Quota: 1000, ResetTime: 1_800_000_000_000 },
+      AFPWeekly: { Used: 2500, Quota: 10000, ResetTime: 1_800_100_000_000 },
+      AFPMonthly: { Used: 9000, Quota: 30000, ResetTime: 1_800_200_000_000 },
+      PlanType: 'personal',
+    },
+  }))
+  assert.equal(agent.subscribed, true)
+  assert.deepEqual(agent.periods.map((period) => period.level), ['5h', 'weekly', 'monthly'])
+  assert.equal(agent.periods[0]?.usedPercent, 12.5)
+  assert.equal(agent.periods[1]?.usedPercent, 25)
+  assert.equal(agent.periods[2]?.usedPercent, 30)
+  assert.equal(agent.periods[0]?.resetAt, 1_800_000_000_000)
+
+  const coding = parseArkUsageResponse('coding-plan', 200, JSON.stringify({
+    Result: { HasReward: false, Status: 'inactive', UpdateTimestamp: 1_800_000_000_000 },
+  }))
+  assert.equal(coding.subscribed, false)
+  assert.equal(coding.error, undefined)
+  assert.deepEqual(coding.periods, [])
+})
+
+/** OpenAPI 业务错误只返回短错误，不透传完整响应对象。 */
 test('方舟用量响应：规整 OpenAPI 权限错误与未知 schema', () => {
   const denied = parseArkUsageResponse('coding-plan', 403, JSON.stringify({
     ResponseMetadata: { Error: { Code: 'AccessDenied', Message: '没有用量查询权限' } },
@@ -54,7 +80,7 @@ test('方舟用量响应：规整 OpenAPI 权限错误与未知 schema', () => {
 
   const unknown = parseArkUsageResponse('agent-plan', 200, JSON.stringify({ Result: { Unexpected: [] } }))
   assert.equal(unknown.subscribed, false)
-  assert.equal(unknown.error, '火山方舟用量响应缺少可识别的额度数组。')
+  assert.equal(unknown.error, '火山方舟用量响应缺少可识别的额度结构。')
   const unsubscribed = parseArkUsageResponse('agent-plan', 200, JSON.stringify({ Result: null }))
   assert.equal(unsubscribed.error, undefined)
   assert.equal(unsubscribed.subscribed, false)

@@ -136,21 +136,51 @@ export function parseArkUsageResponse(product: ArkUsageProduct, status: number, 
   const resultValue = root.Result
   if (product === 'agent-plan' && resultValue === null) return { product, subscribed: false, periods: [] }
   const result = resultValue !== null && typeof resultValue === 'object' ? resultValue as Record<string, unknown> : root
+  const periods: ArkPlanUsage['periods'] = []
+
+  // Agent Plan 真实 OpenAPI 使用三个具名 AFP 桶，不返回 QuotaUsage 数组。
+  if (product === 'agent-plan') {
+    const buckets: Array<[string, string]> = [
+      ['AFPFiveHour', '5h'],
+      ['AFPWeekly', 'weekly'],
+      ['AFPMonthly', 'monthly'],
+    ]
+    let recognized = false
+    for (const [field, level] of buckets) {
+      const bucket = result[field]
+      if (bucket === null || typeof bucket !== 'object') continue
+      recognized = true
+      const row = bucket as Record<string, unknown>
+      const used = finiteNumber(row.Used)
+      const total = finiteNumber(row.Quota)
+      const usedPercent = used !== undefined && total !== undefined && total > 0 ? used / total * 100 : undefined
+      periods.push({
+        level,
+        used,
+        total,
+        usedPercent: usedPercent === undefined ? undefined : Math.max(0, Math.min(100, usedPercent)),
+        resetAt: normalizeTimestamp(row.ResetTime),
+      })
+    }
+    if (recognized) return { product, subscribed: true, periods }
+  }
+
   let rawPeriods: unknown[] | undefined
   if (Array.isArray(result.QuotaUsage)) rawPeriods = result.QuotaUsage
   else if (Array.isArray(result.Usages)) rawPeriods = result.Usages
   else if (Array.isArray(result.Details)) rawPeriods = result.Details
   if (rawPeriods === undefined) {
-    return { product, subscribed: false, periods: [], error: '火山方舟用量响应缺少可识别的额度数组。' }
+    // Coding Plan 未订阅时只返回 Status/UpdateTimestamp，QuotaUsage 会被省略。
+    if (product === 'coding-plan' && ('Status' in result || 'UpdateTimestamp' in result)) return { product, subscribed: false, periods: [] }
+    return { product, subscribed: false, periods: [], error: '火山方舟用量响应缺少可识别的额度结构。' }
   }
-  const periods: ArkPlanUsage['periods'] = []
   for (const item of rawPeriods) {
     if (item === null || typeof item !== 'object') continue
     const row = item as Record<string, unknown>
     const rawLevel = row.Level ?? row.Type ?? row.Period ?? row.Label ?? row.Window
     if (typeof rawLevel !== 'string' || rawLevel === '' || rawLevel === 'daily') continue
     const used = finiteNumber(row.Used)
-    const total = finiteNumber(row.Total)
+    const total = finiteNumber(row.Total ?? row.Quota)
     let usedPercent = finiteNumber(row.Percent ?? row.UsedPercent ?? row.UsagePercent)
     if (usedPercent === undefined && used !== undefined && total !== undefined && total > 0) usedPercent = used / total * 100
     periods.push({
