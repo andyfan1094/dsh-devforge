@@ -60,7 +60,6 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, accessKeyEnv, secretKeyEnv, s
   const [status, setStatus] = useState<ArkStatus | null>(null)
   const [dashboard, setDashboard] = useState<ArkDashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [settingUp, setSettingUp] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [apiKeyDraft, setApiKeyDraft] = useState('')
@@ -118,7 +117,16 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, accessKeyEnv, secretKeyEnv, s
     setError('')
     try {
       await api.setCredential(ref, trimmed)
-      if (ref === apiKeyEnv) setApiKeyDraft('')
+      if (ref === apiKeyEnv) {
+        setApiKeyDraft('')
+        const nextStatus = await api.setupArkModels()
+        if (mounted.current) {
+          setStatus(nextStatus)
+          onStatusChange?.(nextStatus)
+          setNotice({ kind: 'success', text: 'Plan API Key 已保存，ark-code-latest 已就绪。' })
+        }
+        return
+      }
       if (ref === accessKeyEnv) setAccessKeyDraft('')
       if (ref === secretKeyEnv) setSecretKeyDraft('')
       if (mounted.current) setNotice({ kind: 'success', text: label + '已保存到 ' + ref + '。' })
@@ -127,22 +135,6 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, accessKeyEnv, secretKeyEnv, s
       if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
     } finally {
       if (mounted.current) setSaving(null)
-    }
-  }
-
-  const setupModels = async (): Promise<void> => {
-    if (settingUp) return
-    setSettingUp(true)
-    setError('')
-    try {
-      const nextStatus = await api.setupArkModels()
-      if (mounted.current) setStatus(nextStatus)
-      onStatusChange?.(nextStatus)
-      if (mounted.current) setNotice({ kind: 'success', text: '已配置 ark-code-latest 和官方 Plan Base URL。' })
-    } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (mounted.current) setSettingUp(false)
     }
   }
 
@@ -192,27 +184,29 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, accessKeyEnv, secretKeyEnv, s
 
         <section className={css['usageSection']}>
           <h3 className={css['sectionTitle']}>模型路由</h3>
-          <div className={css['modelToolbar']}>
-            <button type="button" className={css['ghostButton']} disabled={settingUp || !status?.credentialConfigured} onClick={() => { void setupModels() }}>{settingUp ? '配置中…' : '配置 ark-code-latest'}</button>
-            <button type="button" className={css['ghostButton']} disabled={fetching || !status?.managementCredentialsConfigured} onClick={() => { void fetchOfficialModels() }} title="需要下方的火山云 AK/SK">{fetching ? '拉取中…' : '从官方拉取模型'}</button>
-          </div>
-          {status?.models.length === 0 ? <div className={css['empty']}>尚未配置任何模型。</div> : status?.models.map((model) => <div key={model.id} className={css['metricRow']}><span>{model.id}</span><strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong></div>)}
+          {status?.models.length === 0 ? <div className={css['empty']}>保存 Plan API Key 后会自动配置 <code>ark-code-latest</code>。</div> : status?.models.map((model) => <div key={model.id} className={css['metricRow']}><span>{model.id}</span><strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待保存 Plan Key'}</strong></div>)}
+          <p className={css['planInfoHint']}>Plan 数据面不提供模型枚举接口。日常调用只需一个 Plan API Key，保存后会自动启用 <code>ark-code-latest</code>。</p>
         </section>
 
-        <section className={css['usageSection']}>
-          <h3 className={css['sectionTitle']}>AFP 管控面凭据（可选）</h3>
-          <div className={css['metricRow']}><span>Access Key 引用</span><strong>{accessKeyEnv}</strong></div>
-          <div className={css['keyInputRow']}>
-            <input type="password" className={css['keyInput']} placeholder="粘贴火山云 Access Key ID" value={accessKeyDraft} onChange={(event) => { setAccessKeyDraft(event.target.value); setNotice(null) }} autoComplete="off" spellCheck={false} />
-            <button type="button" className={css['ghostButton']} disabled={saving === accessKeyEnv || accessKeyDraft.trim() === ''} onClick={() => { void saveCredential(accessKeyEnv, accessKeyDraft, 'Access Key ID') }}>{saving === accessKeyEnv ? '保存中…' : '保存 AK'}</button>
+        <details className={css['arkAdvanced']}>
+          <summary>高级管理：官方模型清单与 AFP 统计（可选）</summary>
+          <div className={css['arkAdvancedContent']}>
+            <p className={css['planInfoHint']}>完整官方模型清单和套餐 AFP 统计属于火山云管控面，官方规定必须由一对 AK/SK 做签名认证。它们不影响 Coding Plan 的普通模型调用。</p>
+            <div className={css['metricRow']}><span>Access Key 引用</span><strong>{accessKeyEnv}</strong></div>
+            <div className={css['keyInputRow']}>
+              <input type="password" className={css['keyInput']} placeholder="粘贴火山云 Access Key ID" value={accessKeyDraft} onChange={(event) => { setAccessKeyDraft(event.target.value); setNotice(null) }} autoComplete="off" spellCheck={false} />
+              <button type="button" className={css['ghostButton']} disabled={saving === accessKeyEnv || accessKeyDraft.trim() === ''} onClick={() => { void saveCredential(accessKeyEnv, accessKeyDraft, 'Access Key ID') }}>{saving === accessKeyEnv ? '保存中…' : '保存 AK'}</button>
+            </div>
+            <div className={css['metricRow']}><span>Secret Key 引用</span><strong>{secretKeyEnv}</strong></div>
+            <div className={css['keyInputRow']}>
+              <input type="password" className={css['keyInput']} placeholder="粘贴火山云 Secret Access Key" value={secretKeyDraft} onChange={(event) => { setSecretKeyDraft(event.target.value); setNotice(null) }} autoComplete="off" spellCheck={false} />
+              <button type="button" className={css['ghostButton']} disabled={saving === secretKeyEnv || secretKeyDraft.trim() === ''} onClick={() => { void saveCredential(secretKeyEnv, secretKeyDraft, 'Secret Access Key') }}>{saving === secretKeyEnv ? '保存中…' : '保存 SK'}</button>
+            </div>
+            {status?.managementCredentialsConfigured
+              ? <button type="button" className={css['ghostButton']} disabled={fetching} onClick={() => { void fetchOfficialModels() }}>{fetching ? '同步中…' : '同步完整官方模型清单'}</button>
+              : <p className={css['planInfoHint']}>配置并保存 AK/SK 后，可同步完整官方模型清单并在“用量统计”查看 AFP。</p>}
           </div>
-          <div className={css['metricRow']}><span>Secret Key 引用</span><strong>{secretKeyEnv}</strong></div>
-          <div className={css['keyInputRow']}>
-            <input type="password" className={css['keyInput']} placeholder="粘贴火山云 Secret Access Key" value={secretKeyDraft} onChange={(event) => { setSecretKeyDraft(event.target.value); setNotice(null) }} autoComplete="off" spellCheck={false} />
-            <button type="button" className={css['ghostButton']} disabled={saving === secretKeyEnv || secretKeyDraft.trim() === ''} onClick={() => { void saveCredential(secretKeyEnv, secretKeyDraft, 'Secret Access Key') }}>{saving === secretKeyEnv ? '保存中…' : '保存 SK'}</button>
-          </div>
-          <p className={css['planInfoHint']}>AFP 用量和官方套餐模型列表由火山方舟 OpenAPI 管控面提供，官方要求 AK/SK HMAC 签名；只配 Plan API Key 仍可正常调用模型。</p>
-        </section>
+        </details>
       </>}
 
       {isUsage && !status?.managementCredentialsConfigured && <div className={css['banner']} data-kind="warning">AFP 用量需要火山云 AK/SK。请切换到“使用配置”保存 Access Key ID 和 Secret Access Key。</div>}

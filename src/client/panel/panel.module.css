@@ -178,6 +178,10 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .keyInput:focus { border-color: var(--dsw-alias-state-business-primary, #2563eb); }
 .keyInput::placeholder { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 .modelToolbar { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; }
+.arkAdvanced { border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); padding-top: 10px; }
+.arkAdvanced > summary { cursor: pointer; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; font-weight: 600; }
+.arkAdvanced[open] > summary { color: var(--dsw-alias-label-primary, #1f2329); }
+.arkAdvancedContent { display: flex; flex-direction: column; gap: 4px; padding-top: 10px; }
 
 .metricRow strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
 .metricRow strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
