@@ -5,6 +5,7 @@ export const ARK_API = {
   status: '/api/dsh-devforge/ark/status',
   setup: '/api/dsh-devforge/ark/setup',
   dashboard: '/api/dsh-devforge/ark/dashboard',
+  usageCredentials: '/api/dsh-devforge/ark/usage/credentials',
   refreshUsage: '/api/dsh-devforge/ark/usage/refresh',
 } as const
 
@@ -35,6 +36,12 @@ export interface ArkUsageDashboard {
   fetchedAt: number
   stale: boolean
   warnings: string[]
+}
+
+/** AK/SK 验证并保存后的脱敏结果。 */
+export interface ArkUsageCredentialsResult {
+  status: ArkStatus
+  dashboard: ArkUsageDashboard
 }
 
 /** 方舟模型路由与凭据的脱敏状态。 */

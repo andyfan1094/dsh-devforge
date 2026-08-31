@@ -178,3 +178,110 @@ test('方舟用量服务：缓存命中与刷新失败降级', async () => {
     globalThis.fetch = originalFetch
   }
 })
+
+/** 验证成功后才成对保存，并立即返回配置状态和用量快照。 */
+test('方舟 AK/SK 保存：验证成功后成对写入', async () => {
+  const originalFetch = globalThis.fetch
+  const values = new Map<string, string>()
+  const writes: string[] = []
+  const fakeContext = {
+    credentials: {
+      resolve: async (ref: string) => values.has(String(ref)) ? { value: values.get(String(ref)) } : undefined,
+      describe: async (ref: string) => ({ configured: values.has(String(ref)), writable: true }),
+      set: async (ref: string, value: string) => { values.set(String(ref), value); writes.push(String(ref)) },
+      unset: async (ref: string) => { values.delete(String(ref)) },
+    },
+    settings: {
+      get: () => ({ providers: {} }),
+    },
+  }
+  try {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const level = String(input).includes('Action=GetAFPUsage') ? '5h' : 'session'
+      return new Response(JSON.stringify({ Result: { QuotaUsage: [{ Level: level, Percent: 15 }] } }), { status: 200 })
+    }) as typeof fetch
+    const service = new ArkCodingPlanService(fakeContext as never, {
+      enabled: true,
+      apiKeyEnv: 'ARK_CODING_PLAN_API_KEY',
+      usageAccessKeyEnv: 'VOLC_ACCESS_KEY',
+      usageSecretKeyEnv: 'VOLC_SECRET_KEY',
+      usageTimeoutMs: 1000,
+    })
+    const result = await service.saveUsageCredentials(' new-access ', ' new-secret ')
+    assert.deepEqual(writes, ['VOLC_ACCESS_KEY', 'VOLC_SECRET_KEY'])
+    assert.equal(values.get('VOLC_ACCESS_KEY'), 'new-access')
+    assert.equal(values.get('VOLC_SECRET_KEY'), 'new-secret')
+    assert.equal(result.status.usageAccessKeyConfigured, true)
+    assert.equal(result.status.usageSecretKeyConfigured, true)
+    assert.equal(result.dashboard.plans.length, 2)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+/** 上游鉴权失败时不允许任何凭据落盘。 */
+test('方舟 AK/SK 保存：验证失败不写入', async () => {
+  const originalFetch = globalThis.fetch
+  let writes = 0
+  const fakeContext = {
+    credentials: {
+      resolve: async () => undefined,
+      set: async () => { writes += 1 },
+      unset: async () => undefined,
+    },
+  }
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      ResponseMetadata: { Error: { Code: 'AccessDenied', Message: '凭据无权查询' } },
+    }), { status: 403 })) as typeof fetch
+    const service = new ArkCodingPlanService(fakeContext as never, {
+      enabled: true,
+      apiKeyEnv: 'ARK_CODING_PLAN_API_KEY',
+      usageAccessKeyEnv: 'VOLC_ACCESS_KEY',
+      usageSecretKeyEnv: 'VOLC_SECRET_KEY',
+      usageTimeoutMs: 1000,
+    })
+    await assert.rejects(service.saveUsageCredentials('bad-access', 'bad-secret'), /用量查询失败/)
+    assert.equal(writes, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+/** Secret Key 写入失败时必须恢复旧 Access Key，避免半配置。 */
+test('方舟 AK/SK 保存：第二项失败回滚第一项', async () => {
+  const originalFetch = globalThis.fetch
+  const values = new Map<string, string>([
+    ['VOLC_ACCESS_KEY', 'old-access'],
+    ['VOLC_SECRET_KEY', 'old-secret'],
+  ])
+  const fakeContext = {
+    credentials: {
+      resolve: async (ref: string) => ({ value: values.get(String(ref)) }),
+      set: async (ref: string, value: string) => {
+        const name = String(ref)
+        if (name === 'VOLC_SECRET_KEY' && value === 'new-secret') throw new Error('模拟 Secret Key 写入失败')
+        values.set(name, value)
+      },
+      unset: async (ref: string) => { values.delete(String(ref)) },
+    },
+  }
+  try {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const level = String(input).includes('Action=GetAFPUsage') ? '5h' : 'session'
+      return new Response(JSON.stringify({ Result: { QuotaUsage: [{ Level: level, Percent: 10 }] } }), { status: 200 })
+    }) as typeof fetch
+    const service = new ArkCodingPlanService(fakeContext as never, {
+      enabled: true,
+      apiKeyEnv: 'ARK_CODING_PLAN_API_KEY',
+      usageAccessKeyEnv: 'VOLC_ACCESS_KEY',
+      usageSecretKeyEnv: 'VOLC_SECRET_KEY',
+      usageTimeoutMs: 1000,
+    })
+    await assert.rejects(service.saveUsageCredentials('new-access', 'new-secret'), /原凭据已保留/)
+    assert.equal(values.get('VOLC_ACCESS_KEY'), 'old-access')
+    assert.equal(values.get('VOLC_SECRET_KEY'), 'old-secret')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

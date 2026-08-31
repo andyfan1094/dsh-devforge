@@ -196,18 +196,13 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
     setSavingUsageKeys(true)
     setError('')
     try {
-      const accessRef = status?.usageAccessKeyEnv ?? 'VOLC_ACCESS_KEY'
-      const secretRef = status?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY'
-      await api.setCredential(accessRef, accessKey)
-      await api.setCredential(secretRef, secretKey)
-      const nextStatus = await api.getArkStatus()
-      const nextDashboard = await api.refreshArkUsage()
+      const result = await api.saveArkUsageCredentials(accessKey, secretKey)
       if (!mounted.current) return
       setAccessKeyDraft('')
       setSecretKeyDraft('')
-      applyStatus(nextStatus)
-      setDashboard(nextDashboard)
-      setNotice({ kind: 'success', text: '火山控制面 AK/SK 已保存并通过用量接口验证。' })
+      applyStatus(result.status)
+      setDashboard(result.dashboard)
+      setNotice({ kind: 'success', text: '火山控制面 AK/SK 已验证并成对保存，用量看板已刷新。' })
     } catch (cause) {
       if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
     } finally {

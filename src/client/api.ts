@@ -9,7 +9,7 @@ import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, t
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
-import { ARK_API, type ArkStatus, type ArkUsageDashboard } from '../ark/protocol.ts'
+import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -256,6 +256,16 @@ export class DevforgeApi {
   async getArkDashboard(signal?: AbortSignal): Promise<ArkUsageDashboard> {
     const data = await readJson<{ dashboard: ArkUsageDashboard }>(await fetch(ARK_API.dashboard, { signal }))
     return data.dashboard
+  }
+
+  /** 验证并成对保存方舟控制面 AK/SK；验证失败不会落盘。 */
+  async saveArkUsageCredentials(accessKey: string, secretKey: string, signal?: AbortSignal): Promise<ArkUsageCredentialsResult> {
+    return await readJson<ArkUsageCredentialsResult>(await fetch(ARK_API.usageCredentials, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accessKey, secretKey }),
+      signal,
+    }))
   }
 
   /** 跳过缓存并实时刷新方舟套餐用量。 */

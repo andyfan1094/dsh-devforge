@@ -49,6 +49,26 @@ function writeError(res: import('node:http').ServerResponse, error: unknown): vo
   writeJson(res, 500, { ok: false, error: '火山方舟 Agent/Coding Plan 服务发生内部错误。' })
 }
 
+/** 读取 AK/SK 保存请求；限制体积且不把内容写入错误。 */
+async function readUsageCredentials(req: import('node:http').IncomingMessage): Promise<{ accessKey: string; secretKey: string }> {
+  const chunks: Buffer[] = []
+  let total = 0
+  const maxBytes = 16 * 1024
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += buffer.length
+    if (total > maxBytes) throw new ArkServiceError('AK/SK 请求体超过 16 KiB 上限。', 400)
+    chunks.push(buffer)
+  }
+  if (total === 0) throw new ArkServiceError('AK/SK 请求体为空。', 400)
+  let payload: unknown
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw new ArkServiceError('AK/SK 请求体不是合法 JSON。', 400) }
+  if (payload === null || typeof payload !== 'object') throw new ArkServiceError('AK/SK 请求体必须是 JSON 对象。', 400)
+  const body = payload as { accessKey?: unknown; secretKey?: unknown }
+  if (typeof body.accessKey !== 'string' || typeof body.secretKey !== 'string') throw new ArkServiceError('Access Key 与 Secret Key 必须是字符串。', 400)
+  return { accessKey: body.accessKey, secretKey: body.secretKey }
+}
+
 /** 方舟 Coding Plan 路由。 */
 export function makeArkRoutes(service: ArkCodingPlanService): WebRoute[] {
   return [
@@ -77,6 +97,19 @@ export function makeArkRoutes(service: ArkCodingPlanService): WebRoute[] {
         if (!guard(req, res)) return
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         try { writeJson(res, 200, { ok: true, dashboard: await service.dashboard() }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ARK_API.usageCredentials,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readUsageCredentials(req)
+          const result = await service.saveUsageCredentials(body.accessKey, body.secretKey)
+          writeJson(res, 200, { ok: true, ...result })
+        } catch (error) { writeError(res, error) }
       },
     },
     {

@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import type { ArkStatus, ArkUsageDashboard } from './protocol.ts'
+import type { ArkStatus, ArkUsageCredentialsResult, ArkUsageDashboard } from './protocol.ts'
 import { fetchArkPlanUsage } from './usage.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
@@ -212,6 +212,53 @@ export class ArkCodingPlanService {
     return await this.startUsageFetch(credentials, signal)
   }
 
+  /**
+   * 先验证控制面 AK/SK，再成对写入 DSH credentials 服务。
+   *
+   * 验证失败不落盘；第二项写入失败会恢复第一项原值，避免页面出现半配置状态。
+   */
+  async saveUsageCredentials(accessKeyValue: string, secretKeyValue: string, signal?: AbortSignal): Promise<ArkUsageCredentialsResult> {
+    const accessKey = accessKeyValue.trim()
+    const secretKey = secretKeyValue.trim()
+    if (accessKey === '' || secretKey === '') throw new ArkServiceError('Access Key 与 Secret Key 必须同时填写。', 400)
+    if (accessKey.length > 4096 || secretKey.length > 4096) throw new ArkServiceError('AK/SK 长度超过安全上限。', 400)
+
+    const previousInflight = this.usageInflight
+    if (previousInflight !== undefined) {
+      try { await previousInflight } catch { /* 旧请求不影响新凭据验证。 */ }
+    }
+    const previousCache = this.usageCache
+    const accessReference = this.usageAccessReference()
+    const secretReference = this.usageSecretReference()
+    const previousAccess = await this.ctx.credentials.resolve(accessReference)
+    const dashboard = await this.fetchUsage({ accessKey, secretKey }, signal, false)
+
+    let accessChanged = false
+    try {
+      await this.ctx.credentials.set(accessReference, accessKey)
+      accessChanged = true
+      await this.ctx.credentials.set(secretReference, secretKey)
+    } catch {
+      this.usageCache = previousCache
+      if (accessChanged) {
+        try {
+          await this.restoreCredential(accessReference, previousAccess?.value)
+        } catch {
+          throw new ArkServiceError('AK/SK 保存失败且 Access Key 回滚失败，请在 DSH 凭据管理中检查。', 500)
+        }
+      }
+      throw new ArkServiceError('火山控制面 AK/SK 保存失败，原凭据已保留。', 500)
+    }
+
+    return { status: await this.status(), dashboard }
+  }
+
+  /** 恢复单项旧凭据，用于成对写入的失败回滚。 */
+  private async restoreCredential(reference: ReturnType<typeof credentialRef>, previousValue: string | undefined): Promise<void> {
+    if (previousValue === undefined) await this.ctx.credentials.unset(reference)
+    else await this.ctx.credentials.set(reference, previousValue)
+  }
+
   /** 建立唯一的在途请求，并在结算后释放去重句柄。 */
   private async startUsageFetch(credentials: ResolvedUsageCredentials, signal?: AbortSignal): Promise<ArkUsageDashboard> {
     const inFlight = this.fetchUsage(credentials, signal).finally(() => {
@@ -233,7 +280,7 @@ export class ArkCodingPlanService {
   }
 
   /** 执行一次控制面调用并把单套餐错误规整为页面警告。 */
-  private async fetchUsage(credentials: ResolvedUsageCredentials, signal?: AbortSignal): Promise<ArkUsageDashboard> {
+  private async fetchUsage(credentials: ResolvedUsageCredentials, signal?: AbortSignal, allowStaleFallback = true): Promise<ArkUsageDashboard> {
     try {
       const plans = await fetchArkPlanUsage({
         accessKey: credentials.accessKey,
@@ -261,7 +308,7 @@ export class ArkCodingPlanService {
       return dashboard
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 320) : '未知错误'
-      if (this.usageCache !== undefined) {
+      if (allowStaleFallback && this.usageCache !== undefined) {
         return {
           ...this.usageCache,
           stale: true,
