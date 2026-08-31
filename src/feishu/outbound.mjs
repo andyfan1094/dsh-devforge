@@ -130,6 +130,7 @@ export function describeTurnEndReason(reason) {
   if (kind === 'completed') return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '' }
   if (kind === 'max-tokens') return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '至少一步达到输出上限' }
   if (kind === 'blocked') return { failed: false, tone: 'yellow', icon: '⏸', label: '任务等待输入', text: '' }
+  if (kind === 'paused') return { failed: false, tone: 'yellow', icon: '⏸', label: '任务已暂停', text: '' }
   if (kind === 'aborted') {
     const cause = String(reason.reason ?? reason.cause ?? '')
     const causeText = cause === 'user' ? '由用户中止'
@@ -182,7 +183,7 @@ export function buildCompletionCard({ subject, turn, durationMs, reason }) {
       elements: [
         ...(safeSubject !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: '**' + safeSubject + '**' } }] : []),
         { tag: 'div', fields: [
-          { is_short: true, text: { tag: 'lark_md', content: '**轮次**\n第 ' + safeTurn + ' 轮' } },
+          { is_short: true, text: { tag: 'lark_md', content: '**轮次**\n共 ' + safeTurn + ' 轮' } },
           { is_short: true, text: { tag: 'lark_md', content: '**耗时**\n' + durationText } },
         ] },
         ...(reasonText !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: reasonText } }] : []),
