@@ -6,11 +6,20 @@ import { XIANYU_PUBLISH_URL, XianyuPublishService } from '../src/browser/xianyu-
 class FakePublishBrowser {
   readonly calls: Array<{ name: string; args: unknown[] }> = []
   private readonly snapshots: string[]
+  private readonly tabList: string
 
-  constructor(snapshots: string[]) { this.snapshots = [...snapshots] }
+  constructor(snapshots: string[], tabList = '') {
+    this.snapshots = [...snapshots]
+    this.tabList = tabList
+  }
 
   async withExclusive<T>(operation: () => Promise<T>): Promise<T> { this.calls.push({ name: 'exclusive', args: [] }); return await operation() }
-  async tabs(action: string, index?: number, url?: string): Promise<string> { this.calls.push({ name: 'tabs', args: [action, index, url] }); return '' }
+  async tabs(action: string, index?: number, url?: string, origin?: string): Promise<string> { this.calls.push({ name: 'tabs', args: [action, index, url, origin] }); return action === 'list' ? this.tabList : '' }
+  async closeCurrentTaskTab(urlHint?: string): Promise<{ closed: boolean; url?: string; reason?: string }> {
+    this.calls.push({ name: 'closeCurrentTaskTab', args: [urlHint] })
+    if (urlHint !== undefined && !this.tabList.includes(urlHint)) return { closed: false, reason: '当前页与任务不符，跳过关闭' }
+    return { closed: true }
+  }
   async snapshot(): Promise<string> { this.calls.push({ name: 'snapshot', args: [] }); return this.snapshots.shift() ?? '' }
   async click(ref: string): Promise<string> { this.calls.push({ name: 'click', args: [ref] }); return '' }
   async type(ref: string, text: string, submit = false): Promise<string> { this.calls.push({ name: 'type', args: [ref, text, submit] }); return '' }
@@ -30,15 +39,18 @@ test('发布前必须精确确认且不触发浏览器动作', async () => {
 })
 
 test('确认后使用独立标签页上传填写并核验详情页', async () => {
-  const browser = new FakePublishBrowser([IMAGE_SNAPSHOT, FORM_SNAPSHOT, PUBLISH_SNAPSHOT, SUCCESS_SNAPSHOT])
+  const tabList = '- 0: (current) [宝贝详情](https://www.goofish.com/item?id=123&categoryId=1)'
+  const browser = new FakePublishBrowser([IMAGE_SNAPSHOT, FORM_SNAPSHOT, PUBLISH_SNAPSHOT, SUCCESS_SNAPSHOT], tabList)
   const service = new XianyuPublishService(browser)
   const result = await service.publish({ imagePath: '/tmp/a.png', title: '专业标题', description: '专业描述', price: 6 }, '确认发布')
   assert.deepEqual(result, { published: true, itemUrl: 'https://www.goofish.com/item?id=123&categoryId=1', title: '专业标题', price: 6 })
-  assert.ok(browser.calls.some(call => call.name === 'tabs' && call.args[0] === 'new' && call.args[2] === XIANYU_PUBLISH_URL))
+  assert.ok(browser.calls.some(call => call.name === 'tabs' && call.args[0] === 'new' && call.args[2] === XIANYU_PUBLISH_URL && call.args[3] === 'xianyu-publish'))
   assert.ok(browser.calls.some(call => call.name === 'upload' && call.args[0] === '/tmp/a.png'))
   assert.ok(browser.calls.some(call => call.name === 'type' && call.args[0] === 'e55' && call.args[1] === ['专业标题', '专业描述'].join(String.fromCharCode(10))))
   assert.ok(browser.calls.some(call => call.name === 'type' && call.args[0] === 'e72' && call.args[1] === '6.00'))
   assert.ok(browser.calls.some(call => call.name === 'click' && call.args[0] === 'e133'))
+  // 发布成功即关闭本次任务标签页，避免闲置标签页堆积。
+  assert.ok(browser.calls.some(call => call.name === 'closeCurrentTaskTab' && call.args[0] === 'goofish.com'))
 })
 
 test('平台要求手机认证时不误报发布成功', async () => {
@@ -46,4 +58,5 @@ test('平台要求手机认证时不误报发布成功', async () => {
   const browser = new FakePublishBrowser([IMAGE_SNAPSHOT, FORM_SNAPSHOT, PUBLISH_SNAPSHOT, auth])
   const service = new XianyuPublishService(browser)
   await assert.rejects(service.publish({ imagePath: '/tmp/a.png', title: '标题', description: '描述', price: 6 }, '确认发布'), /手机认证/)
+  assert.ok(browser.calls.every(call => call.name !== 'closeCurrentTaskTab'))
 })

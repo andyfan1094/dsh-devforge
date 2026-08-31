@@ -1,5 +1,5 @@
 /** 闲鱼消息页自动化：只复用服务工厂的可见浏览器与现有登录态。 */
-import type { BrowserService } from './service.ts'
+import { TAB_ORIGIN_XIANYU_MESSAGE, type BrowserService } from './service.ts'
 
 /** 闲鱼网页版消息中心。 */
 export const XIANYU_MESSAGES_URL = 'https://www.goofish.com/im'
@@ -155,7 +155,8 @@ export class XianyuMessageService {
     }
     const listed = await this.browser.tabs('list')
     const index = findXianyuMessagesTabIndex(listed)
-    if (index === undefined) await this.browser.tabs('new', undefined, XIANYU_MESSAGES_URL)
+    // 消息页跨会话复用并标记常驻来源；评估建议不会把它当作可关闭标签页。
+    if (index === undefined) await this.browser.tabs('new', undefined, XIANYU_MESSAGES_URL, TAB_ORIGIN_XIANYU_MESSAGE)
     else await this.browser.tabs('select', index)
   }
 

@@ -9,15 +9,22 @@ class FakeXhsBrowser {
   private readonly snapshots: string[]
   private readonly clickResults: string[]
   private readonly evaluateResults: string[]
+  private readonly tabList: string
 
-  constructor(snapshots: string[], clickResults: string[], evaluateResults: string[]) {
+  constructor(snapshots: string[], clickResults: string[], evaluateResults: string[], tabList = '') {
     this.snapshots = [...snapshots]
     this.clickResults = [...clickResults]
     this.evaluateResults = [...evaluateResults]
+    this.tabList = tabList
   }
 
   async withExclusive<T>(operation: () => Promise<T>): Promise<T> { this.calls.push({ name: 'exclusive', args: [] }); return await operation() }
-  async tabs(action: string, index?: number, url?: string): Promise<string> { this.calls.push({ name: 'tabs', args: [action, index, url] }); return '' }
+  async tabs(action: string, index?: number, url?: string, origin?: string): Promise<string> { this.calls.push({ name: 'tabs', args: [action, index, url, origin] }); return action === 'list' ? this.tabList : '' }
+  async closeCurrentTaskTab(urlHint?: string): Promise<{ closed: boolean; url?: string; reason?: string }> {
+    this.calls.push({ name: 'closeCurrentTaskTab', args: [urlHint] })
+    if (urlHint !== undefined && !this.tabList.includes(urlHint)) return { closed: false, reason: '当前页与任务不符，跳过关闭' }
+    return { closed: true }
+  }
   async snapshot(): Promise<string> { this.calls.push({ name: 'snapshot', args: [] }); return this.snapshots.shift() ?? '' }
   async click(ref: string): Promise<string> { this.calls.push({ name: 'click', args: [ref] }); return this.clickResults.shift() ?? '' }
   async type(ref: string, text: string, submit = false): Promise<string> { this.calls.push({ name: 'type', args: [ref, text, submit] }); return '' }
@@ -60,27 +67,32 @@ test('未登录时明确报错且不继续页面操作', async () => {
   const browser = new FakeXhsBrowser([LOGIN], [], [])
   const service = new XiaohongshuPublishService(browser)
   await assert.rejects(service.publish({ imagePath: '/tmp/c.png', title: '标题', content: '正文', tags: [] }, '确认发布'), /未登录/)
-  assert.ok(browser.calls.some((call) => call.name === 'tabs' && call.args[2] === XHS_PUBLISH_URL))
+  assert.ok(browser.calls.some((call) => call.name === 'tabs' && call.args[2] === XHS_PUBLISH_URL && call.args[3] === 'xhs-publish'))
+  assert.ok(browser.calls.every((call) => call.name !== 'closeCurrentTaskTab'))
 })
 
 test('确认后独立标签页填写图文并核验发布成功', async () => {
+  const tabList = '- 0: (current) [发布成功](https://creator.xiaohongshu.com/publish/success?code=abc)'
   const browser = new FakeXhsBrowser(
     [INITIAL, EDITOR, TOOLTIP_HIT, TOOLTIP_MISS, SUCCESS],
     [SWITCHED, ''],
     ['ok', 'inserted', 'ok', 'inserted', 'clicked', 'https://www.xiaohongshu.com/explore/note1'],
+    tabList,
   )
   const service = new XiaohongshuPublishService(browser)
   const result = await service.publish({ imagePath: '/tmp/c.png', title: 'AI编程羊毛', content: '正文内容', tags: ['人工智能', 'AI工具'] }, '确认发布')
   assert.equal(result.published, true)
   assert.equal(result.noteUrl, 'https://www.xiaohongshu.com/explore/note1')
   assert.deepEqual(result.tags, ['人工智能'])
-  assert.ok(browser.calls.some((call) => call.name === 'tabs' && call.args[0] === 'new' && call.args[2] === XHS_PUBLISH_URL))
+  assert.ok(browser.calls.some((call) => call.name === 'tabs' && call.args[0] === 'new' && call.args[2] === XHS_PUBLISH_URL && call.args[3] === 'xhs-publish'))
   assert.ok(browser.calls.some((call) => call.name === 'clickAndUpload' && call.args[1] === '/tmp/c.png'))
   assert.ok(browser.calls.some((call) => call.name === 'type' && call.args[0] === 'e41' && call.args[1] === 'AI编程羊毛'))
   assert.ok(browser.calls.some((call) => call.name === 'type' && call.args[0] === 'e42' && call.args[1] === '正文内容'))
   assert.ok(browser.calls.some((call) => call.name === 'click' && call.args[0] === 'e51'))
   assert.ok(browser.calls.some((call) => call.name === 'pressKey' && call.args[0] === 'Backspace'))
   assert.ok(browser.calls.some((call) => call.name === 'evaluate' && String(call.args[0]).includes("'发布'")))
+  // 发布成功即关闭本次任务标签页，避免闲置标签页堆积。
+  assert.ok(browser.calls.some((call) => call.name === 'closeCurrentTaskTab' && call.args[0] === 'xiaohongshu.com'))
 })
 
 test('点击隐藏页签副本超时后换下一个同名节点', async () => {

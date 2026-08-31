@@ -1,5 +1,5 @@
 /** 小红书图文笔记发布流程：复用服务工厂的可见浏览器与当前登录态。 */
-import type { BrowserService } from './service.ts'
+import { TAB_ORIGIN_XHS_PUBLISH, type BrowserService } from './service.ts'
 
 /** 小红书创作服务平台发布页地址。 */
 export const XHS_PUBLISH_URL = 'https://creator.xiaohongshu.com/publish/publish?source=official'
@@ -22,7 +22,7 @@ export interface XhsPublishResult {
   tags: string[]
 }
 
-type XhsPublishBrowser = Pick<BrowserService, 'snapshot' | 'click' | 'type' | 'upload' | 'tabs' | 'withExclusive' | 'clickAndUpload' | 'evaluate' | 'pressKey'>
+type XhsPublishBrowser = Pick<BrowserService, 'snapshot' | 'click' | 'type' | 'upload' | 'tabs' | 'withExclusive' | 'clickAndUpload' | 'evaluate' | 'pressKey' | 'closeCurrentTaskTab'>
 
 /** 从快照中按可见文本取一个稳定元素引用。 */
 function findRef(snapshot: string, visibleText: string): string | undefined {
@@ -86,8 +86,8 @@ export class XiaohongshuPublishService {
 
   /** 在互斥区内按小红书真实页面顺序执行发布。 */
   private async publishUnlocked(draft: XhsNoteDraft): Promise<XhsPublishResult> {
-    // 每篇笔记使用独立标签页，其它任务页面保持原状。
-    await this.browser.tabs('new', undefined, XHS_PUBLISH_URL)
+    // 每篇笔记使用独立标签页并标记来源，其它任务页面保持原状。
+    await this.browser.tabs('new', undefined, XHS_PUBLISH_URL, TAB_ORIGIN_XHS_PUBLISH)
     const initial = await this.waitForSnapshot((value) => value.includes('上传图文') || value.includes('短信登录'), 15)
     if (initial.includes('短信登录') && !initial.includes('上传图文')) throw new Error('小红书创作平台未登录，请在前台浏览器完成扫码或短信登录后重试')
 
@@ -133,6 +133,9 @@ export class XiaohongshuPublishService {
       const raw = await this.browser.evaluate(NOTE_URL_SCRIPT)
       noteUrl = raw.trim().split('\n').at(-1)?.trim().replace(/^"|"$/g, '') || undefined
     } catch { /* 链接读取失败不影响发布结论 */ }
+
+    // 发布成功即用完：关闭本次任务标签页，避免闲置标签页堆积。
+    try { await this.browser.closeCurrentTaskTab('xiaohongshu.com') } catch { /* 清理失败不影响发布结果 */ }
     return { published: true, noteUrl, title: draft.title, tags: appliedTags }
   }
 

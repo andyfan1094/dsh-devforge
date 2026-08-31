@@ -1,5 +1,5 @@
 /** 闲鱼商品发布流程：复用服务工厂的可见浏览器与当前登录态。 */
-import type { BrowserService } from './service.ts'
+import { TAB_ORIGIN_XIANYU_PUBLISH, type BrowserService } from './service.ts'
 
 /** 闲鱼商品发布页地址。 */
 export const XIANYU_PUBLISH_URL = 'https://www.goofish.com/publish'
@@ -22,7 +22,7 @@ export interface XianyuPublishResult {
   price: number
 }
 
-type XianyuPublishBrowser = Pick<BrowserService, 'snapshot' | 'click' | 'type' | 'upload' | 'tabs' | 'withExclusive'>
+type XianyuPublishBrowser = Pick<BrowserService, 'snapshot' | 'click' | 'type' | 'upload' | 'tabs' | 'withExclusive' | 'closeCurrentTaskTab'>
 
 /** 从快照中按可见文本取一个稳定元素引用。 */
 function findRef(snapshot: string, visibleText: string, requiredRole?: string): string | undefined {
@@ -65,8 +65,8 @@ export class XianyuPublishService {
 
   /** 在互斥区内按闲鱼真实页面顺序执行发布。 */
   private async publishUnlocked(draft: XianyuPublishDraft): Promise<XianyuPublishResult> {
-    // 每个发布任务使用独立标签页，消息页与其它任务页面保持原状。
-    await this.browser.tabs('new', undefined, XIANYU_PUBLISH_URL)
+    // 每个发布任务使用独立标签页并标记来源，消息页与其它任务页面保持原状。
+    await this.browser.tabs('new', undefined, XIANYU_PUBLISH_URL, TAB_ORIGIN_XIANYU_PUBLISH)
     let snapshot = await this.waitForSnapshot((value) => value.includes('添加首图'))
     const addImageRef = findRef(snapshot, '添加首图')
     if (addImageRef === undefined) throw new Error('未找到闲鱼“添加首图”入口，未执行发布')
@@ -91,6 +91,9 @@ export class XianyuPublishService {
     if (snapshot.includes('完成认证才可继续发布')) throw new Error('闲鱼要求在前台完成手机认证，请完成认证后重新发布')
     const itemUrl = findPageUrl(snapshot)
     if (itemUrl === undefined || !itemUrl.includes('/item?id=')) throw new Error('发布后未核验到商品详情页，未确认发布结果')
+
+    // 发布成功即用完：关闭本次任务标签页，避免闲置标签页堆积。
+    try { await this.browser.closeCurrentTaskTab('goofish.com') } catch { /* 清理失败不影响发布结果 */ }
     return { published: true, itemUrl, title: draft.title, price: draft.price }
   }
 

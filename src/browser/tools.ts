@@ -13,7 +13,7 @@ export function browserStatusTool(service: BrowserService) {
 
 /** 打开或跳转页面，并返回页面快照。 */
 export function browserOpenTool(service: BrowserService) {
-  return defineTool({ name: 'browser_open', description: '在服务工厂托管的本地浏览器中打开 http(s) 地址，返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.openTab(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
+  return defineTool({ name: 'browser_open', description: '在服务工厂托管的本地浏览器中打开 http(s) 地址（独立新标签页），返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见；任务结束后请用 browser_tabs 评估并关闭不再使用的标签页。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.openTab(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
 }
 
 /** 读取当前页快照。 */
@@ -56,16 +56,27 @@ export function browserTypeTool(service: BrowserService) {
 export function browserTabsTool(service: BrowserService) {
   return defineTool({
     name: 'browser_tabs',
-    description: '管理服务工厂可见浏览器中的标签页：列出、新建、选择或关闭。多个任务可保留各自页面，页面操作会安全排队。',
+    description: '管理服务工厂可见浏览器中的标签页：列出（附带来源与闲置评估建议）、新建、选择、关闭，以及清理闲置标签页。任务用完的标签页应当评估并及时关闭，避免页面堆积。',
     parameters: {
-      action: { type: 'string', required: true, enum: ['list', 'new', 'select', 'close'], description: '标签页操作。' },
+      action: { type: 'string', required: true, enum: ['list', 'new', 'select', 'close', 'close_idle'], description: '标签页操作：list 附带来源与闲置评估建议；close_idle 一键清理闲置标签页。' },
       index: { type: 'number', description: '选择或关闭时使用的标签页序号。' },
       url: { type: 'string', description: '新建标签页时打开的 http(s) 地址。' },
+      minIdleMinutes: { type: 'number', description: 'close_idle 的闲置阈值（分钟），默认 10。' },
+      includeGeneral: { type: 'boolean', description: 'close_idle 是否连同闲置的通用标签页一起关闭；默认只清发布类任务残留。' },
     },
     output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, tabs: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.tabs ?? '') : '标签页操作失败：' + (value.error ?? '未知错误')) },
     async execute(args) {
       try {
-        const tabs = await service.withExclusive(() => service.tabs(args.action, args.index, args.url))
+        const tabs = await service.withExclusive(async () => {
+          if (args.action === 'close_idle') {
+            return await service.closeIdleTabs({
+              minIdleMs: typeof args.minIdleMinutes === 'number' && args.minIdleMinutes > 0 ? args.minIdleMinutes * 60_000 : undefined,
+              includeGeneral: args.includeGeneral === true,
+            })
+          }
+          if (args.action === 'list') return await service.listTabsWithAdvice()
+          return await service.tabs(args.action, args.index, args.url)
+        })
         return { ok: true, tabs }
       } catch (error) {
         return { ok: false, error: safeError(error) }
