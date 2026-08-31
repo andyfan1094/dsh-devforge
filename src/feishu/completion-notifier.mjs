@@ -9,21 +9,22 @@ const MAX_TRACKED_SESSIONS = 200
  *
  * 收敛判定：
  * - goal 任务：goal/change phase=active 期间全程静默；phase 变为
- *   complete/blocked/paused 的收敛点立即发卡——这是「整个任务完成」的精确信号。
+ *   complete/blocked/paused 后等待当前 turn/end，再发送包含最终模型回复的卡片。
  * - 普通会话：turn/end 后静默 settleMs 仍未开启新轮次才发卡（连续多轮合并为一张）。
- * - error/aborted/interrupted/blocked 轮次是终态，立即发卡。
+ * - error/aborted/interrupted/blocked 轮次是终态，在 turn/end 立即发卡。
  *
- * 卡片聚合整个任务：轮次=共 N 轮；耗时=本任务首个 turn/start 起的墙钟时间。
- * 主题优先取会话标题，其次跟踪最近一条用户消息；reason 是 Host 的结构化
- * TurnEndReason，原样交给 buildCompletionCard 归一化（绝不 String() 拼接）。
+ * 卡片聚合整个任务：正文包含用户请求和最后一条非空 assistant/message，
+ * 轮次与耗时仅作辅助信息；reason 原样交给 buildCompletionCard 归一化。
  * 所有错误吞掉并 warn，永不向上抛（不能影响 agent loop）。
  */
 export function createCompletionNotifier({ getConfig, getClient, getSessionTitle, sendCard: sendCardFn = sendCard, settleMs = 8_000, warn = () => {} } = {}) {
   const sessions = new Map()     // sessionId -> 最近一次事件携带的 session 对象（供标题查询）
-  const tasks = new Map()        // sessionId -> { startedAt, turns, lastReason }
-  const goalActive = new Set()   // sessionId —— goal 处于 active，期间静默
-  const settleTimers = new Map() // sessionId -> timer
-  const lastUserText = new Map() // sessionId -> 最近一条用户消息文本（主题兜底）
+  const tasks = new Map()             // sessionId -> { startedAt, turns, lastReason }
+  const goalActive = new Set()        // sessionId -> goal 处于 active，期间静默
+  const goalTerminal = new Map()      // sessionId -> goal 终态，等待当前 turn/end
+  const settleTimers = new Map()      // sessionId -> timer
+  const lastUserText = new Map()      // sessionId -> 当前任务用户请求
+  const lastAssistantText = new Map() // sessionId -> 当前任务最后一条非空模型回复
 
   function rememberSession(sessionId, session) {
     if (session !== undefined && session !== null) {
@@ -42,6 +43,11 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     const type = String(event?.type ?? '')
     if (type === 'user/message') {
       trackUserText(sessionId, event?.data)
+      lastAssistantText.delete(sessionId)
+      return
+    }
+    if (type === 'assistant/message') {
+      trackAssistantText(sessionId, event?.data?.message)
       return
     }
     if (type === 'goal/change') {
@@ -55,6 +61,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
       let task = tasks.get(sessionId)
       if (task === undefined) {
         task = { startedAt: Date.now(), turns: 0, lastReason: null }
+        lastAssistantText.delete(sessionId)
         if (tasks.size >= MAX_TRACKED_SESSIONS && !tasks.has(sessionId)) {
           const oldest = tasks.keys().next().value
           if (oldest !== undefined) { tasks.delete(oldest); clearSettleTimer(oldest) }
@@ -69,7 +76,13 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     const task = tasks.get(sessionId)
     if (task === undefined) return
     task.lastReason = event?.data?.reason ?? null
-    if (goalActive.has(sessionId)) return // goal 驱动的多轮任务：由 goal/change 收敛点发卡
+    const terminal = goalTerminal.get(sessionId)
+    if (terminal !== undefined) {
+      goalTerminal.delete(sessionId)
+      sendNow(sessionId, terminal)
+      return
+    }
+    if (goalActive.has(sessionId)) return
     const kind = reasonKindOf(task.lastReason)
     if (kind === 'error' || kind === 'aborted' || kind === 'interrupted' || kind === 'blocked') {
       sendNow(sessionId, {})
@@ -81,18 +94,20 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
   function handleGoalChange(sessionId, data) {
     if (String(data?.operation ?? '') === 'clear') {
       goalActive.delete(sessionId)
+      goalTerminal.delete(sessionId)
       return
     }
     const phase = String(data?.goal?.phase ?? '')
     if (phase === 'active') {
       goalActive.add(sessionId)
+      goalTerminal.delete(sessionId)
       clearSettleTimer(sessionId)
       return
     }
     goalActive.delete(sessionId)
     if (phase === 'complete' || phase === 'blocked' || phase === 'paused') {
       const goalRounds = Number(data?.goal?.roundsStarted ?? 0)
-      sendNow(sessionId, {
+      goalTerminal.set(sessionId, {
         reason: phase === 'complete' ? { kind: 'completed' } : phase === 'blocked' ? { kind: 'blocked' } : { kind: 'paused' },
         fallbackTurns: Number.isFinite(goalRounds) && goalRounds > 0 ? goalRounds : 0,
       })
@@ -113,6 +128,16 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
       if (oldest !== undefined) lastUserText.delete(oldest)
     }
     lastUserText.set(sessionId, text)
+  }
+
+  function trackAssistantText(sessionId, message) {
+    const text = assistantTextOf(message)
+    if (text === '') return
+    if (lastAssistantText.size >= MAX_TRACKED_SESSIONS && !lastAssistantText.has(sessionId)) {
+      const oldest = lastAssistantText.keys().next().value
+      if (oldest !== undefined) lastAssistantText.delete(oldest)
+    }
+    lastAssistantText.set(sessionId, text)
   }
 
   function clearSettleTimer(sessionId) {
@@ -142,14 +167,21 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
       const finalReason = reason ?? task?.lastReason ?? null
       const turns = Math.max(task?.turns ?? 0, fallbackTurns)
       if (turns <= 0 && finalReason === null) { tasks.delete(sessionId); return }
-      const subject = extractSubject(sessions.get(sessionId) ?? { id: sessionId }, getSessionTitle) || lastUserText.get(sessionId) || ''
+      const session = sessions.get(sessionId) ?? { id: sessionId }
+      const subject = extractSubject(session, getSessionTitle) || lastUserText.get(sessionId) || ''
+      const request = lastUserText.get(sessionId) || subject
+      const response = lastAssistantText.get(sessionId) || latestAssistantTextOf(session)
       const card = buildCompletionCard({
         subject,
+        request,
+        response,
         turn: turns,
         durationMs: task === undefined ? 0 : Math.max(0, Date.now() - task.startedAt),
         reason: finalReason,
       })
       tasks.delete(sessionId)
+      goalTerminal.delete(sessionId)
+      lastAssistantText.delete(sessionId)
       void sendCardFn(client, chatId, card).catch((error) => {
         warn('feishu completion notify failed: ' + (error instanceof Error ? error.message : String(error)))
       })
@@ -179,6 +211,27 @@ function extractSubject(session, getSessionTitle) {
   return ''
 }
 
+function latestAssistantTextOf(session) {
+  const events = Array.isArray(session?.events) ? session.events : []
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const entry = events[index]
+    if (entry?.type !== 'assistant/message') continue
+    const text = assistantTextOf(entry?.data?.message)
+    if (text !== '') return text
+  }
+  return ''
+}
+
+function assistantTextOf(message) {
+  const blocks = message?.content
+  if (!Array.isArray(blocks)) return ''
+  return blocks
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .trim()
+}
+
 function userTextOf(data) {
   const message = data?.message ?? data
   const blocks = message?.content
@@ -189,7 +242,7 @@ function userTextOf(data) {
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim()
-    if (text !== '') return text.slice(0, 200)
+    if (text !== '') return text.slice(0, 2_000)
   }
-  return String(message?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  return String(message?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 2_000)
 }

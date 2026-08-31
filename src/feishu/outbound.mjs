@@ -162,31 +162,59 @@ function safeJson(value) {
   }
 }
 
-/** 把「任务完成」载荷格式化为飞书 Card 2.0 模板；纯函数便于测试。 */
-export function buildCompletionCard({ subject, turn, durationMs, reason }) {
-  const safeSubject = String(subject ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+function clipCardText(value, maxBytes) {
+  const text = String(value ?? '').replace(/\r\n/g, '\n').trim()
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
+  const suffix = '\n\n…（内容过长，已截断）'
+  const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix, 'utf8'))
+  let bytes = 0
+  let clipped = ''
+  for (const char of text) {
+    const size = Buffer.byteLength(char, 'utf8')
+    if (bytes + size > budget) break
+    clipped += char
+    bytes += size
+  }
+  return clipped.trimEnd() + suffix
+}
+
+function completionNoticeTitle(state) {
+  if (state.label === '任务完成') return '【DSH完成通知】'
+  if (state.label === '任务等待输入') return '【DSH等待输入】'
+  if (state.label === '任务已暂停') return '【DSH暂停通知】'
+  if (state.label === '任务已中止') return '【DSH中止通知】'
+  if (state.label === '任务中断') return '【DSH中断通知】'
+  return '【DSH失败通知】'
+}
+
+/** 把任务请求、模型最终回复与辅助状态格式化为飞书 Card 2.0。 */
+export function buildCompletionCard({ subject, request, response, turn, durationMs, reason }) {
+  // 飞书单卡整体数据上限 30 KB；按 UTF-8 字节保守预留 JSON 转义和结构开销。
+  const safeSubject = clipCardText(String(subject ?? '').replace(/\s+/g, ' '), 600)
+  const safeRequest = clipCardText(request, 2_000) || safeSubject || '未记录原始请求。'
+  const safeResponse = clipCardText(response, 12_000)
   const safeTurn = Number.isFinite(turn) ? Math.max(1, Math.floor(turn)) : 1
   const ms = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0
   const seconds = Math.round(ms / 1000)
   const durationText = seconds >= 60 ? Math.floor(seconds / 60) + ' 分 ' + (seconds % 60) + ' 秒' : seconds + ' 秒'
   const state = describeTurnEndReason(reason)
-  // 标题直接带主题，群里一眼看出是哪件事；标题截断，完整主题仍保留在正文首行
-  const title = state.icon + ' ' + state.label + (safeSubject !== '' ? '：' + safeSubject.slice(0, 32) : '')
-  const reasonText = state.text === '' ? '' : (state.failed ? '原因：' : '说明：') + state.text
+  const resultText = safeResponse || state.text || '任务已结束，但未捕获到模型最终回复。'
+  const reasonText = safeResponse !== '' && state.text !== ''
+    ? (state.failed ? '**失败原因**\n' : '**说明**\n') + state.text
+    : ''
   return {
     schema: '2.0',
     header: {
       template: state.tone,
-      title: { tag: 'plain_text', content: title },
+      title: { tag: 'plain_text', content: completionNoticeTitle(state) },
     },
     body: {
       elements: [
-        ...(safeSubject !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: '**' + safeSubject + '**' } }] : []),
-        { tag: 'div', fields: [
-          { is_short: true, text: { tag: 'lark_md', content: '**轮次**\n共 ' + safeTurn + ' 轮' } },
-          { is_short: true, text: { tag: 'lark_md', content: '**耗时**\n' + durationText } },
-        ] },
+        { tag: 'div', text: { tag: 'lark_md', content: '**请求**\n' + safeRequest } },
+        { tag: 'div', text: { tag: 'lark_md', content: '**结果**\n' + resultText } },
         ...(reasonText !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: reasonText } }] : []),
+        { tag: 'hr' },
+        { tag: 'div', text: { tag: 'plain_text', content: 'DSH · 共 ' + safeTurn + ' 轮 · 耗时 ' + durationText } },
       ],
     },
   }
