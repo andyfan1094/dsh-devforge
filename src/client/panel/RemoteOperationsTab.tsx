@@ -129,7 +129,7 @@ export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Elem
           {formOpen ? '收起表单' : '新增主机'}
         </button>
         <button type="button" className={css['ghostButton']} onClick={() => { void refresh() }}>刷新</button>
-        <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云云服务器 · 新用户优惠，点击直达（新标签打开）">☁ 云服务器 · 雨云</a>
+        <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云服务器购买 · 点击直达（新标签打开）">⚡ 雨云服务器购买</a>
       </div>
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== '' && <div className={css['banner']} data-kind="info">{notice}</div>}

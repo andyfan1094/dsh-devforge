@@ -33,9 +33,65 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .tab:active { transform: scale(.97); }
 .tab[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); font-weight: 600; background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px rgba(15, 23, 42, .12), 0 0 0 1px var(--dsw-alias-border-l1, #e5e7eb); }
 .tab[data-active] svg { opacity: 1; }
-/* 推广链接：低调灰字不抢页签视觉，hover 主题色点亮；链接本身不显示只显示文案 */
-.promoLink { display: inline-flex; align-items: center; padding: 5px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, #98a2b3); text-decoration: none; border-radius: 6px; white-space: nowrap; transition: color .15s ease, background-color .15s ease; }
-.promoLink:hover { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+/* 推广链接：吸引眼球的动画广告位（光泽扫过 + 呼吸发光 + ⚡闪烁 + hover 弹跳），
+   链接本身不显示只显示文案；prefers-reduced-motion 用户自动关闭动画。 */
+.promoLink {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-business-primary, #2563eb);
+  text-decoration: none;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 10%, transparent), color-mix(in srgb, #7c3aed 10%, transparent));
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1), box-shadow .18s ease, filter .18s ease;
+  animation: promoGlow 2.6s ease-in-out infinite;
+}
+/* 光泽周期扫过 */
+.promoLink::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, .65) 50%, transparent 58%);
+  transform: translateX(-130%);
+  animation: promoSheen 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+/* ⚡ 闪烁点睛 */
+.promoLink::after {
+  content: '⚡';
+  font-size: 11px;
+  animation: promoBlink 2.6s ease-in-out infinite;
+}
+@keyframes promoGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+  50% { box-shadow: 0 0 12px 2px rgba(37, 99, 235, .28); }
+}
+@keyframes promoSheen {
+  0%, 55% { transform: translateX(-130%); }
+  85%, 100% { transform: translateX(130%); }
+}
+@keyframes promoBlink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .55; transform: scale(1.15); }
+}
+.promoLink:hover {
+  transform: scale(1.06);
+  filter: brightness(1.12);
+  box-shadow: 0 0 16px 3px rgba(37, 99, 235, .38);
+}
+.promoLink:active { transform: scale(.96); }
+/* 无障碍：用户偏好减少动效时关闭全部动画 */
+@media (prefers-reduced-motion: reduce) {
+  .promoLink, .promoLink::before, .promoLink::after { animation: none; }
+  .promoLink::before { display: none; }
+  .promoLink:hover { transform: none; }
+}
 
 .panelContent { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tabBody { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; overflow-y: auto; }
