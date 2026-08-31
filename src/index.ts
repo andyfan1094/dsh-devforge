@@ -31,6 +31,8 @@ import { getDb, } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
+import { HostStore as SshHostStore } from './remote/ssh/store.ts'
+import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
 import type { BrowserStatus } from './browser/protocol.ts'
@@ -264,7 +266,7 @@ export function apply(ctx: Context, config?: Config): void {
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
     ...makeRoutes(engine, standards, restartManager),
-    ...makeRemoteRoutes(remoteRegistry),
+    ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(zhipuService),
     ...makeMiniMaxRoutes(minimaxService),

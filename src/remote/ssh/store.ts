@@ -132,12 +132,13 @@ export class HostStore {
       user: entry.user,
       auth: entry.auth.kind,
       keyReady,
-      proxyJump: [...entry.proxyJump],
+      // 兼容迁移条目：旧 JSON 可能缺 proxyJump/tags 字段，缺失按空数组处理。
+      proxyJump: Array.isArray(entry.proxyJump) ? [...entry.proxyJump] : [],
       // Optional fields are spread conditionally: the tool bridge rejects
       // undefined-valued properties as non-lossless JSON.
       ...(entry.description !== undefined ? { description: entry.description } : {}),
       ...(entry.environment !== undefined ? { environment: entry.environment } : {}),
-      tags: [...entry.tags],
+      tags: Array.isArray(entry.tags) ? [...entry.tags] : [],
       ...(entry.location !== undefined ? { location: entry.location } : {}),
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,

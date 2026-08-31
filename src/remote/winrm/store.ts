@@ -113,7 +113,8 @@ export class HostStore {
       ...(entry.rejectUnauthorized !== undefined ? { rejectUnauthorized: entry.rejectUnauthorized } : {}),
       ...(entry.description !== undefined ? { description: entry.description } : {}),
       ...(entry.environment !== undefined ? { environment: entry.environment } : {}),
-      tags: [...entry.tags],
+      // 兼容迁移条目：旧 JSON 可能缺 tags 字段，缺失按空数组处理。
+      tags: Array.isArray(entry.tags) ? [...entry.tags] : [],
       ...(entry.location !== undefined ? { location: entry.location } : {}),
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,

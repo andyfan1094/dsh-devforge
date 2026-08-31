@@ -76,6 +76,24 @@ export class DevforgeApi {
     return data.hosts
   }
 
+  /** 新增远程主机（SSH 或 WinRM；密码等凭据字段由后端 store 校验并保存）。 */
+  async createRemoteHost(req: { transport: 'ssh' | 'winrm' } & Record<string, unknown>): Promise<void> {
+    const data = await readJson<{ ok: boolean; error?: string }>(await fetch(DEVFORGE_API.remoteHosts, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+    }))
+    if (!data.ok) throw new Error(data.error ?? '新增主机失败。')
+  }
+
+  /** 删除一台远程主机（transport + alias 定位）。 */
+  async deleteRemoteHost(transport: 'ssh' | 'winrm', alias: string): Promise<void> {
+    const data = await readJson<{ ok: boolean; error?: string }>(
+      await fetch(DEVFORGE_API.remoteHosts + '?transport=' + encodeURIComponent(transport) + '&alias=' + encodeURIComponent(alias), { method: 'DELETE' }),
+    )
+    if (!data.ok) throw new Error(data.error ?? '删除主机失败。')
+  }
+
   /** 创建生成任务（一键按钮）。 */
   async createJob(req: ForgeJobCreateRequest): Promise<ForgeJob> {
     const data = await readJson<{ job: ForgeJob }>(await fetch(DEVFORGE_API.jobs, {
