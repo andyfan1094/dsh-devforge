@@ -6,6 +6,7 @@
 import { DEVFORGE_API, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
+import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
@@ -187,6 +188,73 @@ export class DevforgeApi {
   /** 执行受 Host 端路径校验与 Push 安全开关约束的 Git 操作。 */
   async runGithubGit(action: GitAction): Promise<GitResult> {
     const data = await readJson<{ result: GitResult }>(await fetch(GITHUB_API.git, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(action),
+    }))
+    return data.result
+  }
+
+  /** CNB 账号摘要；Host 只返回 tokenConfigured，不返回令牌原文。 */
+  async listCnbAccounts(): Promise<CnbAccountSummary[]> {
+    const data = await readJson<{ accounts: CnbAccountSummary[] }>(await fetch(CNB_API.accounts))
+    return data.accounts
+  }
+
+  /** 新增或更新 CNB 账号。令牌留空时由 Host 保留旧值。 */
+  async saveCnbAccount(payload: { alias: string; token?: string; apiUrl?: string }): Promise<CnbAccountSummary> {
+    const data = await readJson<{ account: CnbAccountSummary }>(await fetch(CNB_API.accounts, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }))
+    return data.account
+  }
+
+  /** 删除指定 CNB 账号。 */
+  async deleteCnbAccount(alias: string): Promise<void> {
+    await readJson(await fetch(CNB_API.accounts, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ alias }),
+    }))
+  }
+
+  /** 验证账号令牌，并刷新对应的 CNB 用户名。 */
+  async testCnbAccount(alias?: string): Promise<{ ok: boolean; alias: string; username?: string; error?: string }> {
+    const data = await readJson<{ result: { ok: boolean; alias: string; username?: string; error?: string } }>(await fetch(CNB_API.accountTest, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ alias }),
+    }))
+    return data.result
+  }
+
+  /** 获取当前账号可见的 CNB 仓库。 */
+  async listCnbRepos(account?: string, query?: string): Promise<CnbRepoSummary[]> {
+    const data = await readJson<{ repos: CnbRepoSummary[] }>(await fetch(CNB_API.repos + buildQuery({ account, query })))
+    return data.repos
+  }
+
+  /** 读取 CNB/Git 设置；推送权限也由此返回。 */
+  async getCnbSettings(): Promise<CnbSettings> {
+    const data = await readJson<{ config: CnbSettings }>(await fetch(CNB_API.config))
+    return data.config
+  }
+
+  /** 保存 CNB/Git 设置。推送与强制推送必须由用户显式开启。 */
+  async saveCnbSettings(patch: Partial<CnbSettings>): Promise<CnbSettings> {
+    const data = await readJson<{ config: CnbSettings }>(await fetch(CNB_API.config, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }))
+    return data.config
+  }
+
+  /** 执行受 Host 端路径校验与推送安全开关约束的 CNB Git 操作。 */
+  async runCnbGit(action: CnbGitAction): Promise<CnbGitResult> {
+    const data = await readJson<{ result: CnbGitResult }>(await fetch(CNB_API.git, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(action),
