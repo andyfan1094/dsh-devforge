@@ -9,7 +9,7 @@ import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, t
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
-import { ARK_API, type ArkStatus } from '../ark/protocol.ts'
+import { ARK_API, type ArkStatus, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -246,10 +246,22 @@ export class DevforgeApi {
     return data.status
   }
 
-  /** 同步方舟 Agent Plan 官方文本模型池。 */
+  /** 同步方舟 Agent Plan 官方文本模型池与推理档位。 */
   async setupArkModels(signal?: AbortSignal): Promise<ArkStatus> {
     const data = await readJson<{ status: ArkStatus }>(await fetch(ARK_API.setup, { method: 'POST', signal }))
     return data.status
+  }
+
+  /** 读取方舟套餐用量；Host 端使用五分钟缓存。 */
+  async getArkDashboard(signal?: AbortSignal): Promise<ArkUsageDashboard> {
+    const data = await readJson<{ dashboard: ArkUsageDashboard }>(await fetch(ARK_API.dashboard, { signal }))
+    return data.dashboard
+  }
+
+  /** 跳过缓存并实时刷新方舟套餐用量。 */
+  async refreshArkUsage(signal?: AbortSignal): Promise<ArkUsageDashboard> {
+    const data = await readJson<{ dashboard: ArkUsageDashboard }>(await fetch(ARK_API.refreshUsage, { method: 'POST', signal }))
+    return data.dashboard
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */

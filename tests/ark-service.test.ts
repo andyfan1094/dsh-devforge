@@ -43,6 +43,24 @@ test('方舟 Agent Plan 模型池：覆盖控制台全部文本模型与自动�
   ])
 })
 
+test('方舟 Provider 合并：为旧模型补推理档位并保留显式覆盖', () => {
+  const merged = mergeArkProvider({
+    models: [
+      { id: 'glm-5.3', name: '旧 GLM 配置' },
+      { id: 'deepseek-v4-pro', reasoningEfforts: false },
+      { id: 'kimi-k2.7-code', name: '旧 Kimi 配置', compat: { supportsDeveloperRole: false } },
+    ],
+  }, 'ARK_CODING_PLAN_API_KEY')
+  const models = merged.models as Array<Record<string, unknown>>
+  const glm = models.find((model) => model.id === 'glm-5.3')
+  const deepseek = models.find((model) => model.id === 'deepseek-v4-pro')
+  const kimi = models.find((model) => model.id === 'kimi-k2.7-code')
+  assert.deepEqual(glm?.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
+  assert.equal(deepseek?.reasoningEfforts, false)
+  assert.deepEqual(kimi?.reasoningEfforts, { off: null, high: 'high' })
+  assert.deepEqual(kimi?.compat, { thinkingFormat: 'qwen', supportsReasoningEffort: false, supportsDeveloperRole: false })
+})
+
 test('受管凭据写入：upsert ref 时保留其它已有 refs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-devforge-credential-'))
   const file = join(dir, '.credentials.yaml')

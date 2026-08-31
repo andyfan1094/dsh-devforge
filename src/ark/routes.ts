@@ -4,6 +4,7 @@ import { isLoopbackRequest } from '../loopback.ts'
 import { ARK_API } from './protocol.ts'
 import { ArkCodingPlanService, ArkServiceError } from './service.ts'
 
+/** 输出不可缓存的 JSON。 */
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload)
   res.writeHead(status, {
@@ -14,12 +15,14 @@ function writeJson(res: import('node:http').ServerResponse, status: number, payl
   res.end(body)
 }
 
+/** 所有方舟面板接口仅允许本机 GUI 调用。 */
 function guard(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
   if (isLoopbackRequest(req)) return true
   writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
   return false
 }
 
+/** 写配置或触发实时刷新时额外校验同源，避免本机其它网页借用用户凭据。 */
 function guardWrite(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
   if (!guard(req, res)) return false
   const host = req.headers.host
@@ -37,6 +40,7 @@ function guardWrite(req: import('node:http').IncomingMessage, res: import('node:
   return false
 }
 
+/** 把服务错误映射为稳定且不含凭据的页面响应。 */
 function writeError(res: import('node:http').ServerResponse, error: unknown): void {
   if (error instanceof ArkServiceError) {
     writeJson(res, error.status, { ok: false, error: error.message })
@@ -64,6 +68,24 @@ export function makeArkRoutes(service: ArkCodingPlanService): WebRoute[] {
         if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
         try { writeJson(res, 200, { ok: true, status: await service.ensureModels() }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ARK_API.dashboard,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { writeJson(res, 200, { ok: true, dashboard: await service.dashboard() }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ARK_API.refreshUsage,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { writeJson(res, 200, { ok: true, dashboard: await service.refreshUsage() }) } catch (error) { writeError(res, error) }
       },
     },
   ]
