@@ -111,6 +111,49 @@ export async function sendImage(client, chatId, filePath, { replyTo = '', receiv
   }, replyTo)
 }
 
+/** 把「任务完成」载荷格式化为飞书 Card 2.0 模板；纯函数便于测试。 */
+export function buildCompletionCard({ subject, turn, durationMs, reason }) {
+  const safeSubject = String(subject ?? '').trim().slice(0, 200) || '任务完成'
+  const safeTurn = Number.isFinite(turn) ? Math.max(1, Math.floor(turn)) : 1
+  const ms = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0
+  const seconds = Math.round(ms / 1000)
+  const durationText = seconds >= 60 ? Math.floor(seconds / 60) + ' 分 ' + (seconds % 60) + ' 秒' : seconds + ' 秒'
+  const isError = String(reason ?? '') !== '' && String(reason) !== 'success'
+  const headerTemplate = isError ? 'red' : 'green'
+  const title = isError ? '❌ 任务失败' : '✅ 任务完成'
+  const reasonText = isError ? '原因：' + String(reason).slice(0, 80) : ''
+  return {
+    schema: '2.0',
+    header: {
+      template: headerTemplate,
+      title: { tag: 'plain_text', content: title },
+    },
+    body: {
+      elements: [
+        { tag: 'div', text: { tag: 'lark_md', content: '**' + safeSubject + '**' } },
+        { tag: 'div', fields: [
+          { is_short: true, text: { tag: 'lark_md', content: '**轮次**\n第 ' + safeTurn + ' 轮' } },
+          { is_short: true, text: { tag: 'lark_md', content: '**耗时**\n' + durationText } },
+        ] },
+        ...(reasonText !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: reasonText } }] : []),
+      ],
+    },
+  }
+}
+
+/** 通过已连接的飞书 client 发送一张 interactive 卡片；返回飞书 message_id。 */
+export async function sendCard(client, chatId, card, { receiveIdType } = {}) {
+  const chatIdStr = String(chatId ?? '').trim()
+  if (chatIdStr === '') throw new Error('chat id is empty')
+  const idType = receiveIdType ?? (chatIdStr.startsWith('oc_') ? 'chat_id' : chatIdStr.startsWith('on_') ? 'union_id' : 'open_id')
+  const response = await client.im.v1.message.create({
+    params: { receive_id_type: idType },
+    data: { receive_id: chatIdStr, msg_type: 'interactive', content: JSON.stringify(card) },
+  })
+  if (response?.code !== undefined && response.code !== 0) throw new Error('feishu sendCard failed: ' + (response?.msg ?? response?.code))
+  return String(response?.data?.message_id ?? '')
+}
+
 export async function sendFile(client, chatId, filePath, { replyTo = '', receiveIdType } = {}) {
   const fileKey = await uploadFile(client, filePath)
   const idType = receiveIdType ?? (String(chatId).startsWith('oc_') ? 'chat_id' : String(chatId).startsWith('on_') ? 'union_id' : 'open_id')

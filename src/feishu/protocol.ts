@@ -23,6 +23,10 @@ export interface FeishuPanelConfig {
   asrApiKeyConfigured: boolean
   asrModel: string
   syncCatchUp: boolean
+  /** 电脑端任务完成时通过飞书卡片通知。 */
+  notifyOnComplete: boolean
+  /** 通知目标 chat_id（群或单人）。 */
+  notifyChatId: string
 }
 
 /** 飞书配置更新载荷；App Secret 留空时 Host 保留旧值。 */
@@ -42,6 +46,8 @@ export interface FeishuConfigPatch {
   groupMode?: 'all' | 'mention'
   welcomeText?: string
   syncCatchUp?: boolean
+  notifyOnComplete?: boolean
+  notifyChatId?: string
 }
 
 /** 一个独立飞书聊天会话的运行摘要。 */

@@ -31,6 +31,8 @@ const EMPTY_CONFIG: FeishuPanelConfig = {
   asrApiKeyConfigured: false,
   asrModel: '',
   syncCatchUp: true,
+  notifyOnComplete: false,
+  notifyChatId: '',
 }
 
 /** 空模型目录。 */
@@ -133,6 +135,8 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
     groupMode: config.groupMode,
     welcomeText: config.welcomeText,
     syncCatchUp: config.syncCatchUp,
+    notifyOnComplete: config.notifyOnComplete,
+    notifyChatId: config.notifyChatId,
   })
 
   /** 统一操作状态和错误呈现。 */
@@ -251,6 +255,14 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
             <label className={css['field']}><span className={css['fieldLabel']}>确认反应</span><input className={css['input']} value={config.ackReaction} onChange={(event) => { setConfig({ ...config, ackReaction: event.target.value }) }} /></label>
             <label className={css['field']}><span className={css['fieldLabel']}>群聊响应</span><select className={css['input']} value={config.groupMode} onChange={(event) => { setConfig({ ...config, groupMode: event.target.value as 'all' | 'mention' }) }}><option value="all">所有消息</option><option value="mention">仅被 @ 时</option></select></label>
             <label className={css['checkRow']}><input type="checkbox" checked={config.syncCatchUp} onChange={(event) => { setConfig({ ...config, syncCatchUp: event.target.checked }) }} />连接恢复后补收消息</label>
+          </div>
+        </section>
+
+        <section className={css['githubSection']}>
+          <h3 className={css['sectionTitle']}>完成通知</h3>
+          <div className={css['form']}>
+            <label className={css['checkRow']}><input type="checkbox" checked={config.notifyOnComplete} onChange={(event) => { setConfig({ ...config, notifyOnComplete: event.target.checked }) }} />电脑端任务完成时通过飞书卡片通知</label>
+            <label className={css['field']}><span className={css['fieldLabel']}>通知目标 chat_id</span><input className={css['input']} value={config.notifyChatId} onChange={(event) => { setConfig({ ...config, notifyChatId: event.target.value }) }} placeholder="oc_xxx（群）或 on_xxx（个人 open_id）" /></label>
           </div>
         </section>
 

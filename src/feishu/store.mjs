@@ -26,6 +26,8 @@ const DEFAULTS = Object.freeze({
   asrApiKey: '',
   asrModel: '',
   syncCatchUp: true,
+  notifyOnComplete: false,
+  notifyChatId: '',
 })
 
 export function storePath() {
@@ -68,6 +70,8 @@ function normalize(value = {}, fallback = DEFAULTS) {
     asrApiKey: String(value.asrApiKey ?? fallback.asrApiKey).trim(),
     asrModel: String(value.asrModel ?? fallback.asrModel).trim(),
     syncCatchUp: value.syncCatchUp === undefined ? fallback.syncCatchUp : value.syncCatchUp !== false,
+    notifyOnComplete: value.notifyOnComplete === undefined ? fallback.notifyOnComplete : value.notifyOnComplete === true,
+    notifyChatId: String(value.notifyChatId ?? fallback.notifyChatId).trim(),
   }
 }
 
@@ -149,6 +153,8 @@ export class FeishuStore {
       asrApiKeyConfigured: config.asrApiKey !== '',
       asrModel: config.asrModel,
       syncCatchUp: config.syncCatchUp,
+      notifyOnComplete: config.notifyOnComplete,
+      notifyChatId: config.notifyChatId,
     }
   }
 

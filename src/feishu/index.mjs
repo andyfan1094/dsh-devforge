@@ -8,6 +8,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt } from './feishu-client.mjs'
 import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
+import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
 import { makeRoutes } from './routes.mjs'
 
@@ -221,6 +222,7 @@ export function apply(ctx, config = {}) {
   const send = async (chatId, text) => bridge === null ? false : bridge.sendText(chatId, text)
   const createStream = async (chatId, options) => bridge === null ? null : bridge.createStreamingCard?.(chatId, options)
   const tracker = createReplyTracker({ sendText: send, createStream, warn })
+  const completionNotifier = createCompletionNotifier({ getConfig: () => store.panel(), getClient: () => bridge?.getClient?.() ?? null, warn })
 
   const cwdFor = (chatId) => {
     const custom = String(resolved.chatCwds?.[String(chatId ?? '')] ?? '').trim()
@@ -900,6 +902,7 @@ export function apply(ctx, config = {}) {
     return entries.find((entry) => entry.agent.status === 'running') ?? entries[entries.length - 1]
   }
   try { disposers.push(ctx.on('session/event', (session, event) => { void tracker.observeSessionEvent(session, event) })) } catch {}
+  try { disposers.push(ctx.on('session/event', (session, event) => { void completionNotifier.observe(session, event) })) } catch {}
   try { disposers.push(ctx.on('agent/error', (payload) => { void tracker.observeAgentError(payload) })) } catch {}
   try {
     disposers.push(ctx.on('agent/disposed', (payload) => {
