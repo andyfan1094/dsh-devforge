@@ -7,6 +7,8 @@ import { XianyuMessageService } from './xianyu.ts'
 import { xianyuConversationReadTool, xianyuMessagesListTool, xianyuReplyTool } from './xianyu-tools.ts'
 import { XianyuPublishService } from './xianyu-publish.ts'
 import { xianyuPublishTool } from './xianyu-publish-tools.ts'
+import { XiaohongshuPublishService } from './xhs-publish.ts'
+import { xiaohongshuPublishTool } from './xhs-publish-tools.ts'
 
 /** 一次激活产生的浏览器服务与清理钩子。 */
 export interface BrowserActivation {
@@ -21,10 +23,11 @@ export function activateBrowser(ctx: Context, config: BrowserCapabilityConfig): 
   const service = new BrowserService(config)
   const xianyu = new XianyuMessageService(service)
   const xianyuPublish = new XianyuPublishService(service)
+  const xiaohongshuPublish = new XiaohongshuPublishService(service)
   const toolGroup = ctx.effect(() => {
     const tools = [
       browserStatusTool(service), browserOpenTool(service), browserSnapshotTool(service), browserClickTool(service), browserTypeTool(service), browserTabsTool(service), browserUploadTool(service), browserCloseTool(service),
-      xianyuMessagesListTool(xianyu), xianyuConversationReadTool(xianyu), xianyuReplyTool(xianyu), xianyuPublishTool(xianyuPublish),
+      xianyuMessagesListTool(xianyu), xianyuConversationReadTool(xianyu), xianyuReplyTool(xianyu), xianyuPublishTool(xianyuPublish), xiaohongshuPublishTool(xiaohongshuPublish),
     ]
     const disposers = tools.map(tool => ctx.tools.register(tool))
     return () => { for (const dispose of disposers) dispose() }

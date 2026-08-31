@@ -239,6 +239,20 @@ export class BrowserService {
     return 'data:' + result.image.mimeType + ';base64,' + result.image.data
   }
 
+  /** 在当前页执行一段 JS 函数并返回文本结果；仅供插件专用流程做精确光标与控件控制，不作为通用工具暴露。 */
+  async evaluate(fn: string): Promise<string> {
+    const result = await this.ensureClient().callTool('browser_evaluate', { function: fn })
+    if (result.isError) throw new Error(this.safeError(result.text))
+    return result.text
+  }
+
+  /** 模拟单个键盘按键；仅供插件专用流程做删除、光标微调等页面修正。 */
+  async pressKey(key: string): Promise<string> {
+    const result = await this.ensureClient().callTool('browser_press_key', { key })
+    if (result.isError) throw new Error(this.safeError(result.text))
+    return result.text
+  }
+
   /** 停止浏览器会话；持久档案保留，全部旧引用失效。 */
   async stop(): Promise<void> {
     this.client?.stop()
