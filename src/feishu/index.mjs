@@ -922,6 +922,7 @@ export function apply(ctx, config = {}) {
       const sid = String(agent?.id ?? agent?.session?.id ?? '')
       for (const [chatId, entry] of conversations) if (entry.agent.id === sid) conversations.delete(chatId)
       void tracker.observeAgentDisposed(sid)
+      void completionNotifier.observeAgentDisposed(agent?.session ?? sid)
     }))
   } catch {}
 

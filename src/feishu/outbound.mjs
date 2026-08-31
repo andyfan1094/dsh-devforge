@@ -178,6 +178,13 @@ function clipCardText(value, maxBytes) {
   return clipped.trimEnd() + suffix
 }
 
+function splitCardText(value, maxChars = 3_500) {
+  const chars = Array.from(String(value ?? ''))
+  const chunks = []
+  for (let index = 0; index < chars.length; index += maxChars) chunks.push(chars.slice(index, index + maxChars).join(''))
+  return chunks.length > 0 ? chunks : ['']
+}
+
 function completionNoticeTitle(state) {
   if (state.label === '任务完成') return '【DSH完成通知】'
   if (state.label === '任务等待输入') return '【DSH等待输入】'
@@ -202,6 +209,10 @@ export function buildCompletionCard({ subject, request, response, turn, duration
   const reasonText = safeResponse !== '' && state.text !== ''
     ? (state.failed ? '**失败原因**\n' : '**说明**\n') + state.text
     : ''
+  const resultElements = splitCardText(resultText).map((part, index) => ({
+    tag: 'div',
+    text: { tag: 'lark_md', content: (index === 0 ? '**结果**\n' : '') + part },
+  }))
   return {
     schema: '2.0',
     header: {
@@ -211,7 +222,7 @@ export function buildCompletionCard({ subject, request, response, turn, duration
     body: {
       elements: [
         { tag: 'div', text: { tag: 'lark_md', content: '**请求**\n' + safeRequest } },
-        { tag: 'div', text: { tag: 'lark_md', content: '**结果**\n' + resultText } },
+        ...resultElements,
         ...(reasonText !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: reasonText } }] : []),
         { tag: 'hr' },
         { tag: 'div', text: { tag: 'plain_text', content: 'DSH · 共 ' + safeTurn + ' 轮 · 耗时 ' + durationText } },

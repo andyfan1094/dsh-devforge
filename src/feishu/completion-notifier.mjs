@@ -42,6 +42,8 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     rememberSession(sessionId, session)
     const type = String(event?.type ?? '')
     if (type === 'user/message') {
+      const pending = goalTerminal.get(sessionId)
+      if (pending !== undefined) sendNow(sessionId, pending)
       trackUserText(sessionId, event?.data)
       lastAssistantText.delete(sessionId)
       return
@@ -60,15 +62,16 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
       clearSettleTimer(sessionId)
       let task = tasks.get(sessionId)
       if (task === undefined) {
-        task = { startedAt: Date.now(), turns: 0, lastReason: null }
+        task = { startedAt: Date.now(), turns: 0, openTurn: 0, lastReason: null }
         lastAssistantText.delete(sessionId)
         if (tasks.size >= MAX_TRACKED_SESSIONS && !tasks.has(sessionId)) {
           const oldest = tasks.keys().next().value
-          if (oldest !== undefined) { tasks.delete(oldest); clearSettleTimer(oldest) }
+          if (oldest !== undefined) clearTaskState(oldest)
         }
         tasks.set(sessionId, task)
       }
       task.turns += 1
+      task.openTurn = turn
       return
     }
     if (type !== 'turn/end') return
@@ -76,18 +79,21 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     const task = tasks.get(sessionId)
     if (task === undefined) return
     task.lastReason = event?.data?.reason ?? null
+    task.openTurn = 0
     const terminal = goalTerminal.get(sessionId)
-    if (terminal !== undefined) {
+    if (terminal !== undefined && terminal.turn === turn) {
       goalTerminal.delete(sessionId)
       sendNow(sessionId, terminal)
       return
     }
-    if (goalActive.has(sessionId)) return
+    if (terminal !== undefined) goalTerminal.delete(sessionId)
     const kind = reasonKindOf(task.lastReason)
     if (kind === 'error' || kind === 'aborted' || kind === 'interrupted' || kind === 'blocked') {
+      goalActive.delete(sessionId)
       sendNow(sessionId, {})
       return
     }
+    if (goalActive.has(sessionId)) return
     scheduleSettle(sessionId)
   }
 
@@ -106,11 +112,16 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     }
     goalActive.delete(sessionId)
     if (phase === 'complete' || phase === 'blocked' || phase === 'paused') {
+      const task = tasks.get(sessionId)
+      if (task === undefined) return
       const goalRounds = Number(data?.goal?.roundsStarted ?? 0)
-      goalTerminal.set(sessionId, {
+      const terminal = {
         reason: phase === 'complete' ? { kind: 'completed' } : phase === 'blocked' ? { kind: 'blocked' } : { kind: 'paused' },
         fallbackTurns: Number.isFinite(goalRounds) && goalRounds > 0 ? goalRounds : 0,
-      })
+        turn: task.openTurn,
+      }
+      if (task.openTurn > 0) goalTerminal.set(sessionId, terminal)
+      else sendNow(sessionId, terminal)
     }
   }
 
@@ -154,19 +165,29 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     settleTimers.set(sessionId, timer)
   }
 
+  function clearTaskState(sessionId) {
+    clearSettleTimer(sessionId)
+    tasks.delete(sessionId)
+    goalActive.delete(sessionId)
+    goalTerminal.delete(sessionId)
+    lastAssistantText.delete(sessionId)
+    lastUserText.delete(sessionId)
+    sessions.delete(sessionId)
+  }
+
   function sendNow(sessionId, { reason = null, fallbackTurns = 0 } = {}) {
     try {
       clearSettleTimer(sessionId)
       const config = typeof getConfig === 'function' ? getConfig() : null
-      if (config === null || config.notifyOnComplete !== true) { tasks.delete(sessionId); return }
+      if (config === null || config.notifyOnComplete !== true) { clearTaskState(sessionId); return }
       const chatId = String(config.notifyChatId ?? '').trim()
-      if (chatId === '') { tasks.delete(sessionId); return }
+      if (chatId === '') { clearTaskState(sessionId); return }
       const client = typeof getClient === 'function' ? getClient() : null
-      if (client === null) return
+      if (client === null) { clearTaskState(sessionId); return }
       const task = tasks.get(sessionId)
       const finalReason = reason ?? task?.lastReason ?? null
       const turns = Math.max(task?.turns ?? 0, fallbackTurns)
-      if (turns <= 0 && finalReason === null) { tasks.delete(sessionId); return }
+      if (turns <= 0 && finalReason === null) { clearTaskState(sessionId); return }
       const session = sessions.get(sessionId) ?? { id: sessionId }
       const subject = extractSubject(session, getSessionTitle) || lastUserText.get(sessionId) || ''
       const request = lastUserText.get(sessionId) || subject
@@ -179,18 +200,29 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
         durationMs: task === undefined ? 0 : Math.max(0, Date.now() - task.startedAt),
         reason: finalReason,
       })
-      tasks.delete(sessionId)
-      goalTerminal.delete(sessionId)
-      lastAssistantText.delete(sessionId)
+      clearTaskState(sessionId)
       void sendCardFn(client, chatId, card).catch((error) => {
         warn('feishu completion notify failed: ' + (error instanceof Error ? error.message : String(error)))
       })
     } catch (error) {
+      clearTaskState(sessionId)
       warn('feishu completion notify crashed: ' + (error instanceof Error ? error.message : String(error)))
     }
   }
 
-  return { observe }
+  function observeAgentDisposed(sessionOrId) {
+    const sessionId = String(typeof sessionOrId === 'string' ? sessionOrId : sessionOrId?.id ?? '').trim()
+    if (sessionId === '' || tasks.get(sessionId) === undefined) return false
+    if (sessionOrId !== null && typeof sessionOrId === 'object') rememberSession(sessionId, sessionOrId)
+    const terminal = goalTerminal.get(sessionId)
+    const task = tasks.get(sessionId)
+    const fallbackReason = goalActive.has(sessionId) ? { kind: 'interrupted' } : task?.lastReason ?? { kind: 'interrupted' }
+    goalActive.delete(sessionId)
+    sendNow(sessionId, terminal ?? { reason: fallbackReason })
+    return true
+  }
+
+  return { observe, observeAgentDisposed }
 }
 
 function extractSubject(session, getSessionTitle) {

@@ -1,6 +1,6 @@
 {
   "name": "dsh-devforge",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "DSH 规范驱动服务工厂：注入版本化开发规范、一键创建服务生成子代理，并提供服务工厂操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
