@@ -21,7 +21,29 @@ export const DEVFORGE_API = {
   restart: '/api/dsh-devforge/restart',
   /** 远程运维统一主机摘要（SSH / WinRM 只读桥接）。 */
   remoteHosts: '/api/dsh-devforge/remote/hosts',
+  /** CNB 备份：状态与配置。 */
+  backupStatus: '/api/dsh-devforge/backup/status',
+  backupConfig: '/api/dsh-devforge/backup/config',
+  backupNow: '/api/dsh-devforge/backup/now',
+  backupList: '/api/dsh-devforge/backup/list',
+  backupRestore: '/api/dsh-devforge/backup/restore',
 } as const
+
+/** CNB 备份：面板状态响应（settings/state/passwordSet/accounts）。 */
+export interface BackupStatus {
+  ok: boolean
+  settings: { enabled: boolean; accountAlias: string; repo: string; interval: string }
+  state: {
+    lastPushAt?: number
+    lastSize?: number
+    lastError?: string
+    consecutiveFailures?: number
+  }
+  /** 本机是否已设置备份密码（不回显密码本身）。 */
+  passwordSet: boolean
+  /** 可选的 CNB 账号别名（来自 store 库）。 */
+  accounts: string[]
+}
 
 /** 远程运维 transport。 */
 export type RemoteTransport = 'ssh' | 'winrm'

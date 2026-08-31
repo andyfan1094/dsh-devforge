@@ -3,7 +3,7 @@
  * 关键边界：只访问服务工厂路由及其接管后的兼容路由；Token 等凭据绝不返回浏览器。
  */
 
-import { DEVFORGE_API, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
+import { DEVFORGE_API, type BackupStatus, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
@@ -92,6 +92,52 @@ export class DevforgeApi {
       await fetch(DEVFORGE_API.remoteHosts + '?transport=' + encodeURIComponent(transport) + '&alias=' + encodeURIComponent(alias), { method: 'DELETE' }),
     )
     if (!data.ok) throw new Error(data.error ?? '删除主机失败。')
+  }
+
+  /** CNB 备份：读取状态与配置。 */
+  async backupStatus(): Promise<BackupStatus> {
+    return await readJson<BackupStatus>(await fetch(DEVFORGE_API.backupStatus))
+  }
+
+  /** CNB 备份：保存配置（password 传入时同步更新本机密码文件）。 */
+  async backupConfig(req: { enabled?: boolean; accountAlias?: string; repo?: string; interval?: string; password?: string }): Promise<{ ok: boolean; error?: string; settings: { enabled: boolean; accountAlias: string; repo: string; interval: string } }> {
+    return await readJson(await fetch(DEVFORGE_API.backupConfig, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+    }))
+  }
+
+  /** CNB 备份：立即备份一次（force 跳过内容无变化检查）。 */
+  async backupNow(force = false): Promise<{ ok: boolean; size?: number; skipped?: string; error?: string }> {
+    return await readJson(await fetch(DEVFORGE_API.backupNow, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force }),
+    }))
+  }
+
+  /** CNB 备份：恢复预览（解密远端最新备份，不落盘）。 */
+  async backupPreview(password: string): Promise<{ ok: boolean; machine: string; createdAt: number; files: string[] }> {
+    return await readJson(await fetch(DEVFORGE_API.backupRestore, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password, dryRun: true }),
+    }))
+  }
+
+  /** CNB 备份：执行恢复（confirm 必须为「确认恢复」；完成后需重启 Host）。 */
+  async backupRestore(password: string): Promise<{ ok: boolean; restoredFiles: string[]; machine: string; restartRequired: boolean }> {
+    return await readJson(await fetch(DEVFORGE_API.backupRestore, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password, confirm: '确认恢复' }),
+    }))
+  }
+
+  /** CNB 备份：远端备份文件清单。 */
+  async backupList(): Promise<{ ok: boolean; backups: Array<{ path: string; size: number; modifiedAt?: number }> }> {
+    return await readJson(await fetch(DEVFORGE_API.backupList))
   }
 
   /** 创建生成任务（一键按钮）。 */

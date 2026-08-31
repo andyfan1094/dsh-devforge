@@ -10,6 +10,7 @@ import { BrowserTab } from './BrowserTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
+import { BackupTab } from './BackupTab.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -22,7 +23,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型。 */
-type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'repos' | 'feishu'
+type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'repos' | 'feishu' | 'backup'
 
 /** 主面板组件。 */
 export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Element {
@@ -136,6 +137,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}>远程运维</button>
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}>代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}>飞书</button>
+        <button type="button" role="tab" aria-selected={tab === 'backup'} data-active={tab === 'backup' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('backup') }}>CNB 备份</button>
       </div>
 
       <div className={css['panelContent']}>
@@ -173,6 +175,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
         {tab === 'codeplan' && <CodingPlanTab api={api} />}
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}
+        {tab === 'backup' && <BackupTab api={api} />}
 
         {tab === 'repos' && <ReposTab api={api} />}
 

@@ -31,6 +31,9 @@ import { getDb, } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
+import { makeBackupRoutes } from './backup/routes.ts'
+import { BackupScheduler } from './backup/scheduler.ts'
+import { backupNowTool, backupStatusTool } from './backup/tools.ts'
 import { HostStore as SshHostStore } from './remote/ssh/store.ts'
 import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
@@ -272,9 +275,10 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeMiniMaxRoutes(minimaxService),
     ...makeArkRoutes(arkService),
     ...makeCredentialsRoutes(),
+    ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
@@ -286,6 +290,8 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeMiniMaxTools: (() => void) | undefined
   let disposeMiniMaxHubTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
+  /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
+  const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
   const sync = (): void => {
     autoEnsureToken += 1 // 取消尚未完成的自动补齐，避免与最新配置竞争。
@@ -301,6 +307,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
     disposeMiniMaxHubTools?.(); disposeMiniMaxHubTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
+    backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
     const value = resolve()
@@ -317,6 +324,8 @@ export function apply(ctx: Context, config?: Config): void {
       ctx.logger.warn('[dsh-devforge] SQLite 迁移失败（不影响启动，旧文件保留）：%s', error instanceof Error ? error.message : String(error))
     }
     scheduleAutoEnsureModels()
+    // CNB 备份调度：enabled 才启动；含启动补跑（距上次推送超间隔立即执行）
+    backupScheduler.restart()
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
     }
