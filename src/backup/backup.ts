@@ -49,7 +49,15 @@ export interface BackupState {
 }
 
 const SETTINGS_DOMAIN = 'backup.settings'
-const STATE_DOMAIN = 'backup.state'
+
+/**
+ * 备份运行状态存【库外文件】（dshHome/devforge/backup-state.json，0600）：
+ * 若存库内，每次推送写状态都会改变库内容 → 下次快照 hash 变化 → 「内容无变化跳过」永久失效。
+ * 状态仅为本机运行信息，不进备份容器。
+ */
+function statePath(): string {
+  return join(homedir(), '.dsh', 'devforge', 'backup-state.json')
+}
 
 /** 间隔 → 毫秒。 */
 export function intervalToMs(interval: BackupSettings['interval']): number {
@@ -76,12 +84,24 @@ export function writeBackupSettings(patch: Partial<BackupSettings>): BackupSetti
 }
 
 export function readBackupState(): BackupState {
-  return getSettings<BackupState>(getDb(), STATE_DOMAIN) ?? {}
+  const path = statePath()
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as BackupState
+  } catch {
+    return {}
+  }
 }
 
 function writeBackupState(patch: Partial<BackupState>): BackupState {
   const next = { ...readBackupState(), ...patch }
-  putSettings(getDb(), STATE_DOMAIN, next)
+  const path = statePath()
+  mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 })
+  const tmp = path + '.tmp'
+  writeFileSync(tmp, JSON.stringify(next) + '\n', { encoding: 'utf8', mode: 0o600 })
+  try { chmodSync(tmp, 0o600) } catch { /* Windows ACL 继承 */ }
+  rmSync(path, { force: true })
+  renameSync(tmp, path)
   return next
 }
 
