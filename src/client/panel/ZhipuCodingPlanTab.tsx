@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { ZhipuDashboard, ZhipuQuotaLimit, ZhipuStatus, ZhipuUsageWindow } from '../../zhipu/protocol.ts'
 import css from './panel.module.css'
+import { ResetBadge } from './reset-badge.tsx'
+import { resolveZhipuReset } from './reset-countdown.ts'
 
 /** 智谱页签属性。 */
 export interface ZhipuCodingPlanTabProps {
@@ -19,22 +21,6 @@ export interface ZhipuCodingPlanTabProps {
 /** 格式化数量，避免大 Token 数撑破布局。 */
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('zh-CN', { notation: value >= 100_000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value)
-}
-
-/** 将官方重置时间转成短倒计时。 */
-function formatCountdown(value: string | number | undefined, now: number): string {
-  if (value === undefined) return '重置时间未知'
-  const rawTimestamp = typeof value === 'number' ? value : Date.parse(value)
-  const timestamp = typeof rawTimestamp === 'number' && rawTimestamp > 0 && rawTimestamp < 1_000_000_000_000 ? rawTimestamp * 1000 : rawTimestamp
-  if (!Number.isFinite(timestamp)) return '重置时间未知'
-  const remaining = Math.max(0, timestamp - now)
-  const minutes = Math.ceil(remaining / 60_000)
-  const days = Math.floor(minutes / 1440)
-  const hours = Math.floor((minutes % 1440) / 60)
-  const mins = minutes % 60
-  if (days > 0) return days + ' 天 ' + hours + ' 小时后重置'
-  if (hours > 0) return hours + ' 小时 ' + mins + ' 分钟后重置'
-  return mins + ' 分钟后重置'
 }
 
 /** 额度类型中文名。 */
@@ -243,11 +229,12 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
                 <div key={limit.kind + '-' + index} className={css['quotaRow']}>
                   <div className={css['quotaMeta']}>
                     <strong>{quotaLabel(limit.kind)}</strong>
-                    <span>{usedPercent.toFixed(1)}% 已用 · {(100 - usedPercent).toFixed(1)}% 剩余 · {formatCountdown(limit.nextResetTime, now)}</span>
+                    <span>{usedPercent.toFixed(1)}% 已用 · {(100 - usedPercent).toFixed(1)}% 剩余</span>
                   </div>
                   <div className={css['progressTrack']} role="progressbar" aria-label={quotaLabel(limit.kind)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent}>
                     <span className={css['progressFill']} data-level={usedPercent >= 95 ? 'danger' : usedPercent >= 80 ? 'warning' : 'normal'} style={{ width: usedPercent + '%' }} />
                   </div>
+                  <ResetBadge view={resolveZhipuReset(limit.nextResetTime, now, limit.kind)} />
                 </div>
               )
             })}

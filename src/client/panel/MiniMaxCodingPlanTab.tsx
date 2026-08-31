@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { MiniMaxDashboard, MiniMaxRemainsModel, MiniMaxStatus } from '../../minimax/protocol.ts'
 import css from './panel.module.css'
+import { ResetBadge } from './reset-badge.tsx'
+import { resolveGenericReset, type ResetLevel } from './reset-countdown.ts'
 
 /** MiniMax 页签属性。 */
 export interface MiniMaxCodingPlanTabProps {
@@ -16,35 +18,29 @@ export interface MiniMaxCodingPlanTabProps {
   onStatusChange?: (status: MiniMaxStatus) => void
 }
 
-/** 把时间戳转成中文短倒计时（不足 1 天显示 h/分，否则显示 x 天 y 小时）。 */
-function formatCountdown(timestamp: number | undefined, now: number): string {
-  if (timestamp === undefined) return '重置时间未知'
-  const remaining = Math.max(0, timestamp - now)
-  const minutes = Math.ceil(remaining / 60_000)
-  if (minutes <= 0) return '即将重置'
-  const days = Math.floor(minutes / 1440)
-  const hours = Math.floor((minutes % 1440) / 60)
-  const mins = minutes % 60
-  if (days > 0) return days + ' 天 ' + hours + ' 小时后重置'
-  if (hours > 0) return hours + ' 小时 ' + mins + ' 分钟后重置'
-  return mins + ' 分钟后重置'
-}
-
 /** 一行用量条目：单窗口（5h 或周）的进度条（按已用百分比填充）。 */
-function UsageRow({ label, percent, endAt, now }: { label: string; percent: number | undefined; endAt: number | undefined; now: number }): JSX.Element {
+function UsageRow({ label, percent, endAt, now, level: windowLevel }: {
+  label: string
+  percent: number | undefined
+  endAt: number | undefined
+  now: number
+  level: ResetLevel
+}): JSX.Element {
   /** percent 是剩余百分比；进度条与颜色按已用百分比展示。 */
   const remaining = Math.max(0, Math.min(100, percent ?? 0))
   const used = 100 - remaining
   const level = used >= 95 ? 'danger' : used >= 80 ? 'warning' : 'normal'
+  const resetView = resolveGenericReset(endAt, now, windowLevel)
   return (
     <div className={css['quotaRow']}>
       <div className={css['quotaMeta']}>
         <strong>{label}</strong>
-        <span>{used.toFixed(1)}% 已用 · {remaining.toFixed(1)}% 剩余 · {formatCountdown(endAt, now)}</span>
+        <span>{used.toFixed(1)}% 已用 · {remaining.toFixed(1)}% 剩余</span>
       </div>
       <div className={css['progressTrack']} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={used}>
         <span className={css['progressFill']} data-level={level} style={{ width: used + '%' }} />
       </div>
+      <ResetBadge view={resetView} />
     </div>
   )
 }
@@ -251,10 +247,10 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
         <div className={css['quotaList']}>
           {visibleModels.flatMap((model) => [
             model.intervalRemainingPercent !== undefined ? (
-              <UsageRow key={model.name + '-interval'} label={modelLabel(model.name) + ' · 5 小时窗口'} percent={model.intervalRemainingPercent} endAt={model.intervalEndAt} now={now} />
+              <UsageRow key={model.name + '-interval'} label={modelLabel(model.name) + ' · 5 小时窗口'} percent={model.intervalRemainingPercent} endAt={model.intervalEndAt} now={now} level="short-window" />
             ) : null,
             model.weeklyRemainingPercent !== undefined ? (
-              <UsageRow key={model.name + '-week'} label={modelLabel(model.name) + ' · 每周窗口'} percent={model.weeklyRemainingPercent} endAt={model.weeklyEndAt} now={now} />
+              <UsageRow key={model.name + '-week'} label={modelLabel(model.name) + ' · 每周窗口'} percent={model.weeklyRemainingPercent} endAt={model.weeklyEndAt} now={now} level="weekly" />
             ) : null,
           ])}
         </div>

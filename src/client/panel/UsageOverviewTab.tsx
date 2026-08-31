@@ -5,6 +5,8 @@ import type { ArkUsageDashboard } from '../../ark/protocol.ts'
 import type { MiniMaxDashboard } from '../../minimax/protocol.ts'
 import type { ZhipuDashboard } from '../../zhipu/protocol.ts'
 import css from './panel.module.css'
+import { ResetBadge } from './reset-badge.tsx'
+import { resolveOverviewReset } from './reset-countdown.ts'
 
 export type OverviewProvider = 'zhipu' | 'minimax' | 'ark'
 
@@ -48,6 +50,14 @@ function formatCountdown(timestamp: number | undefined, now: number): string {
 
 function percentText(usedPercent: number): string {
   return usedPercent.toFixed(1) + '% 已用 · ' + Math.max(0, 100 - usedPercent).toFixed(1) + '% 剩余'
+}
+
+/** 由 Overview 的 label 后缀推断窗口级别（用于徽章 urgency 分档）。 */
+function inferOverviewLevel(label: string): 'short-window' | 'weekly' | 'monthly' | 'unknown' {
+  if (label.includes('5 小时')) return 'short-window'
+  if (label.includes('本周')) return 'weekly'
+  if (label.includes('本月')) return 'monthly'
+  return 'unknown'
 }
 
 /** 智谱：limits 直接带 5h/周/月三类窗口。 */
@@ -195,11 +205,12 @@ export function UsageOverviewTab({ api, onNavigate }: UsageOverviewTabProps): JS
         <div key={period.label} className={css['overviewQuota']}>
           <div className={css['quotaMeta']}>
             <strong>{period.label}</strong>
-            <span>{period.detail} · {formatCountdown(period.resetAt, now)}</span>
+            <span>{period.detail}</span>
           </div>
           <div className={css['progressTrack']} role="progressbar" aria-label={period.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={period.usedPercent}>
             <span className={css['progressFill']} data-level={period.usedPercent >= 95 ? 'danger' : period.usedPercent >= 80 ? 'warning' : 'normal'} style={{ width: period.usedPercent + '%' }} />
           </div>
+          <ResetBadge view={resolveOverviewReset(period.resetAt, now, inferOverviewLevel(period.label))} />
         </div>
       ))}
       {card.warnings.map((warning) => <p key={warning} className={css['overviewError']}>{warning}</p>)}

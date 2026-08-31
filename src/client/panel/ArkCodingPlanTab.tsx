@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { ArkStatus, ArkUsageDashboard, ArkUsagePeriod, ArkUsageProduct } from '../../ark/protocol.ts'
 import css from './panel.module.css'
+import { ResetBadge } from './reset-badge.tsx'
+import { resolveArkReset } from './reset-countdown.ts'
 
 /** 火山方舟页签属性。 */
 export interface ArkCodingPlanTabProps {
@@ -14,19 +16,6 @@ export interface ArkCodingPlanTabProps {
 
 const ARK_USAGE_CONSOLE = 'https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=agentPlan'
 const VOLC_KEY_CONSOLE = 'https://console.volcengine.com/iam/keymanage/'
-
-/** 把额度重置时间转成中文倒计时。 */
-function formatCountdown(timestamp: number | undefined, now: number): string {
-  if (timestamp === undefined) return '重置时间未知'
-  const remaining = Math.max(0, timestamp - now)
-  const minutes = Math.ceil(remaining / 60_000)
-  const days = Math.floor(minutes / 1440)
-  const hours = Math.floor((minutes % 1440) / 60)
-  const mins = minutes % 60
-  if (days > 0) return days + ' 天 ' + hours + ' 小时后重置'
-  if (hours > 0) return hours + ' 小时 ' + mins + ' 分钟后重置'
-  return mins > 0 ? mins + ' 分钟后重置' : '即将重置'
-}
 
 /** 套餐种类中文名。 */
 function productLabel(product: ArkUsageProduct): string {
@@ -57,9 +46,10 @@ function UsageRow({ period, now }: { period: ArkUsagePeriod; now: number }): JSX
     ? ' · ' + formatAmount(period.used) + ' / ' + formatAmount(period.total)
     : ''
   const summary = rawPercent === undefined
-    ? '用量比例未知' + amount + ' · ' + formatCountdown(period.resetAt, now)
-    : usedPercent.toFixed(1) + '% 已用 · ' + remainingPercent.toFixed(1) + '% 剩余' + amount + ' · ' + formatCountdown(period.resetAt, now)
+    ? '用量比例未知' + amount
+    : usedPercent.toFixed(1) + '% 已用 · ' + remainingPercent.toFixed(1) + '% 剩余' + amount
   const level = usedPercent >= 95 ? 'danger' : usedPercent >= 80 ? 'warning' : 'normal'
+  const resetView = resolveArkReset(period, now)
   return (
     <div className={css['quotaRow']}>
       <div className={css['quotaMeta']}>
@@ -69,6 +59,7 @@ function UsageRow({ period, now }: { period: ArkUsagePeriod; now: number }): JSX
       <div className={css['progressTrack']} role="progressbar" aria-label={periodLabel(period.level)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={rawPercent === undefined ? undefined : usedPercent}>
         <span className={css['progressFill']} data-level={level} style={{ width: usedPercent + '%' }} />
       </div>
+      <ResetBadge view={resetView} />
     </div>
   )
 }
