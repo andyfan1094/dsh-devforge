@@ -48,7 +48,7 @@ export const ARK_DEFAULT_MODELS = [
     maxTokens: 32_768,
     input: ['text', 'image'],
     reasoningEfforts: KIMI_CODE_REASONING,
-    compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false },
+    compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false, supportsDeveloperRole: false },
   },
   { id: 'ark-code-latest', name: 'Ark Code Latest', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
 ] as const
@@ -83,12 +83,17 @@ export function mergeArkProvider(provider: Record<string, unknown> | undefined, 
   })
   const ids = new Set(mergedExisting.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
   const additions = ARK_DEFAULT_MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  const existingCompat = provider?.compat !== null && typeof provider?.compat === 'object' && !Array.isArray(provider?.compat)
+    ? provider.compat as Record<string, unknown>
+    : {}
   return {
     ...(provider ?? {}),
     displayName: typeof provider?.displayName === 'string' ? provider.displayName : '火山方舟 Agent Plan',
     apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
     api: typeof provider?.api === 'string' ? provider.api : 'openai-completions',
     baseURL: ARK_PLAN_BASE_URL,
+    // 方舟网关只接受 system/user/assistant/tool 角色，reasoning 模型必须禁用 developer 角色分发。
+    compat: { ...existingCompat, supportsDeveloperRole: false },
     models: [...mergedExisting, ...additions],
   }
 }

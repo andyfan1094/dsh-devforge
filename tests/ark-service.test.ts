@@ -61,6 +61,13 @@ test('方舟 Provider 合并：为旧模型补推理档位并保留显式覆盖'
   assert.deepEqual(kimi?.compat, { thinkingFormat: 'qwen', supportsReasoningEffort: false, supportsDeveloperRole: false })
 })
 
+test('方舟 Provider 合并：强制禁用 developer 角色并保留其他 compat', () => {
+  const merged = mergeArkProvider({ compat: { chatTemplateKwargs: { a: 1 }, supportsStrictMode: true } }, 'ARK_CODING_PLAN_API_KEY')
+  assert.deepEqual(merged.compat, { chatTemplateKwargs: { a: 1 }, supportsStrictMode: true, supportsDeveloperRole: false })
+  const bare = mergeArkProvider(undefined, 'ARK_CODING_PLAN_API_KEY')
+  assert.deepEqual(bare.compat, { supportsDeveloperRole: false })
+})
+
 test('方舟 ensureModels：补齐推理档位只写一次，重复调用跳过写入', async () => {
   const base = mergeArkProvider(undefined, 'ARK_CODING_PLAN_API_KEY')
   const staleModels = (base.models as Array<Record<string, unknown>>).map((model) => {
