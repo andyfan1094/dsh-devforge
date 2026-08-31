@@ -1,6 +1,6 @@
 /**
- * 浏览器侧 API 客户端 —— 服务工厂面板组件唯一的数据通道（同源 fetch）。
- * 关键边界：只访问服务工厂路由及其接管后的兼容路由；Token 等凭据绝不返回浏览器。
+ * 浏览器侧 API 客户端 —— 天工造梦面板组件唯一的数据通道（同源 fetch）。
+ * 关键边界：只访问天工造梦路由及其接管后的兼容路由；Token 等凭据绝不返回浏览器。
  */
 
 import { DEVFORGE_API, type BackupStatus, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'

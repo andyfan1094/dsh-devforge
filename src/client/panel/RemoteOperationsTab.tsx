@@ -41,7 +41,7 @@ const EMPTY_FORM: HostFormState = {
   tags: '',
 }
 
-/** 服务工厂内的统一远程主机清单与配置入口。 */
+/** 天工造梦内的统一远程主机清单与配置入口。 */
 export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Element {
   const [hosts, setHosts] = useState<RemoteHostSummary[]>([])
   const [loading, setLoading] = useState(true)

@@ -5,9 +5,9 @@
 
 /** 中文文案（主语言，as const 保证 key 字面量类型）。 */
 export const zhDict = {
-  'entry.label': '服务工厂',
-  'entry.tooltip': 'dsh-devforge：规范库与一键服务生成',
-  'panel.title': '服务工厂（dsh-devforge）',
+  'entry.label': '天工造梦',
+  'entry.tooltip': '天工造梦：规范库与一键服务生成',
+  'panel.title': '天工造梦（dsh-devforge）',
   'tab.standards': '开发规范',
   'standards.empty': '规范库为空（standards/ 目录无 md 文件）',
   'standards.view': '查看',

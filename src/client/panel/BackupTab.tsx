@@ -129,7 +129,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
   }, [api, restorePassword])
 
   const doRestore = useCallback(async (): Promise<void> => {
-    if (!window.confirm('恢复会覆盖本机的服务工厂账号、主机与密钥数据（覆盖前自动备份现有文件），确认继续？')) return
+    if (!window.confirm('恢复会覆盖本机的天工造梦账号、主机与密钥数据（覆盖前自动备份现有文件），确认继续？')) return
     setBusy(true)
     setError('')
     try {

@@ -1,10 +1,10 @@
-/** 服务工厂通用受管凭据写入路由（loopback 围栏 + 同源校验，仅服务工厂面板可用）。 */
+/** 天工造梦通用受管凭据写入路由（loopback 围栏 + 同源校验，仅天工造梦面板可用）。 */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from './loopback.ts'
 import { setCredential } from './credentials-writer.ts'
 import { getDb, putCredentialMirror } from './store/db.ts'
 
-/** 服务工厂内的凭据写入 API 路径。 */
+/** 天工造梦内的凭据写入 API 路径。 */
 export const CREDENTIALS_API = {
   set: '/api/dsh-devforge/credentials/set',
 } as const
@@ -20,7 +20,7 @@ function writeJson(res: import('node:http').ServerResponse, status: number, payl
   res.end(body)
 }
 
-/** 所有服务工厂面板接口只允许本机 GUI 调用。 */
+/** 所有天工造梦面板接口只允许本机 GUI 调用。 */
 function guard(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
   if (isLoopbackRequest(req)) return true
   writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })

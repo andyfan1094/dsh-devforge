@@ -1,5 +1,5 @@
 /**
- * 服务工厂面板页签图标（内联 SVG，stroke 跟随 currentColor，
+ * 天工造梦面板页签图标（内联 SVG，stroke 跟随 currentColor，
  * 自动适配 DSH 浅色/深色主题；统一 14px 视觉尺寸）。
  */
 import type { JSX } from 'react'
@@ -79,12 +79,13 @@ export function IconFeishu({ size }: IconProps): JSX.Element {
   )
 }
 
-/** 服务工厂标题图标：工厂/齿轮（面板头使用）。 */
-export function IconFactory({ size }: IconProps): JSX.Element {
+/** 天工造梦标题图标：齿轮（天工）内嵌四角星（造梦），与侧边栏入口同构。 */
+export function IconTiangong({ size }: IconProps): JSX.Element {
   return (
     <svg {...base(size)} aria-hidden="true">
-      <path d="M2 20h20" />
-      <path d="M4 20V8l6 4V8l6 4V6l4 2v12" />
+      <circle cx="12" cy="12" r="7.6" />
+      <path d="M12 1.5v2.2M12 20.3v2.2M1.5 12h2.2M20.3 12h2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M19.4 4.6l-1.6 1.6M6.2 17.8l-1.6 1.6" />
+      <path d="M12 7.4c.6 2.4 1.5 3.3 4.6 4.6-3.1 1.3-4 2.2-4.6 4.6-.6-2.4-1.5-3.3-4.6-4.6 3.1-1.3 4-2.2 4.6-4.6z" fill="currentColor" stroke="none" />
     </svg>
   )
 }

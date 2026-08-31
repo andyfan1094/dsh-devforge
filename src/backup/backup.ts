@@ -158,7 +158,7 @@ export async function ensurePrivateRepo(account: StoredAccount, repo: string): P
     if (owner === undefined || name === undefined) throw new Error('仓库格式必须为 owner/name：' + repo)
     const created = await api.writeRequest<unknown>(account, '/' + owner + '/-/repos', {
       name,
-      description: '服务工厂配置加密备份仓库（自动同步，密文存储）',
+      description: '天工造梦配置加密备份仓库（自动同步，密文存储）',
       visibility: 'private',
     })
     if (created.status !== 201 && created.status !== 200) {

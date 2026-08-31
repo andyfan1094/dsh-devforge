@@ -1,5 +1,5 @@
 /**
- * 服务工厂内嵌 CNB（cnb.cool）工作台。
+ * 天工造梦内嵌 CNB（cnb.cool）工作台。
  *
  * 与 GithubTab 同构：账号、仓库、本地 Git、安全设置四个子页；所有请求统一
  * 经过 DevforgeApi；令牌仅在保存时单向提交，Host 返回的账号摘要永远不含
@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS: CnbSettings = {
 
 /** 内嵌页属性。 */
 export interface CnbTabProps {
-  /** 服务工厂统一 API 客户端。 */
+  /** 天工造梦统一 API 客户端。 */
   api: DevforgeApi
 }
 
@@ -47,7 +47,7 @@ function formatGitResult(result: GitResult): string {
   return lines.filter((line) => line !== '').join('\n')
 }
 
-/** 服务工厂 CNB 工作台。 */
+/** 天工造梦 CNB 工作台。 */
 export function CnbTab({ api }: CnbTabProps): JSX.Element {
   const [view, setView] = useState<CnbView>('accounts')
   const [accounts, setAccounts] = useState<AccountSummary[]>([])

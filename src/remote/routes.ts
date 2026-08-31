@@ -1,5 +1,5 @@
 /**
- * 服务工厂远程运维首页路由：统一主机清单 + 主机增删（配置面）。
+ * 天工造梦远程运维首页路由：统一主机清单 + 主机增删（配置面）。
  *
  * 数据来源（dsh-devforge SQLite 收敛后）：
  *   - 主清单 = SSH HostStore + WinRM HostStore（plugin-wide store.db），脱敏摘要；
@@ -46,7 +46,7 @@ async function readJsonBody(req: import('node:http').IncomingMessage): Promise<R
   return parsed as Record<string, unknown>
 }
 
-/** 服务工厂远程运维首页的路由集合。 */
+/** 天工造梦远程运维首页的路由集合。 */
 export function makeRemoteRoutes(
   registry: LegacyRemoteRegistry,
   sshStore: SshHostStore,

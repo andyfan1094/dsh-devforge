@@ -1,5 +1,5 @@
 /**
- * 服务工厂中心视图挂载 —— 与 dsh-ssh 同一注入契约。
+ * 天工造梦中心视图挂载 —— 与 dsh-ssh 同一注入契约。
  *
  * 外部插件不能占用 conversation slot，因此仅在中心列追加一个独立 React root；
  * Controller 只控制 html active 属性，CSS 负责遮住会话。这样会话树保持挂载，
@@ -39,7 +39,7 @@ function conversationColumn(): HTMLElement | undefined {
 /**
  * 挂载一次性 React root；容器被壳整树替换后才卸载重建。
  * @param controller 唯一开关状态源。
- * @param api 服务工厂 HTTP API。
+ * @param api 天工造梦 HTTP API。
  */
 export function mountPanel(controller: PanelController, api: DevforgeApi): () => void {
   let root: Root | undefined

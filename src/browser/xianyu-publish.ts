@@ -1,4 +1,4 @@
-/** 闲鱼商品发布流程：复用服务工厂的可见浏览器与当前登录态。 */
+/** 闲鱼商品发布流程：复用天工造梦的可见浏览器与当前登录态。 */
 import { TAB_ORIGIN_XIANYU_PUBLISH, type BrowserService } from './service.ts'
 
 /** 闲鱼商品发布页地址。 */

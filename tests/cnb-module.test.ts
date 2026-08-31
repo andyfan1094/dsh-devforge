@@ -87,7 +87,7 @@ test('CnbApi：listRepos 分页聚合、私有判定与 query 过滤', async () 
   const pageOf = (url: string): number => Number(new URL(url, 'http://x').searchParams.get('page') ?? '1')
   const mock = startMock((url) => {
     if (pageOf(url) === 1) return { payload: [
-      { id: '1', name: 'dsh-devforge', path: 'andyfan1094/dsh-devforge', description: '服务工厂', web_url: 'https://cnb.cool/andyfan1094/dsh-devforge', visibility_level: 'Public', updated_at: '2026-08-31T00:00:00Z' },
+      { id: '1', name: 'dsh-devforge', path: 'andyfan1094/dsh-devforge', description: '天工造梦', web_url: 'https://cnb.cool/andyfan1094/dsh-devforge', visibility_level: 'Public', updated_at: '2026-08-31T00:00:00Z' },
       { id: '2', name: 'secret-repo', path: 'andyfan1094/secret-repo', visibility_level: 'Private' },
     ] }
     return { payload: [] }
@@ -102,7 +102,7 @@ test('CnbApi：listRepos 分页聚合、私有判定与 query 过滤', async () 
     assert.equal(repos[0].cloneUrl, 'https://cnb.cool/andyfan1094/dsh-devforge')
     assert.equal(repos[0].private, false)
     assert.equal(repos[1].private, true)
-    const filtered = await api.listRepos(undefined, '服务工厂')
+    const filtered = await api.listRepos(undefined, '天工造梦')
     assert.equal(filtered.length, 1)
     assert.equal(filtered[0].name, 'dsh-devforge')
   } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }

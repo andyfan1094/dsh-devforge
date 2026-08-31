@@ -59,7 +59,7 @@ export class CnbEngine {
     const result = await this.git.run(args, repoPath, account, input.timeoutMs); result.action = 'pull'; return this.withStatus(result, repoPath)
   }
   private async push(repoPath: string, input: GitAction): Promise<GitResult> {
-    const settings = this.store.settings(); if (!settings.allowPush) throw new Error('推送默认关闭：请先在服务工厂设置的 CNB 配置里打开 Allow push')
+    const settings = this.store.settings(); if (!settings.allowPush) throw new Error('推送默认关闭：请先在天工造梦设置的 CNB 配置里打开 Allow push')
     if (input.force && !settings.allowForcePush) throw new Error('强制推送默认关闭：请先打开 Allow force push')
     // push 必须认证：没有可用账号直接报可读错误。
     const account: StoredAccount = this.store.findAccount(input.account)

@@ -1,4 +1,4 @@
-/** 受管凭据原子写入（服务工厂内专用，loopback 围栏限制访问）。 */
+/** 受管凭据原子写入（天工造梦内专用，loopback 围栏限制访问）。 */
 import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'

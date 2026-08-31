@@ -1,5 +1,5 @@
 /**
- * 服务工厂操作台 —— 使用 DSH SSH/WinRM 同一套面板壳：返回会话、标题、标准页签
+ * 天工造梦操作台 —— 使用 DSH SSH/WinRM 同一套面板壳：返回会话、标题、标准页签
  * 与主题 token。页面聚焦规范与集成管理；服务生成任务继续由 Host 工具接口承载。
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -10,7 +10,7 @@ import { BrowserTab } from './BrowserTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconRepo, IconFeishu, IconFactory } from './icons.tsx'
+import { IconStandards, IconBrowser, IconChart, IconServer, IconRepo, IconFeishu, IconTiangong } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -118,7 +118,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
           <span aria-hidden="true">‹</span>
           <span>返回会话</span>
         </button>
-        <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconFactory size={16} /></span>服务工厂</h2>
+        <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconTiangong size={16} /></span>天工造梦</h2>
         <button
           type="button"
           className={css['ghostButton']}

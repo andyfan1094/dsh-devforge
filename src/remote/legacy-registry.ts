@@ -2,7 +2,7 @@
  * 远程运维旧配置只读注册表。
  *
  * 迁移第一阶段只把 dsh-ssh.json / dsh-winrm.json 投影为统一主机摘要，绝不回写、
- * 重命名或迁移凭据文件。这样服务工厂可先建立统一视图，而旧插件保持可回滚运行。
+ * 重命名或迁移凭据文件。这样天工造梦可先建立统一视图，而旧插件保持可回滚运行。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -78,7 +78,7 @@ function common(entry: LegacyHost, transport: RemoteTransport, fallbackPort: num
 }
 
 /**
- * 服务工厂远程主机注册表。当前为只读桥接层；后续 adapter 接入完成后再提供显式、
+ * 天工造梦远程主机注册表。当前为只读桥接层；后续 adapter 接入完成后再提供显式、
  * 可回滚的导入动作，不能在用户未确认时搬运任何明文凭据。
  */
 export class LegacyRemoteRegistry {

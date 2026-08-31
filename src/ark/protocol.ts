@@ -1,6 +1,6 @@
 /** 火山方舟 Agent Plan 的 Host/Client 共用契约。 */
 
-/** 服务工厂内的方舟 API 路径。 */
+/** 天工造梦内的方舟 API 路径。 */
 export const ARK_API = {
   status: '/api/dsh-devforge/ark/status',
   setup: '/api/dsh-devforge/ark/setup',

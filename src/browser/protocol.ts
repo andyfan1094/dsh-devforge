@@ -5,7 +5,7 @@
  * 固定用户档案目录跨重启保存登录状态；契约里没有任何端口、令牌或远程主机字段。
  */
 
-/** 服务工厂浏览器面板 API 路由（仅本机 GUI 可访问）。 */
+/** 天工造梦浏览器面板 API 路由（仅本机 GUI 可访问）。 */
 export const BROWSER_API = {
   status: '/api/dsh-devforge/browser/status',
   navigate: '/api/dsh-devforge/browser/navigate',

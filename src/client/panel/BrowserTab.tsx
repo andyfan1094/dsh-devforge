@@ -1,4 +1,4 @@
-/** 服务工厂内的本地浏览器控制页：状态、导航、截图与快照。 */
+/** 天工造梦内的本地浏览器控制页：状态、导航、截图与快照。 */
 import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { BrowserStatus } from '../../browser/protocol.ts'

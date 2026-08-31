@@ -47,7 +47,7 @@ interface TabBinding {
   lastActivityAt: number
 }
 
-/** 服务工厂作用域元素引用。 */
+/** 天工造梦作用域元素引用。 */
 export interface ScopedElementRef {
   tabId: number
   generation: number
@@ -99,7 +99,7 @@ export function scopeSnapshotRefs(snapshot: string, tabId: number, generation: n
   })
 }
 
-/** 解析服务工厂作用域引用；普通原始引用用于内部兼容。 */
+/** 解析天工造梦作用域引用；普通原始引用用于内部兼容。 */
 export function parseScopedElementRef(ref: string): ScopedElementRef | undefined {
   const match = ref.match(/^t(\d+)g(\d+):(.+)$/)
   if (match === null) return undefined
@@ -245,7 +245,7 @@ export class BrowserService {
 
   /** 被动读取状态：不拉起浏览器进程。 */
   async status(): Promise<BrowserStatus> {
-    if (!this.resolved.enabled) return { enabled: false, running: false, ready: false, profileDir: this.resolved.profileDir, message: '浏览器能力未启用，请在服务工厂设置中开启' }
+    if (!this.resolved.enabled) return { enabled: false, running: false, ready: false, profileDir: this.resolved.profileDir, message: '浏览器能力未启用，请在天工造梦设置中开启' }
     if (this.client === undefined || !this.client.running) {
       return { enabled: true, running: false, ready: false, profileDir: this.resolved.profileDir, message: '浏览器未启动；使用打开/导航等操作时会自动拉起' }
     }

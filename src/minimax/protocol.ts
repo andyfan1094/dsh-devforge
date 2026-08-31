@@ -1,6 +1,6 @@
 /** MiniMax Coding Plan capability 的 Host/Client 共用契约。 */
 
-/** 服务工厂内的 MiniMax API 路径。 */
+/** 天工造梦内的 MiniMax API 路径。 */
 export const MINIMAX_API = {
   status: '/api/dsh-devforge/minimax/status',
   dashboard: '/api/dsh-devforge/minimax/dashboard',

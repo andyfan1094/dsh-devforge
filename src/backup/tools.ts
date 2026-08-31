@@ -15,7 +15,7 @@ const schema = { type: 'json' } as const
 export function backupNowTool() {
   return defineTool({
     name: 'cnb_backup_now',
-    description: '立即执行一次服务工厂 CNB 加密备份（store.db + 飞书配置，6 位密码加密）。需已启用备份（cnb_backup_status 查看）；内容无变化时跳过推送。',
+    description: '立即执行一次天工造梦 CNB 加密备份（store.db + 飞书配置，6 位密码加密）。需已启用备份（cnb_backup_status 查看）；内容无变化时跳过推送。',
     parameters: {
       force: { type: 'boolean', description: '跳过「内容无变化」检查强制推送（默认 false）。' },
     },
@@ -30,7 +30,7 @@ export function backupNowTool() {
 export function backupStatusTool() {
   return defineTool({
     name: 'cnb_backup_status',
-    description: '查看服务工厂 CNB 备份状态：是否启用、仓库、间隔、上次推送时间与结果、本机是否已设密码。不回显密码。',
+    description: '查看天工造梦 CNB 备份状态：是否启用、仓库、间隔、上次推送时间与结果、本机是否已设密码。不回显密码。',
     parameters: {},
     output: { schema, render: (_args, value) => text(render(value)) },
     async execute() {

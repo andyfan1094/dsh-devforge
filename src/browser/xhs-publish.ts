@@ -1,4 +1,4 @@
-/** 小红书图文笔记发布流程：复用服务工厂的可见浏览器与当前登录态。 */
+/** 小红书图文笔记发布流程：复用天工造梦的可见浏览器与当前登录态。 */
 import { TAB_ORIGIN_XHS_PUBLISH, type BrowserService } from './service.ts'
 
 /** 小红书创作服务平台发布页地址。 */

@@ -1,5 +1,5 @@
 /**
- * 服务工厂内嵌 GitHub 工作台。
+ * 天工造梦内嵌 GitHub 工作台。
  *
  * 关键边界：所有请求统一经过 DevforgeApi；Token 仅在保存时单向提交，Host 返回的
  * 账号摘要永远不含明文 Token。Push 与 Force Push 还会在 Host 端再次校验安全开关。
@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS: GitHubSettings = {
 
 /** 内嵌页属性。 */
 export interface GithubTabProps {
-  /** 服务工厂统一 API 客户端。 */
+  /** 天工造梦统一 API 客户端。 */
   api: DevforgeApi
 }
 
@@ -44,7 +44,7 @@ function formatGitResult(result: GitResult): string {
   return lines.filter((line) => line !== '').join('\n')
 }
 
-/** 服务工厂 GitHub 工作台。 */
+/** 天工造梦 GitHub 工作台。 */
 export function GithubTab({ api }: GithubTabProps): JSX.Element {
   const [view, setView] = useState<GithubView>('accounts')
   const [accounts, setAccounts] = useState<AccountSummary[]>([])

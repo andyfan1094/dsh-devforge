@@ -1,6 +1,6 @@
 /** 智谱 Coding Plan capability 的 Host/Client 共用契约。 */
 
-/** 服务工厂内的智谱 API 路径。 */
+/** 天工造梦内的智谱 API 路径。 */
 export const ZHIPU_API = {
   status: '/api/dsh-devforge/zhipu/status',
   dashboard: '/api/dsh-devforge/zhipu/dashboard',

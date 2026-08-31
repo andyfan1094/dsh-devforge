@@ -1,5 +1,5 @@
 /**
- * 代码仓库工作台 —— 服务工厂主面板「代码仓库」页签的内部容器。
+ * 代码仓库工作台 —— 天工造梦主面板「代码仓库」页签的内部容器。
  *
  * 按托管平台分子页签：CNB（cnb.cool，默认首位）与 GitHub。两个平台各自
  * 维护独立的工作台组件与本地凭据存储，互不影响。
@@ -15,11 +15,11 @@ type RepoHost = 'cnb' | 'github'
 
 /** 内嵌页属性。 */
 export interface ReposTabProps {
-  /** 服务工厂统一 API 客户端。 */
+  /** 天工造梦统一 API 客户端。 */
   api: DevforgeApi
 }
 
-/** 服务工厂代码仓库工作台。 */
+/** 天工造梦代码仓库工作台。 */
 export function ReposTab({ api }: ReposTabProps): JSX.Element {
   const [host, setHost] = useState<RepoHost>('cnb')
 

@@ -1,5 +1,5 @@
 /**
- * 服务工厂内嵌飞书控制台。
+ * 天工造梦内嵌飞书控制台。
  *
  * 安全边界：App Secret 只允许单向提交，读取接口仅返回掩码；保存配置会关闭旧独立
  * Agent 并按新配置重建，避免同一个 chatId 同时绑定两套运行参数。
@@ -45,7 +45,7 @@ const EMPTY_OPTIONS: FeishuModelOptions = {
 
 /** 内嵌页属性。 */
 export interface FeishuTabProps {
-  /** 服务工厂统一 API 客户端。 */
+  /** 天工造梦统一 API 客户端。 */
   api: DevforgeApi
 }
 
@@ -64,7 +64,7 @@ function connectionLabel(status: FeishuStatus): string {
   return '未连接'
 }
 
-/** 服务工厂飞书控制台。 */
+/** 天工造梦飞书控制台。 */
 export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
   const [config, setConfig] = useState<FeishuPanelConfig>(EMPTY_CONFIG)
   const [status, setStatus] = useState<FeishuStatus>({ state: 'loading', connected: false, independentSessions: [] })

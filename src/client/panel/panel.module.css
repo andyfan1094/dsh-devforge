@@ -97,7 +97,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 [data-dsh-frame][data-sidebar-collapsed] .entry { justify-content: center; width: 36px; min-height: 36px; padding: 0; margin: 0 auto 12px; border-radius: 50%; }
 [data-dsh-frame][data-sidebar-collapsed] .entryLabel { display: none; }
 
-/* 服务工厂内嵌 GitHub 工作台：保持运维工具的紧凑信息密度，不使用营销式卡片。 */
+/* 天工造梦内嵌 GitHub 工作台：保持运维工具的紧凑信息密度，不使用营销式卡片。 */
 .githubWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 10px; overflow: auto; }
 /* 工作台内子导航：同胶囊风格（更小一号），active 轻量填充 */
 .subTabBar { display: flex; flex: none; align-items: center; gap: 3px; min-width: 0; padding: 3px; overflow-x: auto; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border-radius: 8px; }

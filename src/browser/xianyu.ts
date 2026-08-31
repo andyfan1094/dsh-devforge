@@ -1,4 +1,4 @@
-/** 闲鱼消息页自动化：只复用服务工厂的可见浏览器与现有登录态。 */
+/** 闲鱼消息页自动化：只复用天工造梦的可见浏览器与现有登录态。 */
 import { TAB_ORIGIN_XIANYU_MESSAGE, type BrowserService } from './service.ts'
 
 /** 闲鱼网页版消息中心。 */

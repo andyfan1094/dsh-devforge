@@ -1,4 +1,4 @@
-/** 服务工厂面板专用的本地浏览器路由；所有请求必须来自本机 GUI。 */
+/** 天工造梦面板专用的本地浏览器路由；所有请求必须来自本机 GUI。 */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from '../loopback.ts'

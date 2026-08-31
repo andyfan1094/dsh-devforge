@@ -8,12 +8,12 @@ function safeError(error: unknown): string { return (error instanceof Error ? er
 
 /** 浏览器状态（被动读取，不拉起进程）。 */
 export function browserStatusTool(service: BrowserService) {
-  return defineTool({ name: 'browser_status', description: '读取服务工厂托管的本地浏览器状态。浏览器运行在本机屏幕上实时可见，固定用户档案保存登录状态；不返回任何系统路径。', parameters: {}, output: { schema: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean', required: true }, running: { type: 'boolean', required: true }, ready: { type: 'boolean', required: true }, currentUrl: { type: 'string' }, pageTitle: { type: 'string' }, message: { type: 'string' } } }, render: (_args, value) => text(JSON.stringify(value)) }, async execute() { const { profileDir: _profileDir, ...status } = await service.status(); return status } })
+  return defineTool({ name: 'browser_status', description: '读取天工造梦托管的本地浏览器状态。浏览器运行在本机屏幕上实时可见，固定用户档案保存登录状态；不返回任何系统路径。', parameters: {}, output: { schema: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean', required: true }, running: { type: 'boolean', required: true }, ready: { type: 'boolean', required: true }, currentUrl: { type: 'string' }, pageTitle: { type: 'string' }, message: { type: 'string' } } }, render: (_args, value) => text(JSON.stringify(value)) }, async execute() { const { profileDir: _profileDir, ...status } = await service.status(); return status } })
 }
 
 /** 打开或跳转页面，并返回页面快照。 */
 export function browserOpenTool(service: BrowserService) {
-  return defineTool({ name: 'browser_open', description: '在服务工厂托管的本地浏览器中打开 http(s) 地址（独立新标签页），返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见；任务结束后请用 browser_tabs 评估并关闭不再使用的标签页。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.openTab(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
+  return defineTool({ name: 'browser_open', description: '在天工造梦托管的本地浏览器中打开 http(s) 地址（独立新标签页），返回页面无障碍快照。浏览器窗口在用户屏幕上实时可见；任务结束后请用 browser_tabs 评估并关闭不再使用的标签页。', parameters: { url: { type: 'string', required: true, description: '要打开的 http(s) 地址。' } }, output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '打开失败：' + (value.error ?? '未知错误')) }, async execute(args) { try { return { ok: true, snapshot: await service.withExclusive(() => service.openTab(args.url)) } } catch (error) { return { ok: false, error: safeError(error) } } } })
 }
 
 /** 读取当前页快照。 */
@@ -56,7 +56,7 @@ export function browserTypeTool(service: BrowserService) {
 export function browserTabsTool(service: BrowserService) {
   return defineTool({
     name: 'browser_tabs',
-    description: '管理服务工厂可见浏览器中的标签页：列出（附带来源与闲置评估建议）、新建、选择、关闭，以及清理闲置标签页。任务用完的标签页应当评估并及时关闭，避免页面堆积。',
+    description: '管理天工造梦可见浏览器中的标签页：列出（附带来源与闲置评估建议）、新建、选择、关闭，以及清理闲置标签页。任务用完的标签页应当评估并及时关闭，避免页面堆积。',
     parameters: {
       action: { type: 'string', required: true, enum: ['list', 'new', 'select', 'close', 'close_idle'], description: '标签页操作：list 附带来源与闲置评估建议；close_idle 一键清理闲置标签页。' },
       index: { type: 'number', description: '选择或关闭时使用的标签页序号。' },

@@ -152,8 +152,8 @@ const DEVFORGE_GUIDANCE = [
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
-  '- 火山方舟 Agent Plan：服务工厂的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
-  '- CNB 代码托管（cnb.cool，国内）：cnb_auth_add / cnb_auth_list / cnb_auth_test / cnb_repo_list / cnb_clone / cnb_pull / cnb_push / cnb_commit / cnb_status / cnb_auth_remove；平台仅支持 HTTPS+访问令牌（Git 用户名固定 cnb），令牌经临时 HTTP 头注入绝不进 URL，推送默认关闭需在服务工厂设置打开。',
+  '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
+  '- CNB 代码托管（cnb.cool，国内）：cnb_auth_add / cnb_auth_list / cnb_auth_test / cnb_repo_list / cnb_clone / cnb_pull / cnb_push / cnb_commit / cnb_status / cnb_auth_remove；平台仅支持 HTTPS+访问令牌（Git 用户名固定 cnb），令牌经临时 HTTP 头注入绝不进 URL，推送默认关闭需在天工造梦设置打开。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
@@ -220,25 +220,25 @@ export function apply(ctx: Context, config?: Config): void {
   const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
   const minimaxConfig = { enabled: true, apiKeyEnv: 'MINIMAX_CN_API_KEY', timeoutMs: 30000, tools: true }
   const arkConfig: ArkCapabilityConfig = { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY', usageAccessKeyEnv: 'VOLC_ACCESS_KEY', usageSecretKeyEnv: 'VOLC_SECRET_KEY', usageTimeoutMs: 15000 }
-  const DISABLED_BROWSER: BrowserStatus = { enabled: false, running: false, ready: false, profileDir: '', message: '浏览器能力未启用，请在服务工厂设置中开启' }
+  const DISABLED_BROWSER: BrowserStatus = { enabled: false, running: false, ready: false, profileDir: '', message: '浏览器能力未启用，请在天工造梦设置中开启' }
   let browserApi: Pick<BrowserRoutesService, 'status' | 'navigate' | 'snapshot' | 'screenshot' | 'stop'> | undefined
   const browserHolder: BrowserRoutesService = {
     enabled: false,
     status: async (): Promise<BrowserStatus> => browserApi === undefined ? DISABLED_BROWSER : await browserApi.status(),
     navigate: async (url: string) => {
-      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在服务工厂设置中开启')
+      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在天工造梦设置中开启')
       return await browserApi.navigate(url)
     },
     snapshot: async () => {
-      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在服务工厂设置中开启')
+      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在天工造梦设置中开启')
       return await browserApi.snapshot()
     },
     screenshot: async () => {
-      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在服务工厂设置中开启')
+      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在天工造梦设置中开启')
       return await browserApi.screenshot()
     },
     stop: async () => {
-      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在服务工厂设置中开启')
+      if (browserApi === undefined) throw new Error('浏览器能力未启用，请在天工造梦设置中开启')
       return await browserApi.stop()
     },
   }

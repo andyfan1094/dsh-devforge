@@ -10,7 +10,7 @@ function safeError(error: unknown): string { return (error instanceof Error ? er
 export function xianyuMessagesListTool(service: XianyuMessageService) {
   return defineTool({
     name: 'xianyu_messages_list',
-    description: '读取当前登录闲鱼账号的会话列表。使用服务工厂托管的可见浏览器，不会发送消息。',
+    description: '读取当前登录闲鱼账号的会话列表。使用天工造梦托管的可见浏览器，不会发送消息。',
     parameters: {},
     output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, snapshot: { type: 'string' }, error: { type: 'string' } } }, render: (_args, value) => text(value.ok ? (value.snapshot ?? '') : '读取失败：' + (value.error ?? '未知错误')) },
     async execute() { try { return { ok: true, snapshot: await service.list() } } catch (error) { return { ok: false, error: safeError(error) } } },
