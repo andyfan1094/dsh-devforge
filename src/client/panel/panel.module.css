@@ -127,6 +127,33 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 /* 智谱 Coding Plan：额度与用量保持平面、紧凑、适合重复查看。 */
 .zhipuWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 12px; overflow: auto; }
+
+/* Coding Plan：服务商与内容归入单一工作区，采用套餐侧栏 + 主工作区。 */
+.codePlanWorkspace { display: grid; grid-template-columns: minmax(208px, 250px) minmax(0, 1fr); flex: 1; min-width: 0; min-height: 0; overflow: hidden; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.codePlanSidebar { display: flex; min-width: 0; flex-direction: column; gap: 18px; padding: 20px 18px; overflow: auto; border-right: 1px solid var(--dsw-alias-border-l1, #e5e7eb); background: var(--dsw-alias-bg-layer-2, #f8fafc); }
+.codePlanAsideHeading { display: flex; flex-direction: column; gap: 4px; }
+.codePlanAsideHeading strong { font-size: 16px; color: var(--dsw-alias-label-primary, #1f2329); }
+.planInfoList { display: flex; flex-direction: column; gap: 0; margin: 0; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.planInfoList > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.planInfoList dt { min-width: 0; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; }
+.planInfoList dd { min-width: 0; margin: 0; overflow: hidden; color: var(--dsw-alias-label-primary, #1f2329); font-size: 12px; font-weight: 600; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.planInfoList dd[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); }
+.planInfoList dd[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); }
+.planInfoHint { margin: 0; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; line-height: 1.6; }
+.codePlanMain { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
+.codePlanHeader { display: flex; min-height: 68px; align-items: center; padding: 14px 24px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.codePlanHeader h3 { margin: 0; color: var(--dsw-alias-label-primary, #1f2329); font-size: 17px; font-weight: 700; }
+.codePlanHeader p { margin: 5px 0 0; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; line-height: 1.5; }
+.providerTabs, .codePlanSectionTabs { display: flex; flex: none; gap: 4px; min-width: 0; overflow-x: auto; }
+.providerTabs { padding: 12px 24px 8px; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.codePlanSectionTabs { padding: 8px 24px 0; }
+.providerTabs button, .codePlanSectionTabs button { min-height: 30px; padding: 5px 12px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
+.providerTabs button:hover, .codePlanSectionTabs button:hover { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.providerTabs button[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 34%, transparent); font-weight: 700; }
+.codePlanSectionTabs button[data-active] { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-bg-layer-2, #f3f4f6); border-color: var(--dsw-alias-border-l2, #d0d5dd); font-weight: 600; }
+.codePlanContent { display: flex; flex: 1; min-width: 0; min-height: 0; padding: 14px 24px 24px; overflow: hidden; }
+.codePlanContent > .zhipuWorkspace { padding-right: 2px; }
+
 .quotaHeader { display: flex; min-height: 32px; align-items: center; gap: 10px; }
 .quotaHeader > div { display: flex; align-items: baseline; gap: 8px; }
 .quotaList { display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
@@ -157,6 +184,13 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 @media (max-width: 960px) {
   .githubSplit, .feishuGrid, .usageGrid { grid-template-columns: minmax(0, 1fr); }
+  .codePlanWorkspace { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .codePlanSidebar { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 20px; padding: 14px 18px; border-right: none; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+  .planInfoList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: none; }
+  .planInfoList > div { padding: 6px 0; }
+  .planInfoHint { grid-column: 1 / -1; }
+  .codePlanMain { min-height: auto; overflow: visible; }
+  .codePlanContent { min-height: 520px; overflow: visible; }
   .quotaRow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .gitGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .toolbar { flex-wrap: wrap; }
@@ -165,6 +199,11 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 @media (max-width: 620px) {
   .panel { padding: 10px; }
   .tab { padding-inline: 10px; }
+  .codePlanSidebar { display: flex; gap: 12px; padding: 14px; }
+  .planInfoList { grid-template-columns: minmax(0, 1fr); }
+  .codePlanHeader { padding: 14px; }
+  .providerTabs, .codePlanSectionTabs { padding-inline: 14px; }
+  .codePlanContent { padding: 12px 14px 20px; }
   .gitGrid { grid-template-columns: minmax(0, 1fr); }
   .formFooter, .integrationHeader { align-items: stretch; flex-wrap: wrap; }
 }

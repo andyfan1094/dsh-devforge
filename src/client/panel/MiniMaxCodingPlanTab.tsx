@@ -8,6 +8,12 @@ export interface MiniMaxCodingPlanTabProps {
   api: DevforgeApi
   /** 当前生效的受管凭据引用名（用于面板展示）。 */
   apiKeyEnv: string
+  /** 统一 Coding Plan 页面内的内容区域。 */
+  section?: 'config' | 'usage'
+  /** 嵌入统一工作区时由父容器提供标题与页签。 */
+  embedded?: boolean
+  /** 状态刷新后回传给统一工作区摘要。 */
+  onStatusChange?: (status: MiniMaxStatus) => void
 }
 
 /** 把时间戳转成中文短倒计时（不足 1 天显示 h/分，否则显示 x 天 y 小时）。 */
@@ -54,7 +60,9 @@ function modelLabel(name: string): string {
 }
 
 /** MiniMax Coding Plan 用量与状态页签。 */
-export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabProps): JSX.Element {
+export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded = false, onStatusChange }: MiniMaxCodingPlanTabProps): JSX.Element {
+  const isConfig = section === 'config'
+  const isUsage = section === 'usage'
   const [status, setStatus] = useState<MiniMaxStatus | null>(null)
   const [dashboard, setDashboard] = useState<MiniMaxDashboard | null>(null)
   const [loading, setLoading] = useState(true)
@@ -82,9 +90,10 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
     setError('')
     try {
       const nextStatus = await api.getMiniMaxStatus(controller.signal)
-      const nextDashboard = nextStatus.credentialConfigured ? await api.getMiniMaxDashboard(controller.signal) : null
+      const nextDashboard = isUsage && nextStatus.credentialConfigured ? await api.getMiniMaxDashboard(controller.signal) : null
       if (!mounted.current || refreshGeneration.current !== generation) return
       setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
       setDashboard(nextDashboard)
     } catch (cause) {
       if (controller.signal.aborted || !mounted.current || refreshGeneration.current !== generation) return
@@ -92,7 +101,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
     } finally {
       if (mounted.current && refreshGeneration.current === generation) setLoading(false)
     }
-  }, [api])
+  }, [api, isUsage, onStatusChange])
 
   useEffect(() => {
     mounted.current = true
@@ -121,6 +130,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
     try {
       const nextStatus = await api.setupMiniMaxModels(controller.signal)
       if (mounted.current) setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
       if (mounted.current) setNotice({ kind: 'success', text: '模型路由已补齐。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -139,6 +149,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
     try {
       const result = await api.fetchMiniMaxModels(controller.signal)
       if (mounted.current) setStatus(result.status)
+      onStatusChange?.(result.status)
       if (mounted.current) setNotice({ kind: 'success', text: '从 MiniMax 官方拉取成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -172,7 +183,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
 
   return (
     <section className={css['zhipuWorkspace']}>
-      <div className={css['integrationHeader']}>
+      {!embedded && <div className={css['integrationHeader']}>
         <span className={css['connectionDot']} data-state={status?.credentialConfigured === true ? 'connected' : 'error'} />
         <div className={css['resourceInfo']}>
           <strong className={css['resourceTitle']}>MiniMax Coding Plan{dashboard?.planName !== undefined ? ' · ' + dashboard.planName : ''}</strong>
@@ -180,12 +191,13 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
         </div>
         {!modelsReady && <button type="button" className={css['ghostButton']} disabled={settingUp} onClick={() => { void setupModels() }}>{settingUp ? '正在配置…' : '完善模型接入'}</button>}
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => { void refresh() }}>{loading ? '刷新中…' : '刷新'}</button>
-      </div>
+      </div>}
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
-      {loading && status === null && <div className={css['empty']} data-loading="">正在读取 MiniMax 状态…</div>}
+      {loading && status === null && <div className={css['empty']} data-loading="">正在读取 MiniMax{isUsage ? '套餐用量' : '配置状态'}…</div>}
 
+      {isConfig && <>
       <section className={css['usageSection']}>
         <h3 className={css['sectionTitle']}>API Key 配置</h3>
         <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
@@ -222,27 +234,20 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
 
       {status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">请先在上方 API Key 配置区填写 MINIMAX_CN_API_KEY（必须使用订阅 Key，不能使用普通按量付费 API Key）。</div>}
 
-      <div className={css['usageGrid']}>
-        <section className={css['usageSection']}>
-          <h3 className={css['sectionTitle']}>官方工具</h3>
-          <div className={css['metricRow']}><span>minimax_web_search</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
-          <div className={css['metricRow']}><span>minimax_understand_image</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
-          <div className={css['metricRow']}><span>minimax_image_generation</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
-          <div className={css['metricRow']}><span>minimax_text_to_speech</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
-          <div className={css['metricRow']}><span>minimax_video_generation</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
-          <div className={css['metricRow']}><span>模型端点</span><strong>api.minimaxi.com</strong></div>
-        </section>
-        {status !== null && dashboard !== null && (
-          <section className={css['usageSection']}>
-            <h3 className={css['sectionTitle']}>套餐用量</h3>
-            <div className={css['metricRow']}><span>套餐</span><strong>{dashboard.planName ?? '订阅 Key'}</strong></div>
-            <div className={css['metricRow']}><span>更新于</span><strong>{new Date(dashboard.fetchedAt).toLocaleTimeString('zh-CN')}</strong></div>
-          </section>
-        )}
-      </div>
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>官方工具</h3>
+        <div className={css['metricRow']}><span>minimax_web_search</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+        <div className={css['metricRow']}><span>minimax_understand_image</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+        <div className={css['metricRow']}><span>minimax_image_generation</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+        <div className={css['metricRow']}><span>minimax_text_to_speech</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+        <div className={css['metricRow']}><span>minimax_video_generation</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
+        <div className={css['metricRow']}><span>模型端点</span><strong>api.minimaxi.com</strong></div>
+      </section>
+      </>}
 
-      {dashboard !== null && dashboard.warnings.map((warning) => <div key={warning} className={css['banner']} data-kind="warning">{warning}</div>)}
-      {dashboard !== null && visibleModels.length > 0 && (
+      {isUsage && status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">尚未配置 API Key，请切换到“使用配置”填写 MINIMAX_CN_API_KEY。</div>}
+      {isUsage && dashboard !== null && dashboard.warnings.map((warning) => <div key={warning} className={css['banner']} data-kind="warning">{warning}</div>)}
+      {isUsage && dashboard !== null && visibleModels.length > 0 && (
         <div className={css['quotaList']}>
           {visibleModels.flatMap((model) => [
             model.intervalRemainingPercent !== undefined ? (
@@ -254,7 +259,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv }: MiniMaxCodingPlanTabPro
           ])}
         </div>
       )}
-      {dashboard !== null && visibleModels.length === 0 && dashboard.warnings.length === 0 && <div className={css['banner']} data-kind="warning">当前订阅未包含用量接口覆盖的资源类型。</div>}
+      {isUsage && dashboard !== null && visibleModels.length === 0 && dashboard.warnings.length === 0 && <div className={css['banner']} data-kind="warning">当前订阅未包含用量接口覆盖的资源类型。</div>}
     </section>
   )
 }

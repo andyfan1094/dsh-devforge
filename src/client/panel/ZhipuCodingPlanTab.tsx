@@ -8,6 +8,12 @@ export interface ZhipuCodingPlanTabProps {
   api: DevforgeApi
   /** 当前生效的受管凭据引用名（用于面板展示）。 */
   apiKeyEnv: string
+  /** 统一 Coding Plan 页面内的内容区域。 */
+  section?: 'config' | 'usage'
+  /** 嵌入统一工作区时由父容器提供标题与页签。 */
+  embedded?: boolean
+  /** 状态刷新后回传给统一工作区摘要。 */
+  onStatusChange?: (status: ZhipuStatus) => void
 }
 
 /** 格式化数量，避免大 Token 数撑破布局。 */
@@ -40,7 +46,9 @@ function quotaLabel(kind: ZhipuQuotaLimit['kind']): string {
 }
 
 /** 智谱 Coding Plan 模型与官方用量面板。 */
-export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps): JSX.Element {
+export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded = false, onStatusChange }: ZhipuCodingPlanTabProps): JSX.Element {
+  const isConfig = section === 'config'
+  const isUsage = section === 'usage'
   const [status, setStatus] = useState<ZhipuStatus | null>(null)
   const [dashboard, setDashboard] = useState<ZhipuDashboard | null>(null)
   const [usageWindow, setUsageWindow] = useState<ZhipuUsageWindow>('day')
@@ -70,9 +78,10 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
     setError('')
     try {
       const nextStatus = await api.getZhipuStatus(controller.signal)
-      const nextDashboard = nextStatus.credentialConfigured ? await api.getZhipuDashboard(usageWindow, controller.signal) : null
+      const nextDashboard = isUsage && nextStatus.credentialConfigured ? await api.getZhipuDashboard(usageWindow, controller.signal) : null
       if (!mounted.current || refreshGeneration.current !== generation) return
       setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
       setDashboard(nextDashboard)
     } catch (cause) {
       if (controller.signal.aborted || !mounted.current || refreshGeneration.current !== generation) return
@@ -80,7 +89,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
     } finally {
       if (mounted.current && refreshGeneration.current === generation) setLoading(false)
     }
-  }, [api, usageWindow])
+  }, [api, isUsage, onStatusChange, usageWindow])
 
   useEffect(() => {
     mounted.current = true
@@ -110,6 +119,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
     try {
       const nextStatus = await api.setupZhipuModels(controller.signal)
       if (mounted.current) setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
       if (mounted.current) setNotice({ kind: 'success', text: '模型路由已补齐。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -129,6 +139,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
     try {
       const result = await api.fetchZhipuModels(controller.signal)
       if (mounted.current) setStatus(result.status)
+      onStatusChange?.(result.status)
       if (mounted.current) setNotice({ kind: 'success', text: '从智谱官方拉取成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -162,7 +173,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
 
   return (
     <section className={css['zhipuWorkspace']}>
-      <div className={css['integrationHeader']}>
+      {!embedded && <div className={css['integrationHeader']}>
         <span className={css['connectionDot']} data-state={status?.credentialConfigured === true ? 'connected' : 'error'} />
         <div className={css['resourceInfo']}>
           <strong className={css['resourceTitle']}>智谱 Coding Plan</strong>
@@ -170,12 +181,13 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
         </div>
         {!modelsReady && <button type="button" className={css['ghostButton']} disabled={settingUp} onClick={() => { void setupModels() }}>{settingUp ? '正在配置…' : '完善模型接入'}</button>}
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => { void refresh() }}>{loading ? '刷新中…' : '刷新'}</button>
-      </div>
+      </div>}
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
-      {loading && status === null && <div className={css['empty']} data-loading="">正在读取智谱官方额度…</div>}
+      {loading && status === null && <div className={css['empty']} data-loading="">正在读取智谱{isUsage ? '官方额度' : '配置状态'}…</div>}
 
+      {isConfig && <>
       <section className={css['usageSection']}>
         <h3 className={css['sectionTitle']}>API Key 配置</h3>
         <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
@@ -211,8 +223,11 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv }: ZhipuCodingPlanTabProps):
       </section>
 
       {status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">请先在上方 API Key 配置区填写 ZAI_CODING_CN_API_KEY。</div>}
+      </>}
 
-      {dashboard !== null && (
+      {isUsage && status !== null && !status.credentialConfigured && <div className={css['banner']} data-kind="warning">尚未配置 API Key，请切换到“使用配置”填写 ZAI_CODING_CN_API_KEY。</div>}
+
+      {isUsage && dashboard !== null && (
         <>
           {dashboard.warnings.map((warning) => <div key={warning} className={css['banner']} data-kind="warning">{warning}</div>)}
           <div className={css['quotaHeader']}>

@@ -10,8 +10,7 @@ import { BrowserTab } from './BrowserTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { GithubTab } from './GithubTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
-import { ZhipuCodingPlanTab } from './ZhipuCodingPlanTab.tsx'
-import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
+import { CodingPlanTab } from './CodingPlanTab.tsx'
 import css from './panel.module.css'
 
 /** 面板属性。 */
@@ -23,7 +22,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型。 */
-type Tab = 'standards' | 'browser' | 'zhipu' | 'minimax' | 'remote' | 'github' | 'feishu'
+type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'github' | 'feishu'
 
 /** 主面板组件。 */
 export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Element {
@@ -133,8 +132,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
         <button type="button" role="tab" aria-selected={tab === 'standards'} data-active={tab === 'standards' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('standards') }}>开发规范</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}>浏览器</button>
-        <button type="button" role="tab" aria-selected={tab === 'zhipu'} data-active={tab === 'zhipu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('zhipu') }}>智谱 Coding Plan</button>
-        <button type="button" role="tab" aria-selected={tab === 'minimax'} data-active={tab === 'minimax' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('minimax') }}>MiniMax</button>
+        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}>Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}>远程运维</button>
         <button type="button" role="tab" aria-selected={tab === 'github'} data-active={tab === 'github' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('github') }}>GitHub</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}>飞书</button>
@@ -172,9 +170,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
 
         {tab === 'browser' && <BrowserTab api={api} />}
 
-        {tab === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" />}
-
-        {tab === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" />}
+        {tab === 'codeplan' && <CodingPlanTab api={api} />}
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}
 
