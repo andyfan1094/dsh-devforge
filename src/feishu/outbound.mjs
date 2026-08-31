@@ -185,17 +185,32 @@ function splitCardText(value, maxChars = 3_500) {
   return chunks.length > 0 ? chunks : ['']
 }
 
-function completionNoticeTitle(state) {
-  if (state.label === '任务完成') return '【DSH完成通知】'
-  if (state.label === '任务等待输入') return '【DSH等待输入】'
-  if (state.label === '任务已暂停') return '【DSH暂停通知】'
-  if (state.label === '任务已中止') return '【DSH中止通知】'
-  if (state.label === '任务中断') return '【DSH中断通知】'
-  return '【DSH失败通知】'
+function displayModelName(model) {
+  const raw = String(model ?? '').trim().split('/').pop() || ''
+  if (raw === '') return 'DSH'
+  const normalized = raw
+    .replace(/^gpt(?=[-_.\d])/i, 'GPT')
+    .replace(/^glm(?=[-_.\d])/i, 'GLM')
+    .replace(/^minimax(?=[-_.\d])/i, 'MiniMax')
+    .replace(/^deepseek(?=[-_.\d])/i, 'DeepSeek')
+    .replace(/^kimi(?=[-_.\d])/i, 'Kimi')
+    .replace(/^claude(?=[-_.\d])/i, 'Claude')
+    .replace(/^gemini(?=[-_.\d])/i, 'Gemini')
+  return Array.from(normalized).slice(0, 40).join('')
+}
+
+function completionNoticeTitle(state, model) {
+  const actor = displayModelName(model)
+  if (state.label === '任务完成') return '【' + actor + ' 处理完成】'
+  if (state.label === '任务等待输入') return '【' + actor + ' 等待输入】'
+  if (state.label === '任务已暂停') return '【' + actor + ' 已暂停】'
+  if (state.label === '任务已中止') return '【' + actor + ' 已中止】'
+  if (state.label === '任务中断') return '【' + actor + ' 已中断】'
+  return '【' + actor + ' 处理失败】'
 }
 
 /** 把任务请求、模型最终回复与辅助状态格式化为飞书 Card 2.0。 */
-export function buildCompletionCard({ subject, request, response, turn, durationMs, reason }) {
+export function buildCompletionCard({ subject, request, response, model, turn, durationMs, reason }) {
   // 飞书单卡整体数据上限 30 KB；按 UTF-8 字节保守预留 JSON 转义和结构开销。
   const safeSubject = clipCardText(String(subject ?? '').replace(/\s+/g, ' '), 600)
   const safeRequest = clipCardText(request, 2_000) || safeSubject || '未记录原始请求。'
@@ -217,7 +232,7 @@ export function buildCompletionCard({ subject, request, response, turn, duration
     schema: '2.0',
     header: {
       template: state.tone,
-      title: { tag: 'plain_text', content: completionNoticeTitle(state) },
+      title: { tag: 'plain_text', content: completionNoticeTitle(state, model) },
     },
     body: {
       elements: [

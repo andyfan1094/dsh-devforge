@@ -25,6 +25,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
   const settleTimers = new Map()      // sessionId -> timer
   const lastUserText = new Map()      // sessionId -> 当前任务用户请求
   const lastAssistantText = new Map() // sessionId -> 当前任务最后一条非空模型回复
+  const modelBySession = new Map()     // sessionId -> 最近一次真实请求路由的模型 ID
 
   function rememberSession(sessionId, session) {
     if (session !== undefined && session !== null) {
@@ -52,6 +53,14 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
       trackAssistantText(sessionId, event?.data?.message)
       return
     }
+    if (type === 'request/header') {
+      trackModel(sessionId, event?.data?.header?.config)
+      return
+    }
+    if (type === 'request/context') {
+      trackModel(sessionId, event?.data)
+      return
+    }
     if (type === 'goal/change') {
       handleGoalChange(sessionId, event?.data)
       return
@@ -66,7 +75,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
         lastAssistantText.delete(sessionId)
         if (tasks.size >= MAX_TRACKED_SESSIONS && !tasks.has(sessionId)) {
           const oldest = tasks.keys().next().value
-          if (oldest !== undefined) clearTaskState(oldest)
+          if (oldest !== undefined) clearTaskState(oldest, { clearModel: true })
         }
         tasks.set(sessionId, task)
       }
@@ -151,6 +160,17 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     lastAssistantText.set(sessionId, text)
   }
 
+  function trackModel(sessionId, config) {
+    const model = String(config?.model ?? '').trim()
+    if (model === '') return
+    if (modelBySession.size >= MAX_TRACKED_SESSIONS && !modelBySession.has(sessionId)) {
+      const oldest = modelBySession.keys().next().value
+      if (oldest !== undefined) modelBySession.delete(oldest)
+    }
+    modelBySession.delete(sessionId)
+    modelBySession.set(sessionId, model)
+  }
+
   function clearSettleTimer(sessionId) {
     const timer = settleTimers.get(sessionId)
     if (timer !== undefined) { clearTimeout(timer); settleTimers.delete(sessionId) }
@@ -165,7 +185,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     settleTimers.set(sessionId, timer)
   }
 
-  function clearTaskState(sessionId) {
+  function clearTaskState(sessionId, { clearModel = false } = {}) {
     clearSettleTimer(sessionId)
     tasks.delete(sessionId)
     goalActive.delete(sessionId)
@@ -173,21 +193,22 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     lastAssistantText.delete(sessionId)
     lastUserText.delete(sessionId)
     sessions.delete(sessionId)
+    if (clearModel) modelBySession.delete(sessionId)
   }
 
   function sendNow(sessionId, { reason = null, fallbackTurns = 0 } = {}) {
     try {
       clearSettleTimer(sessionId)
       const config = typeof getConfig === 'function' ? getConfig() : null
-      if (config === null || config.notifyOnComplete !== true) { clearTaskState(sessionId); return }
+      if (config === null || config.notifyOnComplete !== true) { clearTaskState(sessionId, { clearModel: true }); return }
       const chatId = String(config.notifyChatId ?? '').trim()
-      if (chatId === '') { clearTaskState(sessionId); return }
+      if (chatId === '') { clearTaskState(sessionId, { clearModel: true }); return }
       const client = typeof getClient === 'function' ? getClient() : null
-      if (client === null) { clearTaskState(sessionId); return }
+      if (client === null) { clearTaskState(sessionId, { clearModel: true }); return }
       const task = tasks.get(sessionId)
       const finalReason = reason ?? task?.lastReason ?? null
       const turns = Math.max(task?.turns ?? 0, fallbackTurns)
-      if (turns <= 0 && finalReason === null) { clearTaskState(sessionId); return }
+      if (turns <= 0 && finalReason === null) { clearTaskState(sessionId, { clearModel: true }); return }
       const session = sessions.get(sessionId) ?? { id: sessionId }
       const subject = extractSubject(session, getSessionTitle) || lastUserText.get(sessionId) || ''
       const request = lastUserText.get(sessionId) || subject
@@ -196,6 +217,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
         subject,
         request,
         response,
+        model: modelBySession.get(sessionId) || '',
         turn: turns,
         durationMs: task === undefined ? 0 : Math.max(0, Date.now() - task.startedAt),
         reason: finalReason,
@@ -205,7 +227,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
         warn('feishu completion notify failed: ' + (error instanceof Error ? error.message : String(error)))
       })
     } catch (error) {
-      clearTaskState(sessionId)
+      clearTaskState(sessionId, { clearModel: true })
       warn('feishu completion notify crashed: ' + (error instanceof Error ? error.message : String(error)))
     }
   }
@@ -219,6 +241,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
     const fallbackReason = goalActive.has(sessionId) ? { kind: 'interrupted' } : task?.lastReason ?? { kind: 'interrupted' }
     goalActive.delete(sessionId)
     sendNow(sessionId, terminal ?? { reason: fallbackReason })
+    modelBySession.delete(sessionId)
     return true
   }
 
