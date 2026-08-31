@@ -25,6 +25,7 @@ import { ForgeEngine, type ForgeHostServices } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.ts'
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
+import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
@@ -73,6 +74,8 @@ export interface Config {
   browser?: { enabled?: boolean; headless?: boolean; channel?: string; profileDir?: string; timeoutMs?: number }
   /** GitHub 能力（兼容接管）子配置。 */
   github?: GithubCapabilityConfig
+  /** CNB 代码托管（cnb.cool）子配置。 */
+  cnb?: CnbCapabilityConfig
   /** 飞书能力（兼容接管）子配置；bootstrap 字段与旧 dsh-feishu patch 行一致。 */
   feishu?: FeishuCapabilityConfig
   /** 智谱 Coding Plan 官方模型与额度能力。 */
@@ -103,6 +106,9 @@ export const Config = z.object({
   github: z.object({
     enabled: z.boolean().default(true).description('GitHub 能力（兼容接管）开关'),
   }).description('GitHub 配置'),
+  cnb: z.object({
+    enabled: z.boolean().default(true).description('CNB 代码托管（cnb.cool）开关'),
+  }).description('CNB 配置'),
   feishu: z.object({
     enabled: z.boolean().default(true).description('飞书能力（兼容接管）开关；启用前必须停用旧 dsh-feishu'),
   }).description('飞书配置'),
@@ -140,6 +146,7 @@ const DEVFORGE_GUIDANCE = [
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：服务工厂的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
+  '- CNB 代码托管（cnb.cool，国内）：cnb_auth_add / cnb_auth_list / cnb_auth_test / cnb_repo_list / cnb_clone / cnb_pull / cnb_push / cnb_commit / cnb_status / cnb_auth_remove；平台仅支持 HTTPS+访问令牌（Git 用户名固定 cnb），令牌经临时 HTTP 头注入绝不进 URL，推送默认关闭需在服务工厂设置打开。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
@@ -168,6 +175,7 @@ export function apply(ctx: Context, config?: Config): void {
         timeoutMs: value.browser?.timeoutMs ?? 45000,
       },
       github: { enabled: value.github?.enabled ?? false },
+      cnb: { enabled: value.cnb?.enabled ?? false },
       feishu: { enabled: value.feishu?.enabled ?? false },
       zhipu: {
         enabled: value.zhipu?.enabled ?? true,
@@ -268,6 +276,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeSection: (() => void) | undefined
   let disposeRemote: (() => void) | undefined
   let disposeGithub: (() => void) | undefined
+  let disposeCnb: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
   let disposeZhipuMcp: (() => void) | undefined
   let disposeMiniMaxTools: (() => void) | undefined
@@ -281,6 +290,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeTools?.(); disposeTools = undefined
     disposeRemote?.(); disposeRemote = undefined
     disposeGithub?.(); disposeGithub = undefined
+    disposeCnb?.(); disposeCnb = undefined
     disposeFeishu?.(); disposeFeishu = undefined
     disposeZhipuMcp?.(); disposeZhipuMcp = undefined
     disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
@@ -340,6 +350,8 @@ export function apply(ctx: Context, config?: Config): void {
     disposeBrowser = browserActivation.dispose
     // GitHub 兼容接管：注册 github_* 工具与 /api/dsh-github 前缀；与旧插件互斥。
     disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose
+    // CNB 代码托管：注册 cnb_* 工具与 /api/dsh-cnb 前缀（与 GitHub 能力并列，互不影响）。
+    disposeCnb = activateCnb(ctx, resolve().cnb ?? { enabled: false }).dispose
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
     disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose
   }
@@ -349,7 +361,7 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
+        const value = raw() as Config & { remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
@@ -363,6 +375,7 @@ export function apply(ctx: Context, config?: Config): void {
             timeoutMs: value.browser?.timeoutMs ?? 45000,
           },
           github: { enabled: value.github?.enabled === true },
+          cnb: { enabled: value.cnb?.enabled === true },
           feishu: { enabled: value.feishu?.enabled === true },
           zhipu: {
             enabled: value.zhipu?.enabled !== false,
