@@ -23,6 +23,26 @@ test('方舟 Provider 合并：固定 Plan Base URL 并保留用户已有字段'
   assert.deepEqual(ids, ['custom-model', ...ARK_DEFAULT_MODELS.map((model) => model.id)])
 })
 
+test('方舟 Agent Plan 模型池：覆盖控制台全部文本模型与自动路由', () => {
+  const ids = ARK_DEFAULT_MODELS.map((model) => model.id)
+  assert.deepEqual(ids, [
+    'auto',
+    'doubao-seed-evolving',
+    'doubao-seed-2.1-turbo',
+    'doubao-seed-2.0-lite',
+    'doubao-seed-2.0-mini',
+    'glm-5.3-flash',
+    'glm-5.3',
+    'deepseek-v4-pro',
+    'deepseek-v4-flash',
+    'kimi-k3',
+    'minimax-m3',
+    'glm-5.2',
+    'kimi-k2.7-code',
+    'ark-code-latest',
+  ])
+})
+
 test('受管凭据写入：upsert ref 时保留其它已有 refs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-devforge-credential-'))
   const file = join(dir, '.credentials.yaml')

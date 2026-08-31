@@ -34,9 +34,9 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const onMiniMaxStatus = useCallback((next: MiniMaxStatus): void => setMiniMaxStatus(next), [])
   const onArkStatus = useCallback((next: ArkStatus): void => setArkStatus(next), [])
   const providerMeta = useMemo(() => {
-    if (provider === 'ark') return active?.credentialConfigured ? (arkStatus?.managementCredentialsConfigured ? 'Plan 与 AFP 管控面已配置' : 'Plan 数据面已配置；AFP 需 AK/SK') : '需要填写 Agent/Coding Plan Key'
+    if (provider === 'ark') return active?.credentialConfigured ? 'Agent Plan 单 Key 已配置' : '需要填写 Agent Plan API Key'
     return active?.credentialConfigured ? '官方凭据已配置' : '需要填写 API Key'
-  }, [active, arkStatus?.managementCredentialsConfigured, provider])
+  }, [active, provider])
 
   return (
     <section className={css['codePlanWorkspace']}>
@@ -50,7 +50,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           <div><dt>订阅状态</dt><dd data-state={active?.credentialConfigured ? 'ok' : 'pending'}>{statusLabel}</dd></div>
           <div><dt>模型数量</dt><dd>{active?.models.length ?? 0} 个</dd></div>
           <div><dt>模型路由</dt><dd data-state={modelsReady ? 'ok' : 'pending'}>{modelsReady ? '已就绪' : '待完善'}</dd></div>
-          <div><dt>{provider === 'ark' ? 'AFP 管控面' : '官方工具'}</dt><dd data-state={provider === 'ark' && !arkStatus?.managementCredentialsConfigured ? 'pending' : 'ok'}>{provider === 'ark' ? (arkStatus?.managementCredentialsConfigured ? '已配置' : '待配置') : toolsCount + ' 个'}</dd></div>
+          <div><dt>{provider === 'ark' ? '凭据模式' : '官方工具'}</dt><dd data-state="ok">{provider === 'ark' ? '单 Key' : toolsCount + ' 个'}</dd></div>
         </dl>
         <p className={css['planInfoHint']}>{providerMeta}</p>
       </aside>
@@ -77,7 +77,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         <div className={css['codePlanContent']}>
           {provider === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" section={section} embedded onStatusChange={onZhipuStatus} />}
           {provider === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" section={section} embedded onStatusChange={onMiniMaxStatus} />}
-          {provider === 'ark' && <ArkCodingPlanTab api={api} apiKeyEnv="ARK_CODING_PLAN_API_KEY" accessKeyEnv="ARK_CODING_PLAN_ACCESS_KEY_ID" secretKeyEnv="ARK_CODING_PLAN_SECRET_ACCESS_KEY" section={section} embedded onStatusChange={onArkStatus} />}
+          {provider === 'ark' && <ArkCodingPlanTab api={api} apiKeyEnv="ARK_CODING_PLAN_API_KEY" section={section} embedded onStatusChange={onArkStatus} />}
         </div>
       </div>
     </section>

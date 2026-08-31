@@ -79,7 +79,7 @@ export interface Config {
   zhipu?: ZhipuCapabilityConfig & { mcpTools?: boolean }
   /** MiniMax Coding Plan 官方模型与工具能力。 */
   minimax?: MiniMaxCapabilityConfig
-  /** 火山方舟 Agent/Coding Plan 模型与 AFP 用量能力。 */
+  /** 火山方舟 Agent Plan 单 Key 模型池能力。 */
   ark?: ArkCapabilityConfig
 }
 
@@ -119,12 +119,9 @@ export const Config = z.object({
     tools: z.boolean().default(true).description('官方工具：联网搜索/图像理解'),
   }).description('MiniMax Coding Plan 配置'),
   ark: z.object({
-    enabled: z.boolean().default(true).description('火山方舟 Agent/Coding Plan 模型路由与 AFP 用量'),
-    apiKeyEnv: z.string().default('ARK_CODING_PLAN_API_KEY').description('方舟 Agent/Coding Plan 数据面 Key 引用'),
-    accessKeyEnv: z.string().default('ARK_CODING_PLAN_ACCESS_KEY_ID').description('方舟 AFP 管控面 Access Key 引用'),
-    secretKeyEnv: z.string().default('ARK_CODING_PLAN_SECRET_ACCESS_KEY').description('方舟 AFP 管控面 Secret Key 引用'),
-    timeoutMs: z.number().min(1000).max(120000).default(30000).description('方舟官方接口超时（毫秒）'),
-  }).description('火山方舟 Agent/Coding Plan 配置'),
+    enabled: z.boolean().default(true).description('火山方舟 Agent Plan 单 Key 模型路由'),
+    apiKeyEnv: z.string().default('ARK_CODING_PLAN_API_KEY').description('方舟 Agent Plan 受管凭据引用'),
+  }).description('火山方舟 Agent Plan 配置'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -139,7 +136,7 @@ const DEVFORGE_GUIDANCE = [
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
-  '- 火山方舟 Agent/Coding Plan：服务工厂的 Coding Plan 页内支持 ark-code-latest 数据面路由、Plan API Key 配置、官方模型同步，以及使用火山云 AK/SK 签名的官方 AFP 用量统计。',
+  '- 火山方舟 Agent Plan：服务工厂的 Coding Plan 页内支持单 Plan API Key、官方完整文本模型池同步和官方用量控制台入口。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
@@ -184,9 +181,6 @@ export function apply(ctx: Context, config?: Config): void {
       ark: {
         enabled: value.ark?.enabled ?? true,
         apiKeyEnv: value.ark?.apiKeyEnv ?? 'ARK_CODING_PLAN_API_KEY',
-        accessKeyEnv: value.ark?.accessKeyEnv ?? 'ARK_CODING_PLAN_ACCESS_KEY_ID',
-        secretKeyEnv: value.ark?.secretKeyEnv ?? 'ARK_CODING_PLAN_SECRET_ACCESS_KEY',
-        timeoutMs: value.ark?.timeoutMs ?? 30000,
       },
     }
   }
@@ -204,7 +198,7 @@ export function apply(ctx: Context, config?: Config): void {
   // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
   const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
   const minimaxConfig = { enabled: true, apiKeyEnv: 'MINIMAX_CN_API_KEY', timeoutMs: 30000, tools: true }
-  const arkConfig = { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY', accessKeyEnv: 'ARK_CODING_PLAN_ACCESS_KEY_ID', secretKeyEnv: 'ARK_CODING_PLAN_SECRET_ACCESS_KEY', timeoutMs: 30000 }
+  const arkConfig = { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY' }
   const DISABLED_BROWSER: BrowserStatus = { enabled: false, running: false, ready: false, profileDir: '', message: '浏览器能力未启用，请在服务工厂设置中开启' }
   let browserApi: Pick<BrowserRoutesService, 'status' | 'navigate' | 'snapshot' | 'screenshot' | 'stop'> | undefined
   const browserHolder: BrowserRoutesService = {
@@ -354,9 +348,6 @@ export function apply(ctx: Context, config?: Config): void {
           ark: {
             enabled: value.ark?.enabled !== false,
             apiKeyEnv: value.ark?.apiKeyEnv ?? 'ARK_CODING_PLAN_API_KEY',
-            accessKeyEnv: value.ark?.accessKeyEnv ?? 'ARK_CODING_PLAN_ACCESS_KEY_ID',
-            secretKeyEnv: value.ark?.secretKeyEnv ?? 'ARK_CODING_PLAN_SECRET_ACCESS_KEY',
-            timeoutMs: value.ark?.timeoutMs ?? 30000,
           },
         }
       }

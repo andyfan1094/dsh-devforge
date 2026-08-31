@@ -96,8 +96,6 @@ const lib: UserConfig = {
   dts: false,
   clean: false,
   external: HOST_EXTERNALS,
-  // 方舟 AFP 管控面使用官方 SDK；插件可脱离 profile 依赖树安装，因此必须随宿主产物打包。
-  noExternal: ['@volcengine/openapi'],
 }
 
 /** 浏览器半边：GUI 模块加载器消费的闭包工厂产物。 */

@@ -9,7 +9,7 @@ import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, t
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
-import { ARK_API, type ArkDashboard, type ArkStatus } from '../ark/protocol.ts'
+import { ARK_API, type ArkStatus } from '../ark/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -246,21 +246,10 @@ export class DevforgeApi {
     return data.status
   }
 
-  /** 配置方舟默认 ark-code-latest 模型路由。 */
+  /** 同步方舟 Agent Plan 官方文本模型池。 */
   async setupArkModels(signal?: AbortSignal): Promise<ArkStatus> {
     const data = await readJson<{ status: ArkStatus }>(await fetch(ARK_API.setup, { method: 'POST', signal }))
     return data.status
-  }
-
-  /** 拉取方舟 Agent Plan 官方支持模型列表，需要火山云 AK/SK。 */
-  async fetchArkModels(signal?: AbortSignal): Promise<{ status: ArkStatus; added: string[]; kept: string[]; total: number }> {
-    return await readJson(await fetch(ARK_API.fetchModels, { method: 'POST', signal }))
-  }
-
-  /** 读取方舟官方 AFP 五小时、日、周、月套餐用量，需要火山云 AK/SK。 */
-  async getArkDashboard(signal?: AbortSignal): Promise<ArkDashboard> {
-    const data = await readJson<{ dashboard: ArkDashboard }>(await fetch(ARK_API.dashboard, { signal }))
-    return data.dashboard
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */
