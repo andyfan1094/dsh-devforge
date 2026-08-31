@@ -104,6 +104,7 @@ export function makeBackupRoutes(): WebRoute[] {
         try {
           const body = await readJsonBody(req)
           const patch: Record<string, unknown> = {}
+          if (body['enabled'] === true || body['enabled'] === false) patch['enabled'] = body['enabled']
           if (typeof body['accountAlias'] === 'string') patch['accountAlias'] = body['accountAlias'].trim()
           if (typeof body['repo'] === 'string') patch['repo'] = body['repo'].trim().replace(/^https:\/\/cnb\.cool\//, '').replace(/\.git$/, '')
           if (typeof body['interval'] === 'string' && ['15m', '1h', '6h', '24h'].includes(body['interval'])) patch['interval'] = body['interval']
