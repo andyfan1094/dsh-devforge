@@ -18,7 +18,6 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { chmodSync, statSync } from 'node:fs'
 import { hostname, homedir } from 'node:os'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
 import { GitRunner } from '../cnb/git.ts'
 import { CnbStore, type StoredAccount } from '../cnb/store.ts'
 import { CnbApi } from '../cnb/cnb-api.ts'
@@ -198,9 +197,9 @@ export async function backupNow(options?: { force?: boolean }): Promise<{ ok: bo
     const runner = new GitRunner(store)
 
     // 组装 + 加密（组装时顺带刷新凭据镜像，备份永远是 yaml 当前值）
-    const { plaintext, fileCount } = buildBackupContainer()
+    const { plaintext, fileCount, contentHash } = buildBackupContainer()
     const container = await encryptBackupContainer(plaintext, password)
-    const hash = createHash('sha256').update(container).digest('hex')
+    const hash = contentHash // 排除时间戳的内容 hash：数据不变则跳过推送
     const state = readBackupState()
     if (options?.force !== true && state.lastContentHash === hash) {
       writeBackupState({ lastPushAt: Date.now(), lastContentHash: hash, lastSize: container.length, lastError: undefined })

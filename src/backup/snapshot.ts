@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { hostname } from 'node:os'
+import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { defaultDbPath, getDb } from '../store/db.ts'
 import { DEVFORGE_CREDENTIAL_REFS } from '../store/migrate.ts'
@@ -66,7 +67,7 @@ export function snapshotStoreDb(): Buffer {
 }
 
 /** 组装备份容器（明文 JSON 字节；调用方交给 crypto.ts 加密）。 */
-export function buildBackupContainer(): { plaintext: Buffer; fileCount: number } {
+export function buildBackupContainer(): { plaintext: Buffer; fileCount: number; contentHash: string } {
   const db = getDb()
   refreshCredentialMirrors(db)
   const files: Record<string, string> = {
@@ -81,7 +82,10 @@ export function buildBackupContainer(): { plaintext: Buffer; fileCount: number }
     machine: hostname(),
     files,
   }
-  return { plaintext: Buffer.from(JSON.stringify(container), 'utf8'), fileCount: Object.keys(files).length }
+  // 内容 hash 基于文件载荷本身（排除 created_at 时间戳），供「内容无变化跳过」判断；
+  // 快照为 VACUUM INTO 确定性输出，库数据不变 → hash 不变。
+  const contentHash = createHash('sha256').update(JSON.stringify(container.files)).digest('hex')
+  return { plaintext: Buffer.from(JSON.stringify(container), 'utf8'), fileCount: Object.keys(files).length, contentHash }
 }
 
 /** 解析备份容器（解密后的明文 JSON）。 */
