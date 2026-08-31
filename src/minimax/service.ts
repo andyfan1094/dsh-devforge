@@ -45,6 +45,10 @@ export interface MiniMaxCapabilityConfig {
   timeoutMs: number
   /** 官方工具开关。 */
   tools: boolean
+  /** Hub 桌面端 Gateway 工具开关（默认启用，依赖 Hub 客户端已登录）。 */
+  hub?: boolean
+  /** Hub Gateway 自定义地址（默认 http://127.0.0.1:8001）。 */
+  hubGatewayURL?: string
 }
 
 /** 可直接呈现给面板的分类错误；内容不得包含请求头或 Key。 */

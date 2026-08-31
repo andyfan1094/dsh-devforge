@@ -39,7 +39,7 @@ import { ZhipuCodingPlanService, type ZhipuCapabilityConfig } from './zhipu/serv
 import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
 import { makeMiniMaxRoutes } from './minimax/routes.ts'
 import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.ts'
-import { activateMiniMaxTools } from './minimax/tools.ts'
+import { activateMiniMaxTools, activateMiniMaxHubTools } from './minimax/tools.ts'
 import { makeArkRoutes } from './ark/routes.ts'
 import { ArkCodingPlanService, type ArkCapabilityConfig } from './ark/service.ts'
 import { makeCredentialsRoutes } from './credentials-routes.ts'
@@ -280,6 +280,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeFeishu: (() => void) | undefined
   let disposeZhipuMcp: (() => void) | undefined
   let disposeMiniMaxTools: (() => void) | undefined
+  let disposeMiniMaxHubTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
 
   const sync = (): void => {
@@ -294,6 +295,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeFeishu?.(); disposeFeishu = undefined
     disposeZhipuMcp?.(); disposeZhipuMcp = undefined
     disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
+    disposeMiniMaxHubTools?.(); disposeMiniMaxHubTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
@@ -328,6 +330,13 @@ export function apply(ctx: Context, config?: Config): void {
       const apiKeyValue = resolved?.value.trim() ?? ''
       if (apiKeyValue === '') throw new Error('尚未配置 MiniMax Coding Plan API Key，无法调用官方工具。')
       return apiKeyValue
+    }).dispose
+    // MiniMax Hub 桌面端 Gateway 工具：调用视频/图像，复用 Hub 客户端已登录账号，无需受管凭据。
+    disposeMiniMaxHubTools = activateMiniMaxHubTools(ctx, {
+      enabled: value.enabled && value.minimax?.hub !== false,
+      ...(typeof value.minimax?.hubGatewayURL === 'string' && value.minimax.hubGatewayURL !== ''
+        ? { gatewayURL: value.minimax.hubGatewayURL }
+        : {}),
     }).dispose
     // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
     disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
