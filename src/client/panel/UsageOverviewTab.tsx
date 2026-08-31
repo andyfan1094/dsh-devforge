@@ -204,13 +204,15 @@ export function UsageOverviewTab({ api, onNavigate }: UsageOverviewTabProps): JS
       {card.periods.map((period) => (
         <div key={period.label} className={css['overviewQuota']}>
           <div className={css['quotaMeta']}>
-            <strong>{period.label}</strong>
+            <div className={css['quotaTop']}>
+              <strong>{period.label}</strong>
+              <ResetBadge view={resolveOverviewReset(period.resetAt, now, inferOverviewLevel(period.label))} />
+            </div>
             <span>{period.detail}</span>
           </div>
           <div className={css['progressTrack']} role="progressbar" aria-label={period.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={period.usedPercent}>
             <span className={css['progressFill']} data-level={period.usedPercent >= 95 ? 'danger' : period.usedPercent >= 80 ? 'warning' : 'normal'} style={{ width: period.usedPercent + '%' }} />
           </div>
-          <ResetBadge view={resolveOverviewReset(period.resetAt, now, inferOverviewLevel(period.label))} />
         </div>
       ))}
       {card.warnings.map((warning) => <p key={warning} className={css['overviewError']}>{warning}</p>)}
