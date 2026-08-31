@@ -13,7 +13,10 @@ importers:
         version: 0.1.0-rc.8(92f269661ea5e195fab72177f1a12db7)
       '@larksuiteoapi/node-sdk':
         specifier: 1.61.1
-        version: 1.61.1
+        version: 1.61.1(debug@4.4.3)
+      '@volcengine/openapi':
+        specifier: ^1.36.2
+        version: 1.36.2
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -743,6 +746,9 @@ packages:
   '@protobufjs/float@1.0.2':
     resolution: {integrity: sha512-Ddb+kVXlXst9d+R9PfTIxh1EdNkgoRe5tOX6t01f1lYWOvJnSPDBlG241QLzcyPdoNTsblLUdujGSE4RzrTZGQ==}
 
+  '@protobufjs/inquire@1.1.2':
+    resolution: {integrity: sha512-pa0vFRuws4wkvaXKK1uXZMAwAX4/t8ANaJo45iw/oQHNQ9q5xUzwgFmVJGXiga2BeN+zpX7Vf9vmsiIa2J+MUw==}
+
   '@protobufjs/path@1.1.2':
     resolution: {integrity: sha512-6JOcJ5Tm08dOHAbdR3GrvP+yUUfkjG5ePsHYczMFLq3ZmMkAD98cDgcT2iA1lJ9NVwFd4tH/iSSoe44YWkltEA==}
 
@@ -1006,6 +1012,10 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@volcengine/openapi@1.36.2':
+    resolution: {integrity: sha512-cJHvW5xefOPTmtIuDHKLYmSfDdTdtdcT77RWo9yf8eHD+Md8Qtgps2vWkf+t0aNblWViEbcrZT06Ji4oksP8AA==}
+    engines: {node: '>=12'}
+
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
 
@@ -1028,6 +1038,9 @@ packages:
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
+
+  axios@0.21.4:
+    resolution: {integrity: sha512-ut5vewkiu8jjGBdqpM44XxjuCjq9LAKeHVmoVfHVzy8eHgxxq8SbAVQNovDA8mVi05kP0Ea/n/UzcSHcTJQfNg==}
 
   axios@1.13.6:
     resolution: {integrity: sha512-ChTCHMouEe2kn713WHbQGcuYrr6fXTBiu460OTwWrWob16g1bXn4vtz07Ope7ewMozJAnEquLk5lWQWtBig9DQ==}
@@ -1065,8 +1078,33 @@ packages:
     resolution: {integrity: sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA==}
     engines: {node: '>=10.0.0'}
 
+  crc@4.3.2:
+    resolution: {integrity: sha512-uGDHf4KLLh2zsHa8D8hIQ1H/HtFQhyHrc0uhHBcoKGol/Xnb+MPYfUMw7cvON6ze/GUESTudKayDcJC5HnJv1A==}
+    engines: {node: '>=12'}
+    peerDependencies:
+      buffer: '>=6.0.3'
+    peerDependenciesMeta:
+      buffer:
+        optional: true
+
+  crypto-js@4.2.0:
+    resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
+
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  dayjs@1.11.23:
+    resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
+
+  debug@4.4.3:
+    resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
+    engines: {node: '>=6.0'}
+    peerDependencies:
+      supports-color: '*'
+    peerDependenciesMeta:
+      supports-color:
+        optional: true
 
   defu@6.1.7:
     resolution: {integrity: sha512-7z22QmUWiQ/2d0KkdYmANbRUVABpZ9SNYyH5vx6PZ+nE5bcC0l7uFvEfHlyld/HcGBFTL536ClDt3DEcSlEJAQ==}
@@ -1135,6 +1173,10 @@ packages:
     peerDependenciesMeta:
       debug:
         optional: true
+
+  form-data@3.0.5:
+    resolution: {integrity: sha512-j23EibVLnp4zNXGW7LjryXYa2X6U/M96yoOX+ybZxwkYajdxRNEqYY3zhh7y0i6kfISKS2jr+EJq1YTUDEv5+w==}
+    engines: {node: '>= 6'}
 
   form-data@4.0.6:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
@@ -1271,6 +1313,10 @@ packages:
     resolution: {integrity: sha512-/vlFKAoH5Cgt3Ie+JLhRbwOsCQePABiU3tJ1egGvyQ+33R/vcwM2Zl2QR/LzjsBeItPt3oSVXapn+m4nQDvpzw==}
     engines: {node: '>=14'}
 
+  lodash.get@4.4.2:
+    resolution: {integrity: sha512-z+Uw/vLuy6gQe8cfaFWD7p0wVv8fJl3mbzXh33RS+0oW2wvUqiRXiQ69gLWSLpgB5/6sU+r6BlQR0MBILadqTQ==}
+    deprecated: This package is deprecated. Use the optional chaining (?.) operator instead.
+
   lodash.identity@3.0.0:
     resolution: {integrity: sha512-AupTIzdLQxJS5wIYUQlgGyk2XRTfGXA+MCghDHqZk0pzUNYvd3EESS6dkChNauNYVIutcb0dfHw1ri9Q1yPV8Q==}
 
@@ -1299,6 +1345,9 @@ packages:
     resolution: {integrity: sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==}
     engines: {node: '>= 0.6'}
 
+  ms@2.1.3:
+    resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
+
   nan@2.28.0:
     resolution: {integrity: sha512-fTsDz99OTq2sVePhGdp4qQhggZFtKr64ZNVyVajRKtMOkJxYekplBh577PiJB12v/D3s2E5cGtOI45LWp6rnLQ==}
 
@@ -1309,6 +1358,10 @@ packages:
   obug@2.1.4:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
+
+  p-limit@3.1.0:
+    resolution: {integrity: sha512-TYOanM3wGwNGsZN2cVTYPArw454xnXj5qmWF1bEoAc4+cU/ol7GVh7odevjp1FNHduHc3KZMcFduxU5Xc6uJRQ==}
+    engines: {node: '>=10'}
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
@@ -1334,6 +1387,10 @@ packages:
         optional: true
       yaml:
         optional: true
+
+  protobufjs@7.2.5:
+    resolution: {integrity: sha512-gGXRSXvxQ7UiPgfw8gevrfRWcTlSbOFg+p/N+JVJEK5VhueL2miT6qTymqAmjr1Q5WbOCyJbyrk6JfWKwlFn6A==}
+    engines: {node: '>=12.0.0'}
 
   protobufjs@7.6.6:
     resolution: {integrity: sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==}
@@ -1495,6 +1552,11 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
+  uuid@8.3.2:
+    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+    hasBin: true
+
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -1506,6 +1568,10 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  yocto-queue@0.1.0:
+    resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
+    engines: {node: '>=10'}
 
   zod@4.5.2:
     resolution: {integrity: sha512-XkYXCol10+ba/6F/cueWV+TezUeOqXW0hdeJt5CdXjTYeAgAQg5N03RQdJ80mhfFE72+pblvYMW4wy2Qp4Qbrg==}
@@ -2152,9 +2218,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@larksuiteoapi/node-sdk@1.61.1':
+  '@larksuiteoapi/node-sdk@1.61.1(debug@4.4.3)':
     dependencies:
-      axios: 1.13.6
+      axios: 1.13.6(debug@4.4.3)
       lodash.identity: 3.0.0
       lodash.merge: 4.6.2
       lodash.pickby: 4.6.0
@@ -2190,6 +2256,8 @@ snapshots:
       '@protobufjs/aspromise': 1.1.2
 
   '@protobufjs/float@1.0.2': {}
+
+  '@protobufjs/inquire@1.1.2': {}
 
   '@protobufjs/path@1.1.2': {}
 
@@ -2346,6 +2414,22 @@ snapshots:
     dependencies:
       '@types/node': 22.20.1
 
+  '@volcengine/openapi@1.36.2':
+    dependencies:
+      axios: 0.21.4(debug@4.4.3)
+      crc: 4.3.2
+      crypto-js: 4.2.0
+      dayjs: 1.11.23
+      debug: 4.4.3
+      form-data: 3.0.5
+      lodash.get: 4.4.2
+      p-limit: 3.1.0
+      protobufjs: 7.2.5
+      uuid: 8.3.2
+    transitivePeerDependencies:
+      - buffer
+      - supports-color
+
   '@xterm/addon-fit@0.11.0': {}
 
   '@xterm/xterm@6.0.0': {}
@@ -2366,9 +2450,15 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.13.6:
+  axios@0.21.4(debug@4.4.3):
     dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.0(debug@4.4.3)
+    transitivePeerDependencies:
+      - debug
+
+  axios@1.13.6(debug@4.4.3):
+    dependencies:
+      follow-redirects: 1.16.0(debug@4.4.3)
       form-data: 4.0.6
       proxy-from-env: 1.1.0
     transitivePeerDependencies:
@@ -2407,7 +2497,17 @@ snapshots:
       nan: 2.28.0
     optional: true
 
+  crc@4.3.2: {}
+
+  crypto-js@4.2.0: {}
+
   csstype@3.2.3: {}
+
+  dayjs@1.11.23: {}
+
+  debug@4.4.3:
+    dependencies:
+      ms: 2.1.3
 
   defu@6.1.7: {}
 
@@ -2450,7 +2550,17 @@ snapshots:
 
   fflate@0.8.3: {}
 
-  follow-redirects@1.16.0: {}
+  follow-redirects@1.16.0(debug@4.4.3):
+    optionalDependencies:
+      debug: 4.4.3
+
+  form-data@3.0.5:
+    dependencies:
+      asynckit: 0.4.0
+      combined-stream: 1.0.8
+      es-set-tostringtag: 2.1.0
+      hasown: 2.0.4
+      mime-types: 2.1.35
 
   form-data@4.0.6:
     dependencies:
@@ -2561,6 +2671,8 @@ snapshots:
 
   lilconfig@3.1.3: {}
 
+  lodash.get@4.4.2: {}
+
   lodash.identity@3.0.0: {}
 
   lodash.merge@4.6.2: {}
@@ -2581,12 +2693,18 @@ snapshots:
     dependencies:
       mime-db: 1.52.0
 
+  ms@2.1.3: {}
+
   nan@2.28.0:
     optional: true
 
   object-inspect@1.13.4: {}
 
   obug@2.1.4: {}
+
+  p-limit@3.1.0:
+    dependencies:
+      yocto-queue: 0.1.0
 
   pathe@2.0.3: {}
 
@@ -2595,6 +2713,21 @@ snapshots:
   postcss-load-config@6.0.1:
     dependencies:
       lilconfig: 3.1.3
+
+  protobufjs@7.2.5:
+    dependencies:
+      '@protobufjs/aspromise': 1.1.2
+      '@protobufjs/base64': 1.1.2
+      '@protobufjs/codegen': 2.0.5
+      '@protobufjs/eventemitter': 1.1.1
+      '@protobufjs/fetch': 1.1.1
+      '@protobufjs/float': 1.0.2
+      '@protobufjs/inquire': 1.1.2
+      '@protobufjs/path': 1.1.2
+      '@protobufjs/pool': 1.1.0
+      '@protobufjs/utf8': 1.1.2
+      '@types/node': 22.20.1
+      long: 5.3.2
 
   protobufjs@7.6.6:
     dependencies:
@@ -2793,7 +2926,11 @@ snapshots:
     dependencies:
       react: 18.3.1
 
+  uuid@8.3.2: {}
+
   ws@8.21.3: {}
+
+  yocto-queue@0.1.0: {}
 
   zod@4.5.2: {}
 

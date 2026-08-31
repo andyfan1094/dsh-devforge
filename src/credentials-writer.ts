@@ -1,5 +1,6 @@
 /** 受管凭据原子写入（服务工厂内专用，loopback 围栏限制访问）。 */
 import { copyFile, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /** 凭据存储文件名（位于 $DSH_HOME 根目录）。 */
@@ -91,7 +92,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 function resolvePath(filePath: string | undefined): string {
   if (filePath !== undefined) return filePath
   const home = process.env.DSH_HOME
-  return join(home ?? process.cwd(), CREDENTIALS_FILE)
+  return join(home ?? join(homedir(), '.dsh'), CREDENTIALS_FILE)
 }
 
 function joinLines(lines: string[]): string {
