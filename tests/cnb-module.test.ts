@@ -56,8 +56,9 @@ test('CNB store：findOptionalAccount 无账号返回 undefined、别名给错�
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
-test('toCloneUrl：slug / cnb.cool 前缀 / 完整 URL 三种输入', () => {
+test('toCloneUrl：slug（含多段嵌套）/ cnb.cool 前缀 / 完整 URL', () => {
   assert.equal(toCloneUrl('andyfan1094/dsh-devforge'), 'https://cnb.cool/andyfan1094/dsh-devforge')
+  assert.equal(toCloneUrl('cnb/skills/cnb-skill'), 'https://cnb.cool/cnb/skills/cnb-skill')
   assert.equal(toCloneUrl('cnb.cool/andyfan1094/dsh-devforge.git'), 'https://cnb.cool/andyfan1094/dsh-devforge')
   assert.equal(toCloneUrl('https://cnb.cool/g/r'), 'https://cnb.cool/g/r')
   assert.throws(() => toCloneUrl('not a url'))

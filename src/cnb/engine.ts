@@ -13,12 +13,12 @@ import { CnbStore } from './store.ts'
 import { CnbApi } from './cnb-api.ts'
 import { GitRunner } from './git.ts'
 
-/** 把用户输入规整为可克隆地址：slug → https://cnb.cool/<slug>；完整 URL 原样；cnb.cool/... 补协议。 */
+/** 把用户输入规整为可克隆地址：slug（支持多段嵌套路径）→ https://cnb.cool/<slug>；完整 URL 原样；cnb.cool/... 补协议。 */
 export function toCloneUrl(rawSource: string): string {
   const source = rawSource.trim().replace(/\.git$/, '')
   if (/^https?:\/\//i.test(source)) return source
   if (/^(?:[\w.-]+\.)?cnb\.cool\//i.test(source)) return 'https://' + source
-  if (/^[\w.-]+\/[\w.-]+$/.test(source)) return CNB_WEB_BASE + '/' + source
+  if (/^[\w.-]+(?:\/[\w.-]+)+$/.test(source)) return CNB_WEB_BASE + '/' + source
   throw new Error('无法识别的仓库地址：' + rawSource + '（支持 owner/repo、cnb.cool/… 或完整 https URL）')
 }
 
