@@ -2,6 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { deepEqualJson } from '../provider-settings.ts'
 import { MiniMaxApiClient } from './api-client.ts'
 import type { MiniMaxDashboard, MiniMaxStatus } from './protocol.ts'
 
@@ -126,11 +127,13 @@ export class MiniMaxService {
       if (descriptor === undefined) throw new MiniMaxServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[MINIMAX_PROVIDER_ID]
+      const merged = mergeMiniMaxProvider(provider, this.config.apiKeyEnv)
+      if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
           op: 'set',
           path: ['providers', MINIMAX_PROVIDER_ID],
-          value: mergeMiniMaxProvider(provider, this.config.apiKeyEnv),
+          value: merged,
         }], descriptor.revision)
         return await this.status()
       } catch (error) {

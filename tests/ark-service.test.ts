@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listCredentialRefs, setCredential } from '../src/credentials-writer.ts'
-import { ARK_DEFAULT_MODELS, ARK_PLAN_BASE_URL, mergeArkProvider } from '../src/ark/service.ts'
+import { ArkCodingPlanService, ARK_DEFAULT_MODELS, ARK_PLAN_BASE_URL, mergeArkProvider } from '../src/ark/service.ts'
 
 test('方舟 Provider 合并：固定 Plan Base URL 并保留用户已有字段', () => {
   const merged = mergeArkProvider({
@@ -59,6 +59,35 @@ test('方舟 Provider 合并：为旧模型补推理档位并保留显式覆盖'
   assert.equal(deepseek?.reasoningEfforts, false)
   assert.deepEqual(kimi?.reasoningEfforts, { off: null, high: 'high' })
   assert.deepEqual(kimi?.compat, { thinkingFormat: 'qwen', supportsReasoningEffort: false, supportsDeveloperRole: false })
+})
+
+test('方舟 ensureModels：补齐推理档位只写一次，重复调用跳过写入', async () => {
+  const base = mergeArkProvider(undefined, 'ARK_CODING_PLAN_API_KEY')
+  const staleModels = (base.models as Array<Record<string, unknown>>).map((model) => {
+    const { reasoningEfforts: _drop, ...rest } = model
+    return rest
+  })
+  const stored: { providers: Record<string, unknown> } = { providers: { 'volcengine-ark-plan': { ...base, models: staleModels } } }
+  let mutations = 0
+  const ctx = {
+    settings: {
+      describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: stored }],
+      mutate: async (_ns: unknown, ops: Array<{ value: unknown }>) => {
+        mutations += 1
+        stored.providers['volcengine-ark-plan'] = ops[0]?.value
+      },
+      get: () => stored,
+    },
+    credentials: { describe: async () => ({ configured: false, writable: true }) },
+  }
+  const service = new ArkCodingPlanService(ctx as never, { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY' })
+  await service.ensureModels()
+  assert.equal(mutations, 1, '缺失推理档位时应补写一次')
+  const patched = stored.providers['volcengine-ark-plan'] as { models: Array<Record<string, unknown>> }
+  const glm = patched.models.find((model) => model.id === 'glm-5.3')
+  assert.deepEqual(glm?.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
+  await service.ensureModels()
+  assert.equal(mutations, 1, '模型已是最新时不应再写入')
 })
 
 test('受管凭据写入：upsert ref 时保留其它已有 refs', async () => {

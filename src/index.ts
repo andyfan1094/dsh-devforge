@@ -228,14 +228,37 @@ export function apply(ctx: Context, config?: Config): void {
     },
   }
 
+  // ---- 常驻套餐能力服务：路由与启动自动补齐共用同一实例。----
+  const zhipuService = new ZhipuCodingPlanService(ctx, zhipuConfig)
+  const minimaxService = new MiniMaxService(ctx, minimaxConfig)
+  const arkService = new ArkCodingPlanService(ctx, arkConfig)
+
+  // ---- 启动自动补齐：llm-pi-ai 就绪后把官方模型与推理档位写入设置；无变化时不产生写入。----
+  let autoEnsureToken = 0
+  const scheduleAutoEnsureModels = (): void => {
+    const token = ++autoEnsureToken
+    void (async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (token !== autoEnsureToken) return
+        try {
+          await arkService.ensureModels()
+          await zhipuService.ensureModels()
+          await minimaxService.ensureModels()
+          return
+        } catch { /* llm-pi-ai 尚未就绪或并发冲突：延迟重试，最终放弃并等待下次同步。 */ }
+        await new Promise((resolve) => setTimeout(resolve, 5_000))
+      }
+    })()
+  }
+
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
     ...makeRoutes(engine, standards, restartManager),
     ...makeRemoteRoutes(remoteRegistry),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
-    ...makeZhipuRoutes(new ZhipuCodingPlanService(ctx, zhipuConfig)),
-    ...makeMiniMaxRoutes(new MiniMaxService(ctx, minimaxConfig)),
-    ...makeArkRoutes(new ArkCodingPlanService(ctx, arkConfig)),
+    ...makeZhipuRoutes(zhipuService),
+    ...makeMiniMaxRoutes(minimaxService),
+    ...makeArkRoutes(arkService),
     ...makeCredentialsRoutes(),
     ...makeBrowserRoutes(browserHolder),
   ]
@@ -251,6 +274,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeBrowser: (() => void) | undefined
 
   const sync = (): void => {
+    autoEnsureToken += 1 // 取消尚未完成的自动补齐，避免与最新配置竞争。
     // 先卸旧（热更新安全）
     disposeSection?.(); disposeSection = undefined
     disposeRoutes?.(); disposeRoutes = undefined
@@ -265,6 +289,7 @@ export function apply(ctx: Context, config?: Config): void {
     browserApi = undefined
     const value = resolve()
     if (!value.enabled) return
+    scheduleAutoEnsureModels()
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
     }

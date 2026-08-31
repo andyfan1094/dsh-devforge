@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { deepEqualJson } from '../provider-settings.ts'
 import { parseQuotaLimits } from './quota.ts'
 import type { ZhipuDashboard, ZhipuModelUsage, ZhipuStatus, ZhipuToolUsage, ZhipuUsageWindow } from './protocol.ts'
 
@@ -135,11 +136,13 @@ export class ZhipuCodingPlanService {
       if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[PROVIDER_ID]
+      const merged = mergeZhipuProvider(provider, this.config.apiKeyEnv)
+      if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
           op: 'set',
           path: ['providers', PROVIDER_ID],
-          value: mergeZhipuProvider(provider, this.config.apiKeyEnv),
+          value: merged,
         }], descriptor.revision)
         return await this.status()
       } catch (error) {

@@ -2,6 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { deepEqualJson } from '../provider-settings.ts'
 import type { ArkStatus, ArkUsageCredentialsResult, ArkUsageDashboard } from './protocol.ts'
 import { fetchArkPlanUsage } from './usage.ts'
 
@@ -168,11 +169,13 @@ export class ArkCodingPlanService {
       if (descriptor === undefined) throw new ArkServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[ARK_PROVIDER_ID]
+      const merged = mergeArkProvider(provider, this.config.apiKeyEnv)
+      if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
           op: 'set',
           path: ['providers', ARK_PROVIDER_ID],
-          value: mergeArkProvider(provider, this.config.apiKeyEnv),
+          value: merged,
         }], descriptor.revision)
         return await this.status()
       } catch (error) {
