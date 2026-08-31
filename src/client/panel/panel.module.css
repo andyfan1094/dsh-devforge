@@ -186,6 +186,24 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .metricRow strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
 .metricRow strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 
+/* ---- 控制面板总览：三家套餐用量并排 ---- */
+.overviewWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 12px; overflow: auto; }
+.overviewGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.overviewCard { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--dsw-alias-bg-base, #fff); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 10px; }
+.overviewCardHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.overviewBadges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.overviewBadge { padding: 2px 8px; color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.overviewBadge[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #16a34a) 10%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary, #16a34a) 30%, transparent); }
+.overviewBadge[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #ca8a04) 10%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #ca8a04) 30%, transparent); }
+.overviewQuota { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.overviewEmpty { margin: 0; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; }
+.overviewError { margin: 0; overflow-wrap: anywhere; color: var(--dsw-alias-state-error-primary, #dc2626); font-size: 12px; }
+.overviewCardActions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+@media (max-width: 1100px) {
+  .overviewGrid { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 960px) {
   .githubSplit, .feishuGrid, .usageGrid { grid-template-columns: minmax(0, 1fr); }
   .codePlanWorkspace { grid-template-columns: minmax(0, 1fr); overflow: auto; }
