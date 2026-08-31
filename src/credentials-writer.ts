@@ -38,7 +38,7 @@ function upsertRef(raw: string, ref: string, value: string): string {
   if (refsLine === -1) {
     const versionLine = lines.findIndex((line) => /^\s*version:\s*/.test(line))
     const insertAt = versionLine === -1 ? lines.length : versionLine + 1
-    const refLine = '    ' + ref + ': ' + value
+    const refLine = '  ' + ref + ': ' + value
     const newLines = [...lines.slice(0, insertAt), 'refs:', refLine, ...lines.slice(insertAt)]
     return joinLines(newLines)
   }
@@ -54,7 +54,7 @@ function upsertRef(raw: string, ref: string, value: string): string {
       return joinLines(lines)
     }
   }
-  const refLine = '    ' + ref + ': ' + value
+  const refLine = '  ' + ref + ': ' + value
   lines.splice(refsLine + 1, 0, refLine)
   return joinLines(lines)
 }
