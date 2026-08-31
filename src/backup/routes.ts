@@ -19,7 +19,7 @@ import {
 } from './backup.ts'
 import { BackupCryptoError } from './crypto.ts'
 import { CnbStore } from '../cnb/store.ts'
-import { CnbApi } from '../cnb/cnb-api.ts'
+import { ensurePrivateRepo } from './backup.ts'
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload)
@@ -63,18 +63,15 @@ async function readJsonBody(req: import('node:http').IncomingMessage): Promise<R
   return parsed as Record<string, unknown>
 }
 
-/** 校验备份仓库存在且私密（启用前置条件）。 */
-async function verifyPrivateRepo(accountAlias: string, repo: string): Promise<{ ok: boolean; error?: string }> {
+/** 启用前置条件：备份仓库存在且私密；不存在时自动创建（CNB OpenAPI 建仓）。 */
+async function verifyPrivateRepo(accountAlias: string, repo: string): Promise<{ ok: boolean; error?: string; created?: boolean }> {
   try {
     const store = new CnbStore()
-    const api = new CnbApi(store)
-    const info = await api.request<{ visibility_level?: string }>(store.findAccount(accountAlias), '/' + repo)
-    if (info.visibility_level !== undefined && info.visibility_level !== 'Private') {
-      return { ok: false, error: '备份仓库必须是【私密】仓库（当前 ' + info.visibility_level + '）。请在 cnb.cool 仓库设置中改为私密。' }
-    }
-    return { ok: true }
+    const account = store.findAccount(accountAlias)
+    const result = await ensurePrivateRepo(account, repo)
+    return { ok: true, created: result.created }
   } catch (error) {
-    return { ok: false, error: '备份仓库校验失败：' + (error instanceof Error ? error.message : String(error)) }
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
 

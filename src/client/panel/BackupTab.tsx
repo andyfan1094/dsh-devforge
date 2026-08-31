@@ -221,7 +221,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
             </div>
             <p className={css['resourceMessage']}>
               安全说明：密码仅存本机（0600 权限）用于无人值守自动加密；CNB 仓库只存密文。6 位密码建议混合字母与数字。
-              启用前请先在 cnb.cool 网页创建【私密】仓库。
+              备份仓库不存在时会用当前 CNB 账号自动创建私密仓库（需令牌含仓库写权限），已存在则校验为私密。
             </p>
           </div>
         </>

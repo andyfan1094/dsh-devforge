@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { GitRunner } from '../cnb/git.ts'
 import { CnbStore, type StoredAccount } from '../cnb/store.ts'
+import { CnbApi } from '../cnb/cnb-api.ts'
 import { setCredential } from '../credentials-writer.ts'
 import { closeDb, getDb, getSettings, putSettings } from '../store/db.ts'
 import { buildBackupContainer, parseBackupContainer, feishuStorePath } from './snapshot.ts'
@@ -117,6 +118,40 @@ export function writeBackupPassword(password: string): void {
 /** 清除备份密码（关闭备份或重置时）。 */
 export function clearBackupPassword(): void {
   rmSync(secretPath(), { force: true })
+}
+
+// ------------------------------------------------ 备份仓库（自动创建）
+
+/**
+ * 确保备份仓库就绪：不存在 → 用 CNB OpenAPI 自动创建【私密】仓库
+ * （POST /{owner}/-/repos，实测 201；需要令牌含 group-resource:rw 权限）；
+ * 已存在 → 校验为私密（公开仓库拒绝承载密文备份）。
+ */
+export async function ensurePrivateRepo(account: StoredAccount, repo: string): Promise<{ created: boolean; visibility: string }> {
+  const api = new CnbApi(new CnbStore())
+  const info = await api.request<{ visibility_level?: string; private?: boolean }>(account, '/' + repo).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/\(404\)/.test(message)) return undefined // 仓库不存在 → 走创建
+    throw new Error('备份仓库校验失败：' + message)
+  })
+  if (info === undefined) {
+    const [owner, name] = repo.split('/')
+    if (owner === undefined || name === undefined) throw new Error('仓库格式必须为 owner/name：' + repo)
+    const created = await api.writeRequest<unknown>(account, '/' + owner + '/-/repos', {
+      name,
+      description: '服务工厂配置加密备份仓库（自动同步，密文存储）',
+      visibility: 'private',
+    })
+    if (created.status !== 201 && created.status !== 200) {
+      throw new Error('自动创建备份仓库失败（HTTP ' + created.status + '）。令牌可能缺少 group-resource:rw 权限，请在 cnb.cool 网页手动创建私密仓库。')
+    }
+    return { created: true, visibility: 'Private' }
+  }
+  const visibility = info.visibility_level ?? (info.private === true ? 'Private' : 'Public')
+  if (visibility !== 'Private' && visibility !== 'Secret') {
+    throw new Error('备份仓库必须是【私密】仓库（当前 ' + visibility + '），公开仓库拒绝承载密文备份。请在 cnb.cool 仓库设置中改为私密。')
+  }
+  return { created: false, visibility }
 }
 
 // ------------------------------------------------ git 通道

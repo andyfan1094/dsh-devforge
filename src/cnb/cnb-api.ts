@@ -59,6 +59,27 @@ export class CnbApi {
     const response = await fetch(account.apiUrl + path, {
       headers: { accept: 'application/json', authorization: 'Bearer ' + account.token, 'user-agent': 'dsh-devforge-cnb' },
     })
+    return await this.parseResponse<T>(response)
+  }
+
+  /** 带请求体的写请求（POST 等）；创建仓库等写操作使用。 */
+  async writeRequest<T>(account: StoredAccount, path: string, payload: unknown): Promise<{ status: number; body: T }> {
+    const response = await fetch(account.apiUrl + path, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: 'Bearer ' + account.token,
+        'content-type': 'application/json',
+        'user-agent': 'dsh-devforge-cnb',
+      },
+      body: JSON.stringify(payload),
+    })
+    const body = await this.parseResponse<T>(response)
+    return { status: response.status, body }
+  }
+
+  /** 统一响应解析：非 2xx 抛带状态码的可读错误。 */
+  private async parseResponse<T>(response: Response): Promise<T> {
     const text = await response.text()
     let body: unknown
     try { body = JSON.parse(text) } catch { body = text }
