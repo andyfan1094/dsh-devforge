@@ -1,19 +1,21 @@
 // Vendored from @linxin666/dsh-ssh 0.3.6 (Apache-2.0, zhu1090093659/dsh-web).
 // dsh-devforge consolidation modification: relative import paths adjusted to the
 // devforge module layout; runtime behavior preserved. See THIRD_PARTY_NOTICES.md.
+// dsh-devforge SQLite consolidation: storage switched from the JSON file
+// (`$DSH_HOME/dsh-ssh.json`) to the plugin-wide SQLite store
+// (`${dshHome}/devforge/store.db`); read/write semantics unchanged, the legacy
+// file is migrated once by store/migrate.ts. Secrets keep the same trust
+// model: plaintext in a user-owned store, never logged.
 /**
- * Host config store: one JSON file (`$DSH_HOME/dsh-ssh.json`, defaulting
- * to `~/.dsh`) holding every
- * SSH host entry, written atomically (tmp + rename). Also parses the user's
- * standard `~/.ssh/config` for one-shot import. Secrets (passwords,
- * passphrases) live in this user-owned file in plaintext — same trust model
- * as ssh-skill's annotated ssh-config comments; document it, never log it.
+ * Host config store: the plugin-wide SQLite store holding every SSH host
+ * entry. Also parses the user's standard `~/.ssh/config` for one-shot import.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { dshHome } from '../shared/dsh-home.ts'
+import { getDb, listDocs, replaceDocs } from '../../store/db.ts'
 import type { HostPayload, ImportResult, SshHostEntry, SshHostSummary } from './protocol.ts'
 
 /** File format version. */
@@ -28,6 +30,14 @@ export function storePath(): string {
 export function sshConfigPath(): string {
   return join(homedir(), '.ssh', 'config')
 }
+
+/** SQLite 库文件位置（$DSH_HOME/devforge/store.db，默认 ~/.dsh）。 */
+function dbPath(): string {
+  return join(dshHome(), 'devforge', 'store.db')
+}
+
+/** 库内域常量：SSH 主机列表。 */
+const DOCS_DOMAIN = 'ssh.host'
 
 interface StoreFile {
   version: number
@@ -79,17 +89,20 @@ export function validateAlias(alias: string): string | undefined {
  * The host store. Pure file I/O — no cordis dependency, unit-testable.
  */
 export class HostStore {
-  /** The JSON file path. */
+  /** The SQLite database file path. */
   readonly path: string
   /** Optional override of the ~/.ssh/config path (tests). */
   private readonly sshConfigOverride: string | undefined
+  /** SQLite 连接（单例；dbPath 仅供测试注入独立库）。 */
+  private readonly db: ReturnType<typeof getDb>
 
   /**
-   * @param path - store file path (defaults to the standard location).
+   * @param path - store database path (defaults to the standard location).
    * @param sshConfigOverride - ssh config path override (tests only).
    */
   constructor(path?: string, sshConfigOverride?: string) {
-    this.path = resolve(path ?? storePath())
+    this.db = getDb(path)
+    this.path = join(path ?? dbPath())
     this.sshConfigOverride = sshConfigOverride
   }
 
@@ -330,52 +343,17 @@ export class HostStore {
 
   private skippedNames = new Set<string>()
 
-  /**
-   * Last parsed store keyed by file identity. list/find ride every acquire
-   * and GUI refresh; re-reading and re-parsing the whole file each call is
-   * wasted work when the file has not changed. Any save invalidates.
-   */
-  private cache: { mtimeMs: number; size: number; file: StoreFile } | undefined
-
+  /** 从库拼回原文件结构形状（业务方法无感知）。 */
   private load(): StoreFile {
-    let stats: { mtimeMs: number; size: number }
-    try {
-      stats = statSync(this.path)
-    } catch {
-      this.cache = undefined
-      return { version: FORMAT_VERSION, hosts: [] }
-    }
-    if (this.cache !== undefined && this.cache.mtimeMs === stats.mtimeMs && this.cache.size === stats.size) {
-      return this.cache.file
-    }
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as StoreFile
-      if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.hosts)) {
-        throw new Error('store file shape invalid')
-      }
-      this.cache = { mtimeMs: stats.mtimeMs, size: stats.size, file: parsed }
-      return parsed
-    } catch {
-      // A corrupt store must not brick the plugin — and must not be silently
-      // overwritten by the next save: rename it aside for manual recovery
-      // (the plugin then starts from an empty list).
-      this.cache = undefined
-      try {
-        renameSync(this.path, `${this.path}.corrupt-${Date.now()}`)
-      } catch { /* best effort */ }
-      return { version: FORMAT_VERSION, hosts: [] }
-    }
+    const hosts = listDocs(this.db, DOCS_DOMAIN)
+      .map(row => JSON.parse(row.data) as SshHostEntry)
+      .filter(entry => typeof entry?.alias === 'string')
+    return { version: FORMAT_VERSION, hosts }
   }
 
+  /** 事务内整域替换写（SQLite 保证原子与 0600 等价的属主隔离）。 */
   private save(file: StoreFile): void {
-    const dir = dirname(this.path)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const tmp = this.path + '.tmp'
-    // Secrets live in this file: keep it readable by the owner only. The
-    // tmp file carries the 0600 mode through the rename.
-    writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
-    renameSync(tmp, this.path)
-    this.cache = undefined
+    replaceDocs(this.db, DOCS_DOMAIN, file.hosts.map(entry => ({ id: entry.alias, data: entry })))
   }
 }
 

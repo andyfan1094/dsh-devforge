@@ -27,6 +27,8 @@ import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.t
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
+import { getDb, } from './store/db.ts'
+import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
 import { makeRoutes } from './routes.ts'
@@ -301,6 +303,17 @@ export function apply(ctx: Context, config?: Config): void {
     browserApi = undefined
     const value = resolve()
     if (!value.enabled) return
+    // 统一 SQLite 存储：一次性把旧 JSON 数据文件迁入 devforge/store.db（幂等；
+    // 旧文件归档为 *.migrated.bak 可回滚），并把 coding plan 凭据镜像进库供整体备份。
+    try {
+      const migration = migrateFromLegacyFiles(getDb())
+      if (migration.imported.length > 0) {
+        ctx.logger.info('[dsh-devforge] 旧数据文件已迁入 SQLite：%s（已归档 .migrated.bak）', migration.imported.join(', '))
+      }
+    } catch (error) {
+      // 迁移失败不阻塞插件启动：store 仍会从空库开始，旧文件保留待下次重试。
+      ctx.logger.warn('[dsh-devforge] SQLite 迁移失败（不影响启动，旧文件保留）：%s', error instanceof Error ? error.message : String(error))
+    }
     scheduleAutoEnsureModels()
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })

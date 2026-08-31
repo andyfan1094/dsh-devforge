@@ -1,10 +1,13 @@
 // Vendored from dsh-github 0.1.2 (Apache-2.0, andyfan1094/dsh-github).
 // dsh-devforge consolidation modification: relative import paths adjusted to the
 // devforge module layout; runtime behavior preserved. See THIRD_PARTY_NOTICES.md.
-import { dirname, join } from 'node:path'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+// dsh-devforge SQLite consolidation: storage switched from JSON file
+// (dsh-github.json) to the plugin-wide SQLite store; read/write semantics
+// unchanged, legacy file migrated once by store/migrate.ts.
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { AccountSummary, GitHubConfigPayload, GitHubSettings } from './protocol.ts'
+import { getDb, getSettings, listDocs, putSettingsWithinTx, replaceDocsWithinTx, withTransaction } from '../store/db.ts'
 
 export interface StoredAccount {
   alias: string
@@ -16,12 +19,20 @@ export interface StoredAccount {
 }
 interface StoreFile { version: 1; settings: GitHubSettings; accounts: StoredAccount[] }
 const DEFAULT_SETTINGS: GitHubSettings = { apiUrl: 'https://api.github.com', gitExecutable: 'git', autoFetchOnOpen: false, allowPush: false, allowForcePush: false }
+/** 兼容保留：旧 JSON 文件位置（仅迁移器与诊断用途；运行时数据已入 SQLite 库）。 */
 export function storePath(): string { return join(homedir(), '.dsh', 'dsh-github.json') }
 
+const DOCS_DOMAIN = 'github.account'
+const SETTINGS_DOMAIN = 'github.settings'
+
 export class GithubStore {
+  private readonly db: ReturnType<typeof getDb>
+  /** 兼容保留：库文件路径（原 JSON 文件路径语义已变更）。 */
   readonly path: string
-  private cache: { mtimeMs: number; size: number; file: StoreFile } | undefined
-  constructor(path?: string) { this.path = path ?? storePath() }
+  constructor(path?: string) {
+    this.db = getDb(path)
+    this.path = path ?? ''
+  }
   settings(): GitHubSettings { return { ...DEFAULT_SETTINGS, ...this.load().settings } }
   updateSettings(patch: GitHubConfigPayload): GitHubSettings {
     const file = this.load()
@@ -32,7 +43,6 @@ export class GithubStore {
       ...(patch.gitExecutable !== undefined ? { gitExecutable: patch.gitExecutable.trim() || 'git' } : {}),
       ...(patch.defaultAccount !== undefined ? { defaultAccount: patch.defaultAccount.trim() || undefined } : {}),
       ...(patch.defaultRepoDir !== undefined ? { defaultRepoDir: patch.defaultRepoDir.trim() || undefined } : {}),
-      ...(patch.defaultBranch !== undefined ? { defaultBranch: patch.defaultBranch.trim() || undefined } : {}),
       ...(patch.autoFetchOnOpen !== undefined ? { autoFetchOnOpen: Boolean(patch.autoFetchOnOpen) } : {}),
       ...(patch.allowPush !== undefined ? { allowPush: Boolean(patch.allowPush) } : {}),
       ...(patch.allowForcePush !== undefined ? { allowForcePush: Boolean(patch.allowForcePush) } : {}),
@@ -71,25 +81,20 @@ export class GithubStore {
     file.accounts.splice(index, 1); if (file.settings.defaultAccount === alias) file.settings.defaultAccount = file.accounts[0]?.alias; this.save(file)
   }
   summarize(account: StoredAccount): AccountSummary { return { alias: account.alias, apiUrl: account.apiUrl, ...(account.username !== undefined ? { username: account.username } : {}), tokenConfigured: account.token.length > 0, createdAt: account.createdAt, updatedAt: account.updatedAt } }
+  /** 从库拼回原文件结构形状（业务方法无感知）。 */
   private load(): StoreFile {
-    let stats: { mtimeMs: number; size: number }
-    try { stats = statSync(this.path) } catch { return { version: 1, settings: { ...DEFAULT_SETTINGS }, accounts: [] } }
-    if (this.cache?.mtimeMs === stats.mtimeMs && this.cache.size === stats.size) return this.cache.file
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<StoreFile>
-      if (parsed.version !== 1 || !Array.isArray(parsed.accounts)) throw new Error('store shape invalid')
-      const file: StoreFile = { version: 1, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) }, accounts: parsed.accounts as StoredAccount[] }
-      this.cache = { mtimeMs: stats.mtimeMs, size: stats.size, file }; return file
-    } catch {
-      try { renameSync(this.path, this.path + '.corrupt-' + Date.now()) } catch { /* best effort */ }
-      return { version: 1, settings: { ...DEFAULT_SETTINGS }, accounts: [] }
-    }
+    const accounts = listDocs(this.db, DOCS_DOMAIN)
+      .map(row => JSON.parse(row.data) as StoredAccount)
+      .filter(account => typeof account?.alias === 'string')
+    const settings = getSettings<Partial<GitHubSettings>>(this.db, SETTINGS_DOMAIN) ?? {}
+    return { version: 1, settings: { ...DEFAULT_SETTINGS, ...settings }, accounts }
   }
+  /** 事务内原子写：设置 + 账号整域替换。 */
   private save(file: StoreFile): void {
-    const dir = dirname(this.path); if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const tmp = this.path + '.tmp'; writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
-    try { chmodSync(tmp, 0o600) } catch { /* Windows ACLs are inherited */ }
-    renameSync(tmp, this.path); this.cache = undefined
+    withTransaction(this.db, () => {
+      putSettingsWithinTx(this.db, SETTINGS_DOMAIN, file.settings)
+      replaceDocsWithinTx(this.db, DOCS_DOMAIN, file.accounts.map(account => ({ id: account.alias, data: account })))
+    })
   }
 }
 export function normalizeApiUrl(value: string): string {

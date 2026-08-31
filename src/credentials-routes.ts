@@ -2,6 +2,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from './loopback.ts'
 import { setCredential } from './credentials-writer.ts'
+import { getDb, putCredentialMirror } from './store/db.ts'
 
 /** 服务工厂内的凭据写入 API 路径。 */
 export const CREDENTIALS_API = {
@@ -77,6 +78,9 @@ export function makeCredentialsRoutes(): WebRoute[] {
         try {
           const body = await readJsonBody(req)
           const result = await setCredential(body.ref, body.value)
+          // 双写镜像：yaml 仍是主存（宿主 ctx.credentials.resolve 零改动），
+          // 库里留一份副本供整体备份（.credentials.yaml 不在备份范围）。
+          try { putCredentialMirror(getDb(), body.ref, body.value) } catch { /* 镜像失败不影响主写入 */ }
           writeJson(res, 200, { ok: true, ...result })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)

@@ -1,13 +1,15 @@
 /**
- * CNB 账号与设置存储 —— 令牌只存 ~/.dsh/dsh-cnb.json（0600）。
- * 与 vendored GitHub store 同构，便于运维心智复用；路径经 homedir() 解析，
- * 天然跟随 $HOME（暂存实例隔离生效）。
+ * CNB 账号与设置存储 —— devforge 统一 SQLite 库（`${dshHome}/devforge/store.db`）。
+ * 与 vendored GitHub store 同构，便于运维心智复用；库路径经 dshHome() 解析，
+ * 天然跟随 $HOME / $DSH_HOME（暂存实例隔离生效）。
+ * 存储层从 JSON 文件（dsh-cnb.json）切换为 SQLite：读写语义不变，旧文件由
+ * store/migrate.ts 一次性迁入并归档为 *.migrated.bak。
  */
-import { dirname, join } from 'node:path'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { AccountSummary, CnbConfigPayload, CnbSettings } from './protocol.ts'
 import { CNB_API_DEFAULT } from './protocol.ts'
+import { getDb, getSettings, listDocs, putSettingsWithinTx, replaceDocsWithinTx, withTransaction } from '../store/db.ts'
 
 export interface StoredAccount {
   alias: string
@@ -19,12 +21,25 @@ export interface StoredAccount {
 }
 interface StoreFile { version: 1; settings: CnbSettings; accounts: StoredAccount[] }
 const DEFAULT_SETTINGS: CnbSettings = { apiUrl: CNB_API_DEFAULT, gitExecutable: 'git', autoFetchOnOpen: false, allowPush: false, allowForcePush: false }
-export function storePath(): string { return join(homedir(), '.dsh', 'dsh-cnb.json') }
+
+/** 库内域常量（账号列表 + 单例设置）。 */
+const DOCS_DOMAIN = 'cnb.account'
+const SETTINGS_DOMAIN = 'cnb.settings'
+
+/** 兼容保留：旧 JSON 文件位置（仅迁移器与诊断用途；运行时数据已入 SQLite 库）。 */
+export function storePath(): string {
+  return join(homedir(), '.dsh', 'dsh-cnb.json')
+}
 
 export class CnbStore {
+  /** SQLite 库连接（单例；path 参数仅供测试注入独立库）。 */
+  private readonly db: ReturnType<typeof getDb>
+  /** 兼容保留：库文件路径（原 JSON 文件路径语义已变更）。 */
   readonly path: string
-  private cache: { mtimeMs: number; size: number; file: StoreFile } | undefined
-  constructor(path?: string) { this.path = path ?? storePath() }
+  constructor(path?: string) {
+    this.db = getDb(path)
+    this.path = path ?? ''
+  }
   settings(): CnbSettings { return { ...DEFAULT_SETTINGS, ...this.load().settings } }
   updateSettings(patch: CnbConfigPayload): CnbSettings {
     const file = this.load()
@@ -84,25 +99,20 @@ export class CnbStore {
     file.accounts.splice(index, 1); if (file.settings.defaultAccount === alias) file.settings.defaultAccount = file.accounts[0]?.alias; this.save(file)
   }
   summarize(account: StoredAccount): AccountSummary { return { alias: account.alias, apiUrl: account.apiUrl, ...(account.username !== undefined ? { username: account.username } : {}), tokenConfigured: account.token.length > 0, createdAt: account.createdAt, updatedAt: account.updatedAt } }
+  /** 从库拼回原文件结构形状（业务方法无感知）。 */
   private load(): StoreFile {
-    let stats: { mtimeMs: number; size: number }
-    try { stats = statSync(this.path) } catch { return { version: 1, settings: { ...DEFAULT_SETTINGS }, accounts: [] } }
-    if (this.cache?.mtimeMs === stats.mtimeMs && this.cache.size === stats.size) return this.cache.file
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<StoreFile>
-      if (parsed.version !== 1 || !Array.isArray(parsed.accounts)) throw new Error('store shape invalid')
-      const file: StoreFile = { version: 1, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) }, accounts: parsed.accounts as StoredAccount[] }
-      this.cache = { mtimeMs: stats.mtimeMs, size: stats.size, file }; return file
-    } catch {
-      try { renameSync(this.path, this.path + '.corrupt-' + Date.now()) } catch { /* best effort */ }
-      return { version: 1, settings: { ...DEFAULT_SETTINGS }, accounts: [] }
-    }
+    const accounts = listDocs(this.db, DOCS_DOMAIN)
+      .map(row => JSON.parse(row.data) as StoredAccount)
+      .filter(account => typeof account?.alias === 'string')
+    const settings = getSettings<Partial<CnbSettings>>(this.db, SETTINGS_DOMAIN) ?? {}
+    return { version: 1, settings: { ...DEFAULT_SETTINGS, ...settings }, accounts }
   }
+  /** 事务内原子写：设置 + 账号整域替换。 */
   private save(file: StoreFile): void {
-    const dir = dirname(this.path); if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const tmp = this.path + '.tmp'; writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
-    try { chmodSync(tmp, 0o600) } catch { /* Windows ACLs are inherited */ }
-    renameSync(tmp, this.path); this.cache = undefined
+    withTransaction(this.db, () => {
+      putSettingsWithinTx(this.db, SETTINGS_DOMAIN, file.settings)
+      replaceDocsWithinTx(this.db, DOCS_DOMAIN, file.accounts.map(account => ({ id: account.alias, data: account })))
+    })
   }
 }
 export function normalizeApiUrl(value: string): string {
