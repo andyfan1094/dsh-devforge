@@ -222,7 +222,19 @@ export function apply(ctx, config = {}) {
   const send = async (chatId, text) => bridge === null ? false : bridge.sendText(chatId, text)
   const createStream = async (chatId, options) => bridge === null ? null : bridge.createStreamingCard?.(chatId, options)
   const tracker = createReplyTracker({ sendText: send, createStream, warn })
-  const completionNotifier = createCompletionNotifier({ getConfig: () => store.panel(), getClient: () => bridge?.getClient?.() ?? null, warn })
+  const completionNotifier = createCompletionNotifier({
+    getConfig: () => store.panel(),
+    getClient: () => bridge?.getClient?.() ?? null,
+    // 会话标题作为卡片主题首选来源；去掉「飞书 · 」前缀避免噪音
+    getSessionTitle: (session) => {
+      try {
+        return String(ctx.sessionTitle.get(session)?.title ?? '').replace(/^飞书 · /, '')
+      } catch {
+        return ''
+      }
+    },
+    warn,
+  })
 
   const cwdFor = (chatId) => {
     const custom = String(resolved.chatCwds?.[String(chatId ?? '')] ?? '').trim()

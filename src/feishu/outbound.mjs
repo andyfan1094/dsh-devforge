@@ -111,26 +111,76 @@ export async function sendImage(client, chatId, filePath, { replyTo = '', receiv
   }, replyTo)
 }
 
+/** 把 Host turn/end 的结构化 TurnEndReason 归一化为可读状态；纯函数便于测试。 */
+export function describeTurnEndReason(reason) {
+  if (reason === null || reason === undefined || reason === '') {
+    return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '' }
+  }
+  if (typeof reason === 'string') {
+    const compact = reason.trim()
+    if (compact === '' || compact === 'success' || compact === 'completed') {
+      return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '' }
+    }
+    return { failed: true, tone: 'red', icon: '❌', label: '任务失败', text: compact.slice(0, 160) }
+  }
+  if (typeof reason !== 'object') {
+    return { failed: true, tone: 'red', icon: '❌', label: '任务失败', text: String(reason).slice(0, 160) }
+  }
+  const kind = String(reason.kind ?? '')
+  if (kind === 'completed') return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '' }
+  if (kind === 'max-tokens') return { failed: false, tone: 'green', icon: '✅', label: '任务完成', text: '至少一步达到输出上限' }
+  if (kind === 'blocked') return { failed: false, tone: 'yellow', icon: '⏸', label: '任务等待输入', text: '' }
+  if (kind === 'aborted') {
+    const cause = String(reason.reason ?? reason.cause ?? '')
+    const causeText = cause === 'user' ? '由用户中止'
+      : cause === 'parent' ? '由上级会话中止'
+        : cause === 'disposed' ? '会话关闭时中止'
+          : cause
+    return { failed: false, tone: 'grey', icon: '⚪', label: '任务已中止', text: causeText }
+  }
+  if (kind === 'interrupted') return { failed: false, tone: 'grey', icon: '⚪', label: '任务中断', text: '会话异常恢复时补记' }
+  if (kind === 'error') {
+    const failure = reason.error ?? reason
+    const message = String(failure.message ?? '').trim() || '未知错误'
+    const code = String(failure.code ?? '').trim()
+    const text = code !== '' && !message.includes(code) ? message + '（code=' + code + '）' : message
+    return { failed: true, tone: 'red', icon: '❌', label: '任务失败', text: text.slice(0, 160) }
+  }
+  // 未知结构：提取常见字段，兜底 JSON 序列化，绝不输出 [object Object]
+  const message = String(reason.message ?? reason.text ?? '').trim()
+  const text = (message !== '' ? message : safeJson(reason)).slice(0, 160)
+  return { failed: true, tone: 'red', icon: '❌', label: '任务失败', text }
+}
+
+function safeJson(value) {
+  try {
+    const text = JSON.stringify(value)
+    return text === undefined ? '无法序列化的失败信息' : text
+  } catch {
+    return '无法序列化的失败信息'
+  }
+}
+
 /** 把「任务完成」载荷格式化为飞书 Card 2.0 模板；纯函数便于测试。 */
 export function buildCompletionCard({ subject, turn, durationMs, reason }) {
-  const safeSubject = String(subject ?? '').trim().slice(0, 200) || '任务完成'
+  const safeSubject = String(subject ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
   const safeTurn = Number.isFinite(turn) ? Math.max(1, Math.floor(turn)) : 1
   const ms = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0
   const seconds = Math.round(ms / 1000)
   const durationText = seconds >= 60 ? Math.floor(seconds / 60) + ' 分 ' + (seconds % 60) + ' 秒' : seconds + ' 秒'
-  const isError = String(reason ?? '') !== '' && String(reason) !== 'success'
-  const headerTemplate = isError ? 'red' : 'green'
-  const title = isError ? '❌ 任务失败' : '✅ 任务完成'
-  const reasonText = isError ? '原因：' + String(reason).slice(0, 80) : ''
+  const state = describeTurnEndReason(reason)
+  // 标题直接带主题，群里一眼看出是哪件事；标题截断，完整主题仍保留在正文首行
+  const title = state.icon + ' ' + state.label + (safeSubject !== '' ? '：' + safeSubject.slice(0, 32) : '')
+  const reasonText = state.text === '' ? '' : (state.failed ? '原因：' : '说明：') + state.text
   return {
     schema: '2.0',
     header: {
-      template: headerTemplate,
+      template: state.tone,
       title: { tag: 'plain_text', content: title },
     },
     body: {
       elements: [
-        { tag: 'div', text: { tag: 'lark_md', content: '**' + safeSubject + '**' } },
+        ...(safeSubject !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: '**' + safeSubject + '**' } }] : []),
         { tag: 'div', fields: [
           { is_short: true, text: { tag: 'lark_md', content: '**轮次**\n第 ' + safeTurn + ' 轮' } },
           { is_short: true, text: { tag: 'lark_md', content: '**耗时**\n' + durationText } },
