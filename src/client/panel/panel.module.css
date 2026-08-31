@@ -21,13 +21,18 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 .panel { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; padding: 14px 16px 16px; gap: 10px; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #1f2329); font-family: var(--dsw-font-family, ui-sans-serif, system-ui, sans-serif); }
 .panelHeader { display: flex; align-items: center; gap: 10px; flex: none; }
-.panelTitle { margin: 0; flex: 1; font-size: 16px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); white-space: nowrap; }
+.panelTitle { margin: 0; flex: 1; display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); white-space: nowrap; }
+.panelTitleIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; color: var(--dsw-alias-state-business-primary, #2563eb); background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 12%, transparent); }
 .backButton { display: inline-flex; align-items: center; gap: 4px; }
 
-.tabBar { display: flex; gap: 2px; flex: none; overflow-x: auto; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
-.tab { padding: 7px 14px; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap; }
-.tab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
-.tab[data-active] { color: var(--dsw-alias-label-primary, #1f2329); font-weight: 600; border-bottom-color: var(--dsw-alias-state-business-primary, #2563eb); }
+/* 主菜单栏：胶囊分段控件（segmented control）风格，图标 + 文字，active 浮起 */
+.tabBar { display: flex; gap: 4px; flex: none; overflow-x: auto; padding: 4px; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 10px; scrollbar-width: thin; }
+.tab { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
+.tab svg { flex: none; opacity: .85; }
+.tab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 55%, transparent); }
+.tab:active { transform: scale(.97); }
+.tab[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); font-weight: 600; background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px rgba(15, 23, 42, .12), 0 0 0 1px var(--dsw-alias-border-l1, #e5e7eb); }
+.tab[data-active] svg { opacity: 1; }
 
 .panelContent { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tabBody { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; overflow-y: auto; }
@@ -94,10 +99,11 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 /* 服务工厂内嵌 GitHub 工作台：保持运维工具的紧凑信息密度，不使用营销式卡片。 */
 .githubWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 10px; overflow: auto; }
-.subTabBar { display: flex; flex: none; align-items: center; gap: 4px; min-width: 0; padding-bottom: 8px; overflow-x: auto; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
-.subTab { min-height: 30px; padding: 5px 11px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
-.subTab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
-.subTab[data-active] { color: var(--dsw-alias-label-primary, #1f2329); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border-color: var(--dsw-alias-border-l2, #d0d5dd); font-weight: 600; }
+/* 工作台内子导航：同胶囊风格（更小一号），active 轻量填充 */
+.subTabBar { display: flex; flex: none; align-items: center; gap: 3px; min-width: 0; padding: 3px; overflow-x: auto; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border-radius: 8px; }
+.subTab { min-height: 28px; padding: 5px 11px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.subTab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 55%, transparent); }
+.subTab[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 2px rgba(15, 23, 42, .10), 0 0 0 1px var(--dsw-alias-border-l1, #e5e7eb); font-weight: 600; }
 .githubSplit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; min-width: 0; }
 .githubSection { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 4px 0 12px; }
 .sectionTitle { margin: 0; font-size: 13px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); }

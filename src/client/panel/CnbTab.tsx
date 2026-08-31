@@ -10,9 +10,10 @@ import type { DevforgeApi } from '../api.ts'
 import type { AccountSummary, CnbSettings, GitAction, GitResult, RepoSummary } from '../../cnb/protocol.ts'
 import { CNB_API_DEFAULT, CNB_WEB_BASE } from '../../cnb/protocol.ts'
 import css from './panel.module.css'
+import { BackupTab } from './BackupTab.tsx'
 
 /** CNB 工作台内部视图。 */
-type CnbView = 'accounts' | 'repos' | 'git' | 'settings'
+type CnbView = 'accounts' | 'repos' | 'git' | 'settings' | 'backup'
 
 /** Host 端配置尚未返回时的安全默认值。 */
 const DEFAULT_SETTINGS: CnbSettings = {
@@ -224,6 +225,7 @@ export function CnbTab({ api }: CnbTabProps): JSX.Element {
         <button type="button" role="tab" aria-selected={view === 'repos'} data-active={view === 'repos' ? '' : undefined} className={css['subTab']} onClick={() => { setView('repos') }}>仓库</button>
         <button type="button" role="tab" aria-selected={view === 'git'} data-active={view === 'git' ? '' : undefined} className={css['subTab']} onClick={() => { setView('git') }}>本地 Git</button>
         <button type="button" role="tab" aria-selected={view === 'settings'} data-active={view === 'settings' ? '' : undefined} className={css['subTab']} onClick={() => { setView('settings') }}>安全设置</button>
+        <button type="button" role="tab" aria-selected={view === 'backup'} data-active={view === 'backup' ? '' : undefined} className={css['subTab']} onClick={() => { setView('backup') }}>加密备份</button>
         <span className={css['toolbarSpacer']} />
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void refresh() }}>刷新</button>
       </div>
@@ -404,6 +406,7 @@ export function CnbTab({ api }: CnbTabProps): JSX.Element {
           </section>
         </div>
       )}
+      {view === 'backup' && <BackupTab api={api} />}
     </section>
   )
 }
