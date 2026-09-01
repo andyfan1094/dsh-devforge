@@ -14,6 +14,7 @@ import {
   readBackupSettings,
   readBackupState,
   restoreFromContainer,
+  syncFromRemote,
   writeBackupPassword,
   writeBackupSettings,
 } from './backup.ts'
@@ -189,6 +190,26 @@ export function makeBackupRoutes(): WebRoute[] {
           if (error instanceof BackupCryptoError) {
             writeJson(res, 400, { ok: false, error: error.message, code: error.code })
             return
+          }
+          writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: DEVFORGE_API.backupSync,
+      handler: async (req, res) => {
+        if (!guardWrite(req)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const password = typeof body['password'] === 'string' && body['password'] !== '' ? body['password'] : readBackupPassword()
+          const dryRun = body['dryRun'] === true
+          const result = await syncFromRemote(password, dryRun)
+          writeJson(res, 200, result)
+        } catch (error) {
+          if (error instanceof BackupCryptoError) {
+            writeJson(res, 400, { ok: false, error: error.message, code: error.code }); return
           }
           writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

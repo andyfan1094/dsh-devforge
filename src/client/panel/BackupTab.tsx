@@ -4,7 +4,7 @@
  * 安全：密码只经表单提交，后端存本机 0600；界面绝不回显密码。
  */
 import { useCallback, useEffect, useState } from 'react'
-import type { BackupStatus } from '../../protocol.ts'
+import type { BackupStatus, BackupSyncResult } from '../../protocol.ts'
 import type { DevforgeApi } from '../api.ts'
 import css from './panel.module.css'
 
@@ -36,6 +36,8 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
   const [restorePassword, setRestorePassword] = useState('')
   const [preview, setPreview] = useState<{ machine: string; createdAt: number; files: string[] } | undefined>(undefined)
   const [backups, setBackups] = useState<RemoteBackupRow[]>([])
+  const [syncPassword, setSyncPassword] = useState('')
+  const [syncPreview, setSyncPreview] = useState<BackupSyncResult | undefined>(undefined)
 
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -145,6 +147,37 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
     }
   }, [api, restorePassword])
 
+  const doSyncPreview = useCallback(async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      const data = await api.backupSync(syncPassword, true)
+      setSyncPreview(data)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }, [api, syncPassword])
+
+  const doSyncConfirm = useCallback(async (): Promise<void> => {
+    if (!window.confirm('同步会覆盖本机的天工造梦账号、主机与密钥数据(覆盖前自动备份现有文件),并跳过本机推送的所有 commit,只还原其他机器的最新一次提交。确认继续?')) return
+    setBusy(true)
+    setError('')
+    try {
+      const data = await api.backupSync(syncPassword, false)
+      if (data.noRemote === true) {
+        setNotice('远端没有其他机器的备份，无需同步。')
+      } else {
+        setNotice('已从 ' + (data.source?.machine ?? '远端') + ' 同步：' + data.restoredFiles.join('、') + '。请重启 DSH 使同步的数据全部生效。')
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }, [api, syncPassword])
+
   const settings = status?.settings
   const state = status?.state
 
@@ -156,6 +189,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void runNow() }}>立即备份</button>
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void loadBackups() }}>查看远端备份</button>
         <button type="button" className={css['ghostButton']} onClick={() => { setRestoreOpen(value => !value); setPreview(undefined) }}>从 CNB 恢复</button>
+        <button type="button" className={css['primaryButton']} onClick={() => { setSyncPassword(''); setSyncPreview(undefined); setTimeout(() => document.getElementById('backup-sync-panel')?.scrollIntoView({ behavior: 'smooth' }), 50) }}>立即从远端同步（跳过本机）</button>
       </div>
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
@@ -241,6 +275,32 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
           </div>
         </div>
       )}
+
+
+      <div id="backup-sync-panel" className={css['formGrid']} data-dsh-part="backup-sync" style={{ marginTop: 16, borderTop: '1px dashed var(--dsh-border-color, #ccc)', paddingTop: 16 }}>
+        <h3 style={{ margin: 0, fontSize: '14px' }}>立即从远端同步（跳过本机）— Mac↔Windows 双向同步</h3>
+        <p className={css['resourceMessage']}>
+          流程：git fetch 远端 → 解析最近 100 个 commit 的 machine 字段 → 跳过本机 → 还原其他机器的最新一次提交。
+          覆盖前自动备份现有 store.db / dsh-feishu.json 为 *.pre-restore.bak。完成后需重启 DSH。
+        </p>
+        <label className={css['field']}>
+          <span>6 位备份密码（留空使用本机已设密码）</span>
+          <input type="password" autoComplete="new-password" value={syncPassword} onChange={event => setSyncPassword(event.target.value)} maxLength={6} placeholder="6 位" />
+        </label>
+        <div className={css['fieldActions']}>
+          <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void doSyncPreview() }}>预览同步</button>
+          {syncPreview !== undefined && syncPreview.noRemote !== true && (
+            <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSyncConfirm() }}>确认同步</button>
+          )}
+        </div>
+        {syncPreview !== undefined && (
+          <div className={css['resourceMessage']}>
+            {syncPreview.noRemote === true
+              ? '远端没有其他机器的备份，无需同步。'
+              : '将同步 ' + (syncPreview.source?.machine ?? '?') + ' 的 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '(' + String(syncPreview.source?.size ?? 0) + ' 字节，备份于 ' + new Date(syncPreview.source?.createdAt ?? 0).toLocaleString() + ')'}
+          </div>
+        )}
+      </div>
 
       {restoreOpen && (
         <div className={css['formGrid']} data-dsh-part="backup-restore">

@@ -27,6 +27,8 @@ export const DEVFORGE_API = {
   backupNow: '/api/dsh-devforge/backup/now',
   backupList: '/api/dsh-devforge/backup/list',
   backupRestore: '/api/dsh-devforge/backup/restore',
+  /** CNB 备份:同步远端(跳过本机 commit) — Mac↔Windows 双向同步用 */
+  backupSync: '/api/dsh-devforge/backup/sync',
 } as const
 
 /** CNB 备份：面板状态响应（settings/state/passwordSet/accounts）。 */
