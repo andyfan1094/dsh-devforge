@@ -109,7 +109,7 @@ test('旧 Sub2API 配置：迁移地址、凭据引用、生图模型和聊天�
   }
   const liveConfig: OpenAiCapabilityConfig = { ...config, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: '' }
   const service = new (await import('../src/openai/service.ts')).OpenAiGatewayService(ctx as never, liveConfig)
-  const status = await service.ensureProvider()
+  const status = await service.status()
   assert.equal(liveConfig.baseURL, 'https://legacy.example.com')
   assert.equal(liveConfig.apiKeyEnv, 'SUB2API_OPENAI_API_KEY')
   assert.equal(liveConfig.imageModel, 'gpt-image-2')

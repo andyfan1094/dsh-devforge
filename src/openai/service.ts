@@ -99,8 +99,17 @@ export class OpenAiGatewayService {
     this.config = config
   }
 
-  /** 返回中转站配置、凭据和模型路由的脱敏状态。 */
+  /** 返回脱敏状态；发现遗留 Sub2API 路由时先执行一次幂等迁移。 */
   async status(): Promise<OpenAiGatewayStatus> {
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    if (section?.providers?.[OPENAI_PROVIDER_ID] === undefined && section?.providers?.['sub2api-openai'] !== undefined) {
+      return await this.ensureProvider()
+    }
+    return await this.readStatus()
+  }
+
+  /** 只读取当前状态，不触发迁移；供 ensureProvider 避免递归调用。 */
+  private async readStatus(): Promise<OpenAiGatewayStatus> {
     const credential = await this.ctx.credentials.describe(this.reference())
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const provider = section?.providers?.[OPENAI_PROVIDER_ID]
@@ -160,7 +169,7 @@ export class OpenAiGatewayService {
     // 先建立新 Provider 并清理旧路由，再持久化天工造梦配置。后者会触发热更新，不能放在迁移中间。
     if (this.config.baseURL.trim() !== '' && models.length > 0) await this.writeProvider(models, true)
     if (migration.changed) await this.writeDevforgeConfig(this.config)
-    return await this.status()
+    return await this.readStatus()
   }
 
   /** 供 generate_image 调用；模型来自面板选择，不接受工具参数覆盖。 */
