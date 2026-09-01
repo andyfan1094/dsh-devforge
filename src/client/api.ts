@@ -127,6 +127,15 @@ export class DevforgeApi {
     }))
   }
 
+  /** CNB 备份：从远端同步（dryRun 预览清单；实跑覆盖本机并需重启 DSH）。 */
+  async backupSync(password: string, dryRun = false): Promise<BackupSyncResult> {
+    return await readJson<BackupSyncResult>(await fetch(DEVFORGE_API.backupSync, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password, dryRun }),
+    }))
+  }
+
   /** CNB 备份：执行恢复（confirm 必须为「确认恢复」；完成后需重启 Host）。 */
   async backupRestore(password: string): Promise<{ ok: boolean; restoredFiles: string[]; machine: string; restartRequired: boolean }> {
     return await readJson(await fetch(DEVFORGE_API.backupRestore, {

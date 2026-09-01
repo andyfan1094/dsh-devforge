@@ -26,6 +26,7 @@ import { setCredential } from '../credentials-writer.ts'
 import { closeDb, getDb, getSettings, putSettings } from '../store/db.ts'
 import { buildBackupContainer, parseBackupContainer, feishuStorePath } from './snapshot.ts'
 import { decryptBackupContainer, encryptBackupContainer } from './crypto.ts'
+import type { BackupSyncResult } from '../protocol.ts'
 
 /** 备份配置（settings 域持久化）。 */
 export interface BackupSettings {
@@ -316,6 +317,53 @@ export async function fetchAndDecryptLatest(password: string): Promise<ReturnTyp
   if (!existsSync(latestPath)) throw new Error('远端没有备份文件（backups/latest.json 不存在）。')
   const container = readFileSync(latestPath)
   return parseBackupContainer(await decryptBackupContainer(container, password))
+}
+
+/**
+ * 从远端拉取最新备份并用其覆盖本机（跳过本机上传）。
+ *
+ * 与「恢复」路由的区别：本函数自带拉取动作（git pull 由 fetchAndDecryptLatest 内部
+ * 保证工作副本最新），无需前端先列清单再二次调用。
+ *
+ * 安全边界：dryRun=true 只回执清单，不触碰本机任何文件；实跑复用
+ * restoreFromContainer 的闭环流程（原文件先落 .pre-restore.bak），
+ * 完成后必须重启 DSH 才能让其他进程的旧库连接收敛。
+ *
+ * 远端尚无备份时不抛错，回执 noRemote=true（面板提示「无需同步」）。
+ */
+export async function syncFromRemote(
+  password: string | undefined,
+  dryRun = false,
+): Promise<BackupSyncResult> {
+  const effectivePassword = password !== undefined && password !== '' ? password : readBackupPassword()
+  if (effectivePassword === undefined || effectivePassword === '') {
+    throw new Error('缺少备份密码（password 为空，且本机未保存备份密码）。')
+  }
+  const settings = readBackupSettings()
+  if (settings.accountAlias === '' || settings.repo === '') throw new Error('备份仓库或 CNB 账号未配置。')
+  const store = new CnbStore()
+  const account = store.findAccount(settings.accountAlias)
+  const runner = new GitRunner(store)
+  await ensureWorkDir(runner, account, settings.repo)
+
+  const remote = await listRemoteBackups()
+  if (remote.length === 0) {
+    return { ok: true, dryRun, files: [], restoredFiles: [], noRemote: true, restartRequired: false }
+  }
+  const container = await fetchAndDecryptLatest(effectivePassword)
+  const files = Object.keys(container.files)
+  const head = await runner.run(['rev-parse', 'HEAD'], workDir())
+  const source = {
+    machine: container.machine,
+    sha: head.ok ? head.stdout.trim() : '',
+    size: remote.find(item => item.path === 'backups/latest.json')?.size ?? 0,
+    createdAt: container.created_at,
+  }
+  if (dryRun) {
+    return { ok: true, dryRun: true, files, restoredFiles: [], source, restartRequired: false }
+  }
+  const result = await restoreFromContainer(container)
+  return { ok: true, dryRun: false, files, restoredFiles: result.restoredFiles, source, restartRequired: true }
 }
 
 /** 用解密后的容器恢复本机数据（本进程内闭环；完成后必须重启 Host）。 */

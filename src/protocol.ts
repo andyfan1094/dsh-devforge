@@ -47,6 +47,23 @@ export interface BackupStatus {
   accounts: string[]
 }
 
+/** CNB 备份：从远端同步回本机的结果（host 端 syncFromRemote 与面板共用）。 */
+export interface BackupSyncResult {
+  ok: boolean
+  /** 预览模式：只回执待恢复清单，不落盘。 */
+  dryRun: boolean
+  /** 远端容器中存在的文件键。 */
+  files: string[]
+  /** 实际写回本机的条目（store.db / dsh-feishu.json / credentials:<ref>）。 */
+  restoredFiles: string[]
+  /** 远端最新备份的来源机器、commit、体积与时间戳；远端无备份时缺省。 */
+  source?: { machine: string; sha: string; size: number; createdAt: number }
+  /** 远端没有任何备份时为 true（面板据此提示「无需同步」而非报错）。 */
+  noRemote?: boolean
+  /** 实际写回后为 true：需重启 DSH 才能让其他进程的旧库连接收敛。 */
+  restartRequired: boolean
+}
+
 /** 远程运维 transport。 */
 export type RemoteTransport = 'ssh' | 'winrm'
 

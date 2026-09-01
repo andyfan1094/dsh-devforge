@@ -199,7 +199,7 @@ export function makeBackupRoutes(): WebRoute[] {
       kind: 'exact',
       path: DEVFORGE_API.backupSync,
       handler: async (req, res) => {
-        if (!guardWrite(req)) return
+        if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
         try {
           const body = await readJsonBody(req)
