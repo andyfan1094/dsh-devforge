@@ -71,14 +71,10 @@ test('provider：写入 Responses 路由、受管凭据和重试策略', () => {
 test('旧 Sub2API 配置：迁移地址、凭据引用、生图模型和聊天路由并清理旧路由', async () => {
   const sections: Record<string, Record<string, unknown>> = {
     'dsh-devforge': { openai: { ...config, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: '' } },
-    'llm-sub2api': {
-      baseURL: 'https://legacy.example.com',
-      tools: { generate: { provider: 'openai', model: 'gpt-image-2' } },
-      providers: { openai: { apiKeyEnv: 'SUB2API_OPENAI_API_KEY' } },
-    },
+    // 独立插件卸载后 llm-sub2api 命名空间不会再注册，迁移必须只依赖遗留 Provider。
     'llm-pi-ai': {
       providers: {
-        'sub2api-openai': { apiKeyEnv: 'SUB2API_OPENAI_API_KEY', models: [{ id: 'gpt-5.6-sol', contextWindow: 1_050_000 }] },
+        'sub2api-openai': { apiKeyEnv: 'SUB2API_OPENAI_API_KEY', baseURL: 'https://legacy.example.com/v1', models: [{ id: 'gpt-5.6-sol', contextWindow: 1_050_000 }, { id: 'gpt-image-2', reasoningEfforts: false }] },
         'sub2api-claude': { models: [{ id: 'claude-test' }] },
         'zai-coding-cn': { models: [{ id: 'glm-5.3' }] },
       },

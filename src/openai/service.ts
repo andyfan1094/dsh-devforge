@@ -151,13 +151,15 @@ export class OpenAiGatewayService {
 
   /** 启动时迁移旧 Sub2API OpenAI 配置并建立新路由；只迁移凭据引用。 */
   async ensureProvider(): Promise<OpenAiGatewayStatus> {
-    const legacyProvider = await this.importLegacyConfig()
+    const migration = this.readLegacyConfig()
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const current = section?.providers?.[OPENAI_PROVIDER_ID]
     const currentModels = Array.isArray(current?.models) ? current.models as Array<Record<string, unknown>> : []
-    const legacyModels = Array.isArray(legacyProvider?.models) ? legacyProvider.models as Array<Record<string, unknown>> : []
+    const legacyModels = Array.isArray(migration.provider?.models) ? migration.provider.models as Array<Record<string, unknown>> : []
     const models = currentModels.length > 0 ? currentModels : legacyModels
+    // 先建立新 Provider 并清理旧路由，再持久化天工造梦配置。后者会触发热更新，不能放在迁移中间。
     if (this.config.baseURL.trim() !== '' && models.length > 0) await this.writeProvider(models, true)
+    if (migration.changed) await this.writeDevforgeConfig(this.config)
     return await this.status()
   }
 
@@ -187,29 +189,35 @@ export class OpenAiGatewayService {
     return new OpenAiGatewayClient(this.config.baseURL, () => this.resolveApiKey(), this.config.timeoutMs)
   }
 
-  /** 把旧 llm-sub2api 配置映射到天工造梦；不读取或复制 Key 明文。 */
-  private async importLegacyConfig(): Promise<Record<string, unknown> | undefined> {
+  /** 把旧 llm-sub2api 或其 llm-pi-ai Provider 映射到天工造梦；不读取或复制 Key 明文。 */
+  private readLegacyConfig(): { provider?: Record<string, unknown>; changed: boolean } {
     const legacy = this.ctx.settings.get(LEGACY_SUB2API_NAMESPACE) as LegacySub2ApiSection | undefined
     const llm = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const legacyProvider = llm?.providers?.['sub2api-openai']
-    if (legacy === undefined && legacyProvider === undefined) return undefined
+    if (legacy === undefined && legacyProvider === undefined) return { changed: false }
+    const providerBaseURL = typeof legacyProvider?.baseURL === 'string' ? legacyProvider.baseURL.replace(/\/v1\/?$/i, '') : ''
     const baseURL = this.config.baseURL !== ''
       ? this.config.baseURL
-      : typeof legacy?.baseURL === 'string' ? normalizeOpenAiBaseURL(legacy.baseURL) : ''
+      : typeof legacy?.baseURL === 'string' ? normalizeOpenAiBaseURL(legacy.baseURL) : normalizeOpenAiBaseURL(providerBaseURL)
     const legacyApiKeyEnv = legacy?.providers?.openai?.apiKeyEnv
+    const providerApiKeyEnv = legacyProvider?.apiKeyEnv
     const apiKeyEnv = this.config.apiKeyEnv !== DEFAULT_API_KEY_ENV
       ? this.config.apiKeyEnv
-      : typeof legacyApiKeyEnv === 'string' && legacyApiKeyEnv !== '' ? legacyApiKeyEnv : this.config.apiKeyEnv
+      : typeof legacyApiKeyEnv === 'string' && legacyApiKeyEnv !== ''
+        ? legacyApiKeyEnv
+        : typeof providerApiKeyEnv === 'string' && providerApiKeyEnv !== '' ? providerApiKeyEnv : this.config.apiKeyEnv
     const legacyImageModel = legacy?.tools?.generate?.model
+    const providerModels = Array.isArray(legacyProvider?.models) ? legacyProvider.models as Array<Record<string, unknown>> : []
+    const inferredImageModel = providerModels
+      .map((model) => typeof model.id === 'string' ? model.id : '')
+      .find((id) => /gpt-image|dall-e|imagen|flux|seedream/i.test(id)) ?? ''
     const imageModel = this.config.imageModel !== ''
       ? this.config.imageModel
-      : typeof legacyImageModel === 'string' ? legacyImageModel : ''
+      : typeof legacyImageModel === 'string' && legacyImageModel !== '' ? legacyImageModel : inferredImageModel
     const next = { ...this.config, baseURL, apiKeyEnv, imageModel }
-    if (!deepEqualJson(next, this.config)) {
-      await this.writeDevforgeConfig(next)
-      Object.assign(this.config, next)
-    }
-    return legacyProvider
+    const changed = !deepEqualJson(next, this.config)
+    if (changed) Object.assign(this.config, next)
+    return { ...(legacyProvider !== undefined ? { provider: legacyProvider } : {}), changed }
   }
 
   /** 写 dsh-devforge.openai 配置；并发冲突时按最新 revision 重试一次。 */
