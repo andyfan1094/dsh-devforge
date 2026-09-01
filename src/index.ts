@@ -275,15 +275,17 @@ export function apply(ctx: Context, config?: Config): void {
   const scheduleAutoEnsureModels = (): void => {
     const token = ++autoEnsureToken
     void (async () => {
+      const ensureProviders = [
+        () => openAiService.ensureProvider(),
+        () => arkService.ensureModels(),
+        () => zhipuService.ensureModels(),
+        () => minimaxService.ensureModels(),
+      ]
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (token !== autoEnsureToken) return
-        try {
-          await arkService.ensureModels()
-          await zhipuService.ensureModels()
-          await minimaxService.ensureModels()
-          await openAiService.ensureProvider()
-          return
-        } catch { /* llm-pi-ai 尚未就绪或并发冲突：延迟重试，最终放弃并等待下次同步。 */ }
+        // 各服务商独立结算：某一家无凭据或设置冲突时，不能阻塞其它 Provider 的迁移与补齐。
+        const results = await Promise.allSettled(ensureProviders.map(async (ensure) => await ensure()))
+        if (results.every((result) => result.status === 'fulfilled')) return
         await new Promise((resolve) => setTimeout(resolve, 5_000))
       }
     })()
