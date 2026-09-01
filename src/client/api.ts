@@ -13,6 +13,7 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
+import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -168,6 +169,35 @@ export class DevforgeApi {
       body: JSON.stringify({ id, action: 'cancel' }),
     }))
     return data.job
+  }
+
+  /** 项目面板：项目清单。 */
+  async listProjects(): Promise<ProjectEntry[]> {
+    const data = await readJson<{ projects: ProjectEntry[] }>(await fetch(PROJECTS_API.projects))
+    return data.projects
+  }
+
+  /** 项目面板：保存（新增或更新）一个项目。 */
+  async saveProject(entry: Record<string, unknown>): Promise<ProjectEntry> {
+    const data = await readJson<{ project: ProjectEntry }>(await fetch(PROJECTS_API.projects, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(entry),
+    }))
+    return data.project
+  }
+
+  /** 项目面板：删除一个项目。 */
+  async deleteProject(id: string): Promise<void> {
+    await readJson(await fetch(PROJECTS_API.projectItem + '?id=' + encodeURIComponent(id), { method: 'DELETE' }))
+  }
+
+  /** 项目面板：检测项目路径（Git 仓库、远端与分支）。 */
+  async detectProject(path: string): Promise<ProjectDetectResult> {
+    const data = await readJson<{ detect: ProjectDetectResult }>(
+      await fetch(PROJECTS_API.projectDetect + '?path=' + encodeURIComponent(path)),
+    )
+    return data.detect
   }
 
   /** 请求本机 DSH Web 重启；成功后当前连接会短暂断开。 */

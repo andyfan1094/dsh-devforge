@@ -56,6 +56,7 @@ import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
+import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -124,6 +125,8 @@ export interface Config {
   ark?: ArkCapabilityConfig
   /** OpenAI 兼容中转站、聊天模型目录与全局生图工具。 */
   openai?: OpenAiCapabilityConfig
+  /** 项目约束上下文注入子配置。 */
+  constraints?: Partial<ConstraintsConfig>
 }
 
 /** 配置默认值。 */
@@ -178,6 +181,10 @@ export const Config = z.object({
     imageModel: z.string().default('').description('generate_image 使用的生图模型'),
     timeoutMs: z.number().min(1000).max(600000).default(300000).description('中转站生图请求超时（毫秒）'),
   }).description('OpenAI 兼容中转站配置'),
+  constraints: z.object({
+    enabled: z.boolean().default(true).description('项目约束注入总开关'),
+    fullTextPaths: z.array(z.string()).default(CONSTRAINTS_DEFAULT_PATHS).description('开发仓库路径清单：会话工作目录命中任一前缀即从首轮回注约束全文'),
+  }).description('项目约束上下文注入配置（三层：常驻摘要保底/仓库信号全文/开发动作升级全文）'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -251,6 +258,10 @@ export function apply(ctx: Context, config?: Config): void {
         apiKeyEnv: value.openai?.apiKeyEnv ?? storedOpenAi.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
         imageModel: value.openai?.imageModel ?? storedOpenAi.imageModel ?? '',
         timeoutMs: value.openai?.timeoutMs ?? storedOpenAi.timeoutMs ?? 300000,
+      },
+      constraints: {
+        enabled: value.constraints?.enabled ?? true,
+        fullTextPaths: value.constraints?.fullTextPaths?.length ? value.constraints.fullTextPaths : CONSTRAINTS_DEFAULT_PATHS,
       },
     }
   }
@@ -346,6 +357,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeMiniMaxHubTools: (() => void) | undefined
   let disposeOpenAiTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
+  let disposeConstraints: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
@@ -364,6 +376,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeMiniMaxHubTools?.(); disposeMiniMaxHubTools = undefined
     disposeOpenAiTools?.(); disposeOpenAiTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
+    disposeConstraints?.(); disposeConstraints = undefined
     backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
@@ -384,6 +397,21 @@ export function apply(ctx: Context, config?: Config): void {
     safeActivate(ctx, 'CNB 备份调度', () => backupScheduler.restart())
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
+    }
+    // 项目约束三层注入：常驻摘要保底；cwd 命中开发仓库或出现开发动作时升级全文（0.11.0）。
+    if (value.constraints?.enabled) {
+      disposeConstraints = ctx.effect(() => {
+        const service = new ConstraintInjectionService()
+        safeActivate(ctx, '项目约束注入', () => service.start(ctx, () => {
+          // 每次装配动态求值：配置热更新即时生效；局部变量保证可选链收窄。
+          const constraints = resolve().constraints
+          return {
+            enabled: constraints?.enabled ?? true,
+            fullTextPaths: constraints?.fullTextPaths?.length ? constraints.fullTextPaths : CONSTRAINTS_DEFAULT_PATHS,
+          }
+        }))
+        return () => service.dispose()
+      }, 'dsh-devforge: constraints')
     }
     disposeRoutes = ctx.effect(() => {
       const disposers = routes.map((route) => ctx.webServer.register(route))

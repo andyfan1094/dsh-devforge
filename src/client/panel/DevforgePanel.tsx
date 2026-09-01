@@ -8,9 +8,10 @@ import type { StandardDetail, StandardSummary } from '../../protocol.ts'
 import type { PanelController } from './controller.ts'
 import { BrowserTab } from './BrowserTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
+import { ProjectsTab } from './ProjectsTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconRepo, IconFeishu, IconTiangong } from './icons.tsx'
+import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -23,7 +24,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型。 */
-type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'repos' | 'feishu'
+type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'projects' | 'repos' | 'feishu'
 
 /** 主面板组件。 */
 export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Element {
@@ -138,6 +139,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}><IconBrowser />浏览器</button>
         <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}><IconServer />远程运维</button>
+        <button type="button" role="tab" aria-selected={tab === 'projects'} data-active={tab === 'projects' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('projects') }}><IconProject />项目</button>
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
         <span className={css['toolbarSpacer']} />
@@ -180,6 +182,8 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}
 
+
+        {tab === 'projects' && <ProjectsTab api={api} />}
 
         {tab === 'repos' && <ReposTab api={api} />}
 

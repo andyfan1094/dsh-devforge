@@ -11,6 +11,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
+import { detectProjectGit, listProjects, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
 import { createRequire } from 'node:module'
 
 /** 插件版本号（供面板标题展示）。 */
@@ -162,6 +163,52 @@ export function makeRoutes(engine: ForgeEngine, standards: import('./standards.t
         const job = engine.cancelJob(id)
         if (!job) { writeJson(res, 404, { ok: false, error: 'unknown job: ' + id }); return }
         writeJson(res, 200, { ok: true, job })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method === 'GET') {
+          writeJson(res, 200, { ok: true, projects: listProjects() })
+          return
+        }
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'GET/POST only' }); return }
+        const body = await readJsonBody(req)
+        if (!body) { writeJson(res, 400, { ok: false, error: 'invalid JSON body' }); return }
+        const invalid = validateProjectPayload(body)
+        if (invalid !== undefined) { writeJson(res, 400, { ok: false, error: invalid }); return }
+        try {
+          writeJson(res, 200, { ok: true, project: saveProject(body) })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/item',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'DELETE') { writeJson(res, 405, { ok: false, error: 'DELETE only' }); return }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const id = url.searchParams.get('id') ?? ''
+        if (id === '') { writeJson(res, 400, { ok: false, error: 'id 必填' }); return }
+        const removed = removeProject(id)
+        if (!removed) { writeJson(res, 404, { ok: false, error: 'unknown project: ' + id }); return }
+        writeJson(res, 200, { ok: true })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/detect',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const result = detectProjectGit(url.searchParams.get('path') ?? '')
+        writeJson(res, 200, { ok: true, detect: result })
       },
     },
   ]
