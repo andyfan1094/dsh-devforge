@@ -4,12 +4,13 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { decryptBackupContainer, encryptBackupContainer, BackupCryptoError } from '../src/backup/crypto.ts'
 import { buildBackupContainer, parseBackupContainer } from '../src/backup/snapshot.ts'
+import { parseBackupCommitLogLine, readBackupSettings, restoreFromContainer, selectLatestPeerCommit, writeBackupSettings } from '../src/backup/backup.ts'
 
 const SAVED_HOME = process.env.DSH_HOME
 
@@ -62,6 +63,58 @@ test('备份容器组装：store.db 快照可打开且含数据、飞书配置�
     snapDb.close()
     rmSync(dir, { recursive: true, force: true })
   } finally {
+    // Windows 下必须先关闭 SQLite 单例连接，否则 WAL/SHM 句柄会导致临时目录删除报 EBUSY。
+    const { closeDb } = await import('../src/store/db.ts')
+    closeDb()
+    rmSync(home, { recursive: true, force: true })
+    process.env.DSH_HOME = SAVED_HOME
+  }
+})
+
+test('双向同步：解析 commit 元数据并跳过本机最新提交', () => {
+  const localSha = 'a'.repeat(40)
+  const peerSha = 'b'.repeat(40)
+  const log = [
+    localSha + '\t备份：2026-09-01 DESKTOP-1PEEUML（2 文件，50606 字节）',
+    peerSha + '\t备份：2026-09-01 andyfandeMacBook-Air.local（2 文件，50617 字节）',
+  ].join('\n')
+
+  assert.deepEqual(parseBackupCommitLogLine(log.split('\n')[0]), {
+    sha: localSha,
+    machine: 'DESKTOP-1PEEUML',
+    size: 50606,
+  })
+  assert.equal(selectLatestPeerCommit(log, 'desktop-1peeuml')?.sha, peerSha)
+  assert.equal(selectLatestPeerCommit(log.split('\n')[0], 'DESKTOP-1PEEUML'), undefined)
+  assert.equal(parseBackupCommitLogLine('普通提交'), undefined)
+})
+
+test('双向同步：恢复其他机器 store.db 时保留本机 backup.settings', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'backup-preserve-settings-'))
+  const remotePath = join(home, 'remote.db')
+  process.env.DSH_HOME = home
+  try {
+    const { closeDb, getDb, putSettings } = await import('../src/store/db.ts')
+    const localSettings = { enabled: true, accountAlias: 'cnb', repo: 'owner/backup', interval: '15m' as const }
+    const remoteSettings = { enabled: false, accountAlias: '', repo: '', interval: '1h' as const }
+    writeBackupSettings(localSettings)
+
+    const remoteDb = getDb(remotePath)
+    putSettings(remoteDb, 'backup.settings', remoteSettings)
+    closeDb(remotePath)
+
+    await restoreFromContainer({
+      magic: 'DFB1-JSON',
+      created_at: Date.now(),
+      machine: 'peer-machine',
+      files: { 'store.db': readFileSync(remotePath).toString('base64') },
+    })
+    assert.deepEqual(readBackupSettings(), localSettings)
+    closeDb()
+  } finally {
+    const { closeDb } = await import('../src/store/db.ts')
+    closeDb()
+    closeDb(remotePath)
     rmSync(home, { recursive: true, force: true })
     process.env.DSH_HOME = SAVED_HOME
   }

@@ -17,8 +17,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, statSync } from 'node:fs'
-import { hostname, homedir } from 'node:os'
+import { hostname } from 'node:os'
 import { join } from 'node:path'
+import { dshHome } from '../remote/shared/dsh-home.ts'
 import { GitRunner } from '../cnb/git.ts'
 import { CnbStore, type StoredAccount } from '../cnb/store.ts'
 import { CnbApi } from '../cnb/cnb-api.ts'
@@ -48,6 +49,14 @@ export interface BackupState {
   lastSize?: number
   lastError?: string
   consecutiveFailures?: number
+  /** 最近一次从其他机器成功同步的时间。 */
+  lastPullAt?: number
+  /** 最近一次从其他机器成功同步的 commit SHA，防止重复覆盖。 */
+  lastPulledSha?: string
+  /** 最近一次同步来源机器名。 */
+  lastPulledMachine?: string
+  /** 最近一次拉取失败原因；成功后清除。 */
+  lastPullError?: string
 }
 
 const SETTINGS_DOMAIN = 'backup.settings'
@@ -58,7 +67,7 @@ const SETTINGS_DOMAIN = 'backup.settings'
  * 状态仅为本机运行信息，不进备份容器。
  */
 function statePath(): string {
-  return join(homedir(), '.dsh', 'devforge', 'backup-state.json')
+  return join(dshHome(), 'devforge', 'backup-state.json')
 }
 
 /** 间隔 → 毫秒。 */
@@ -109,7 +118,7 @@ function writeBackupState(patch: Partial<BackupState>): BackupState {
 
 /** 密码文件路径（0600；仅本机，供无人值守定时同步）。 */
 function secretPath(): string {
-  return join(homedir(), '.dsh', 'devforge', 'backup-secret.json')
+  return join(dshHome(), 'devforge', 'backup-secret.json')
 }
 
 /** 读取备份密码（未设置返回 undefined）。 */
@@ -179,7 +188,7 @@ export async function ensurePrivateRepo(account: StoredAccount, repo: string): P
 
 /** 工作副本目录。 */
 function workDir(): string {
-  return join(homedir(), '.dsh', 'devforge', 'backup-work')
+  return join(dshHome(), 'devforge', 'backup-work')
 }
 
 const REPO_HTTPS_PREFIX = 'https://cnb.cool/'
@@ -319,17 +328,57 @@ export async function fetchAndDecryptLatest(password: string): Promise<ReturnTyp
   return parseBackupContainer(await decryptBackupContainer(container, password))
 }
 
+/** 备份 commit 的脱敏元数据。 */
+export interface BackupCommitSummary {
+  sha: string
+  machine: string
+  size: number
+}
+
 /**
- * 从远端拉取最新备份并用其覆盖本机（跳过本机上传）。
- *
- * 与「恢复」路由的区别：本函数自带拉取动作（git pull 由 fetchAndDecryptLatest 内部
- * 保证工作副本最新），无需前端先列清单再二次调用。
- *
- * 安全边界：dryRun=true 只回执清单，不触碰本机任何文件；实跑复用
- * restoreFromContainer 的闭环流程（原文件先落 .pre-restore.bak），
- * 完成后必须重启 DSH 才能让其他进程的旧库连接收敛。
- *
- * 远端尚无备份时不抛错，回执 noRemote=true（面板提示「无需同步」）。
+ * 解析 backupNow 生成的 commit message：
+ * <sha>\t备份：YYYY-MM-DD <machine>（N 文件，N 字节）
+ */
+export function parseBackupCommitLogLine(line: string): BackupCommitSummary | undefined {
+  const separator = line.indexOf('\t')
+  if (separator <= 0) return undefined
+  const sha = line.slice(0, separator).trim()
+  const subject = line.slice(separator + 1).trim()
+  if (!/^[0-9a-f]{7,64}$/i.test(sha)) return undefined
+  const match = /^备份：\d{4}-\d{2}-\d{2} (.+?)（(\d+) 文件，(\d+) 字节）$/u.exec(subject)
+  if (match === null) return undefined
+  return { sha, machine: match[1], size: Number(match[3]) }
+}
+
+/** 从按新到旧排列的 git log 中选择最新的非本机备份。 */
+export function selectLatestPeerCommit(log: string, localMachine = hostname()): BackupCommitSummary | undefined {
+  const local = localMachine.trim().toLowerCase()
+  for (const line of log.split(/\r?\n/)) {
+    const parsed = parseBackupCommitLogLine(line)
+    if (parsed !== undefined && parsed.machine.trim().toLowerCase() !== local) return parsed
+  }
+  return undefined
+}
+
+/** 从本地工作副本读取指定 commit 的加密备份二进制；不经 UTF-8 字符串转换。 */
+function readEncryptedBackupAtCommit(dir: string, gitExecutable: string, sha: string): Buffer {
+  const result = spawnSync(gitExecutable || 'git', ['show', sha + ':backups/latest.json'], {
+    cwd: dir,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+  })
+  if (result.error !== undefined) throw new Error('无法读取远端备份 commit：' + result.error.message)
+  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+    const detail = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8').trim() : String(result.stderr ?? '')
+    throw new Error('读取远端备份 commit 失败：' + (detail || 'git show 失败'))
+  }
+  return result.stdout
+}
+
+/**
+ * 从远端拉取最新的【非本机】备份并覆盖本机。
+ * dryRun=true 只解密并回执目标 commit，不落盘；已同步过同一 SHA 时返回 upToDate=true。
  */
 export async function syncFromRemote(
   password: string | undefined,
@@ -341,34 +390,56 @@ export async function syncFromRemote(
   }
   const settings = readBackupSettings()
   if (settings.accountAlias === '' || settings.repo === '') throw new Error('备份仓库或 CNB 账号未配置。')
-  const store = new CnbStore()
-  const account = store.findAccount(settings.accountAlias)
-  const runner = new GitRunner(store)
-  await ensureWorkDir(runner, account, settings.repo)
 
-  const remote = await listRemoteBackups()
-  if (remote.length === 0) {
-    return { ok: true, dryRun, files: [], restoredFiles: [], noRemote: true, restartRequired: false }
+  try {
+    const store = new CnbStore()
+    const account = store.findAccount(settings.accountAlias)
+    const runner = new GitRunner(store)
+    await ensureWorkDir(runner, account, settings.repo)
+    const dir = workDir()
+
+    // 工作副本初次 clone 仅 depth=1；扩到最近 100 个 commit 才能跳过本机最新提交。
+    const fetched = await runner.run(['fetch', '--depth', '100', 'origin'], dir, account)
+    if (!fetched.ok) throw new Error('拉取备份历史失败：' + (fetched.stderr || fetched.stdout || '未知错误'))
+    const logged = await runner.run(['log', 'HEAD', '-100', '--pretty=format:%H%x09%s', '--', 'backups/latest.json'], dir)
+    if (!logged.ok) throw new Error('读取备份提交历史失败：' + (logged.stderr || logged.stdout || '未知错误'))
+
+    const target = selectLatestPeerCommit(logged.stdout)
+    if (target === undefined) {
+      return { ok: true, dryRun, files: [], restoredFiles: [], noRemote: true, restartRequired: false }
+    }
+
+    const encrypted = readEncryptedBackupAtCommit(dir, store.settings().gitExecutable || 'git', target.sha)
+    const container = parseBackupContainer(await decryptBackupContainer(encrypted, effectivePassword))
+    if (container.machine.trim().toLowerCase() === hostname().trim().toLowerCase()) {
+      throw new Error('备份 commit 机器标记与容器内容不一致，已拒绝同步。')
+    }
+    const files = Object.keys(container.files)
+    const source = { machine: container.machine, sha: target.sha, size: encrypted.length, createdAt: container.created_at }
+    const upToDate = readBackupState().lastPulledSha === target.sha
+    if (dryRun || upToDate) {
+      return { ok: true, dryRun, files, restoredFiles: [], source, upToDate, restartRequired: false }
+    }
+
+    const restored = await restoreFromContainer(container)
+    writeBackupState({
+      lastPullAt: Date.now(),
+      lastPulledSha: target.sha,
+      lastPulledMachine: container.machine,
+      lastPullError: undefined,
+    })
+    return { ok: true, dryRun: false, files, restoredFiles: restored.restoredFiles, source, restartRequired: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    writeBackupState({ lastPullError: message })
+    throw error
   }
-  const container = await fetchAndDecryptLatest(effectivePassword)
-  const files = Object.keys(container.files)
-  const head = await runner.run(['rev-parse', 'HEAD'], workDir())
-  const source = {
-    machine: container.machine,
-    sha: head.ok ? head.stdout.trim() : '',
-    size: remote.find(item => item.path === 'backups/latest.json')?.size ?? 0,
-    createdAt: container.created_at,
-  }
-  if (dryRun) {
-    return { ok: true, dryRun: true, files, restoredFiles: [], source, restartRequired: false }
-  }
-  const result = await restoreFromContainer(container)
-  return { ok: true, dryRun: false, files, restoredFiles: result.restoredFiles, source, restartRequired: true }
 }
-
 /** 用解密后的容器恢复本机数据（本进程内闭环；完成后必须重启 Host）。 */
 export async function restoreFromContainer(container: ReturnType<typeof parseBackupContainer>): Promise<{ restoredFiles: string[]; restarted: false }> {
   const restoredFiles: string[] = []
+  // 备份仓库、账号、密码与调度开关属于本机同步通道配置，不能被另一台机器的 store.db 覆盖。
+  const localBackupSettings = readBackupSettings()
   // 1) store.db：现有文件先备份 → closeDb 释放本进程连接 → 替换（含 WAL/SHM 清理）→ 重开
   const storeDbPath = defaultStoreDbPath()
   if (existsSync(storeDbPath)) {
@@ -380,6 +451,7 @@ export async function restoreFromContainer(container: ReturnType<typeof parseBac
     rmSync(storeDbPath + '-wal', { force: true })
     rmSync(storeDbPath + '-shm', { force: true })
     getDb() // 重开连接（新数据）
+    writeBackupSettings(localBackupSettings)
     restoredFiles.push('store.db')
   }
   // 2) 飞书配置（原文件先备份）
@@ -404,7 +476,7 @@ export async function restoreFromContainer(container: ReturnType<typeof parseBac
 }
 
 function defaultStoreDbPath(): string {
-  return join(homedir(), '.dsh', 'devforge', 'store.db')
+  return join(dshHome(), 'devforge', 'store.db')
 }
 
 /** 读取 credential 镜像表（ref + value；供恢复回写 yaml）。 */

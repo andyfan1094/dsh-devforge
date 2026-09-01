@@ -10,6 +10,7 @@ import { CnbStore } from '../src/cnb/store.ts'
 import { CnbApi } from '../src/cnb/cnb-api.ts'
 import { GitRunner } from '../src/cnb/git.ts'
 import { CnbEngine, toCloneUrl } from '../src/cnb/engine.ts'
+import { closeDb } from '../src/store/db.ts'
 
 /** 极简 JSON 应答器：记录最近请求并回放预设响应。 */
 function startMock(respond: (url: string) => { status?: number; payload: unknown }) {
@@ -41,7 +42,7 @@ test('CNB store：写入账号并脱敏返回，默认账号可省略别名', as
     assert.equal(store.findAccount().token, 'tok_abc123')
     assert.equal(store.findAccount('main').alias, 'main')
     assert.equal(store.listAccounts()[0].username, undefined)
-  } finally { await rm(dir, { recursive: true, force: true }) }
+  } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('CNB store：findOptionalAccount 无账号返回 undefined、别名给错抛错', async () => {
@@ -53,7 +54,7 @@ test('CNB store：findOptionalAccount 无账号返回 undefined、别名给错�
     store.upsertAccount({ alias: 'a', token: 't1' })
     assert.throws(() => store.findOptionalAccount('ghost'), /ghost/)
     assert.equal(store.findOptionalAccount('a')?.alias, 'a')
-  } finally { await rm(dir, { recursive: true, force: true }) }
+  } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('toCloneUrl：slug（含多段嵌套）/ cnb.cool 前缀 / 完整 URL', () => {
@@ -79,7 +80,7 @@ test('CnbApi：请求携带 Bearer 令牌，test 回填用户名', async () => {
     assert.equal(result.username, 'cnb.bcUlfu4jhLA')
     assert.equal(mock.calls[0].auth, 'Bearer tok_xyz')
     assert.equal(store.listAccounts()[0].username, 'cnb.bcUlfu4jhLA')
-  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+  } finally { await mock.close(); closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('CnbApi：listRepos 分页聚合、私有判定与 query 过滤', async () => {
@@ -105,7 +106,7 @@ test('CnbApi：listRepos 分页聚合、私有判定与 query 过滤', async () 
     const filtered = await api.listRepos(undefined, '天工造梦')
     assert.equal(filtered.length, 1)
     assert.equal(filtered[0].name, 'dsh-devforge')
-  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+  } finally { await mock.close(); closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('CnbApi：错误响应抛出可读消息（含状态码）', async () => {
@@ -118,7 +119,7 @@ test('CnbApi：错误响应抛出可读消息（含状态码）', async () => {
     const result = await api.test()
     assert.equal(result.ok, false)
     assert.match(result.error ?? '', /invalid token \(401\)/)
-  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+  } finally { await mock.close(); closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('GitRunner：stdout/command 中的令牌与 Basic 凭据均被脱敏', async () => {
@@ -136,7 +137,7 @@ test('GitRunner：stdout/command 中的令牌与 Basic 凭据均被脱敏', asyn
     assert.ok(!result.stdout.includes(basic), 'stdout 不含 Basic 凭据')
     assert.ok(!result.command.includes(token), 'command 不含令牌明文')
     assert.ok(result.stdout.includes('[redacted-token]'))
-  } finally { await rm(dir, { recursive: true, force: true }) }
+  } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('CnbEngine：push 默认关闭、commit 必须有说明、clone 目标已存在报错', async () => {
@@ -155,5 +156,5 @@ test('CnbEngine：push 默认关闭、commit 必须有说明、clone 目标已�
     const pushResult = await engine.action({ action: 'push', repoPath })
     assert.equal(pushResult.ok, false)
     assert.ok(!/推送默认关闭/.test((pushResult.error ?? '') + pushResult.stderr))
-  } finally { await rm(dir, { recursive: true, force: true }) }
+  } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })

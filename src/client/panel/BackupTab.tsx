@@ -168,6 +168,8 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
       const data = await api.backupSync(syncPassword, false)
       if (data.noRemote === true) {
         setNotice('远端没有其他机器的备份，无需同步。')
+      } else if (data.upToDate === true) {
+        setNotice('已经同步过该机器的最新 commit，无需重复覆盖。')
       } else {
         setNotice('已从 ' + (data.source?.machine ?? '远端') + ' 同步：' + data.restoredFiles.join('、') + '。请重启 DSH 使同步的数据全部生效。')
       }
@@ -212,6 +214,12 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
                     ? '上次推送：' + new Date(state.lastPushAt).toLocaleString() + (state.lastSize !== undefined ? '（' + String(state.lastSize) + ' 字节）' : '')
                     : '从未推送过备份'}
                   {state?.consecutiveFailures !== undefined && state.consecutiveFailures > 0 ? ' · 连续失败 ' + String(state.consecutiveFailures) + ' 次' : ''}
+                </span>
+                <span className={css['resourceMessage']}>
+                  {state?.lastPullAt !== undefined
+                    ? '上次从 ' + (state.lastPulledMachine ?? '其他机器') + ' 同步：' + new Date(state.lastPullAt).toLocaleString()
+                    : '尚未从其他机器同步'}
+                  {state?.lastPullError !== undefined ? ' · 最近失败：' + state.lastPullError : ''}
                 </span>
               </div>
               <span className={css['transportBadge']} data-transport={settings?.enabled === true ? 'ssh' : 'winrm'}>{settings?.enabled === true ? '运行中' : '停用'}</span>
@@ -289,7 +297,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
         </label>
         <div className={css['fieldActions']}>
           <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void doSyncPreview() }}>预览同步</button>
-          {syncPreview !== undefined && syncPreview.noRemote !== true && (
+          {syncPreview !== undefined && syncPreview.noRemote !== true && syncPreview.upToDate !== true && (
             <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSyncConfirm() }}>确认同步</button>
           )}
         </div>
@@ -297,7 +305,9 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
           <div className={css['resourceMessage']}>
             {syncPreview.noRemote === true
               ? '远端没有其他机器的备份，无需同步。'
-              : '将同步 ' + (syncPreview.source?.machine ?? '?') + ' 的 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '(' + String(syncPreview.source?.size ?? 0) + ' 字节，备份于 ' + new Date(syncPreview.source?.createdAt ?? 0).toLocaleString() + ')'}
+              : syncPreview.upToDate === true
+                ? '已经同步过 ' + (syncPreview.source?.machine ?? '?') + ' 的最新 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '。'
+                : '将同步 ' + (syncPreview.source?.machine ?? '?') + ' 的 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '（' + String(syncPreview.source?.size ?? 0) + ' 字节，备份于 ' + new Date(syncPreview.source?.createdAt ?? 0).toLocaleString() + '）'}
           </div>
         )}
       </div>

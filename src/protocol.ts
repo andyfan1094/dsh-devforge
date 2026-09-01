@@ -40,6 +40,10 @@ export interface BackupStatus {
     lastSize?: number
     lastError?: string
     consecutiveFailures?: number
+    lastPullAt?: number
+    lastPulledSha?: string
+    lastPulledMachine?: string
+    lastPullError?: string
   }
   /** 本机是否已设置备份密码（不回显密码本身）。 */
   passwordSet: boolean
@@ -58,8 +62,10 @@ export interface BackupSyncResult {
   restoredFiles: string[]
   /** 远端最新备份的来源机器、commit、体积与时间戳；远端无备份时缺省。 */
   source?: { machine: string; sha: string; size: number; createdAt: number }
-  /** 远端没有任何备份时为 true（面板据此提示「无需同步」而非报错）。 */
+  /** 远端没有其他机器的备份时为 true（面板据此提示「无需同步」而非报错）。 */
   noRemote?: boolean
+  /** 目标 commit 已经同步过，避免重复覆盖。 */
+  upToDate?: boolean
   /** 实际写回后为 true：需重启 DSH 才能让其他进程的旧库连接收敛。 */
   restartRequired: boolean
 }

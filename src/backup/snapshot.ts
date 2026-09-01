@@ -15,7 +15,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { defaultDbPath, getDb } from '../store/db.ts'
 import { DEVFORGE_CREDENTIAL_REFS } from '../store/migrate.ts'
 import { putCredentialMirror } from '../store/db.ts'
-import { homedir } from 'node:os'
+import { dshHome } from '../remote/shared/dsh-home.ts'
 
 /** 备份容器内的文件清单键。 */
 export interface BackupContainer {
@@ -27,12 +27,12 @@ export interface BackupContainer {
 
 /** 飞书配置文件路径（vendored 桥主存；缺失则跳过该项）。 */
 export function feishuStorePath(): string {
-  return join(homedir(), '.dsh', 'dsh-feishu.json')
+  return join(dshHome(), 'dsh-feishu.json')
 }
 
 /** 刷新 coding plan 凭据镜像（yaml 主存当前值 → 库 credential 表）。 */
 export function refreshCredentialMirrors(db: DatabaseSync): void {
-  const yamlPath = join(homedir(), '.dsh', '.credentials.yaml')
+  const yamlPath = join(dshHome(), '.credentials.yaml')
   if (!existsSync(yamlPath)) return
   let raw = ''
   try { raw = readFileSync(yamlPath, 'utf8') } catch { return }
