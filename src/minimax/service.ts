@@ -1,7 +1,8 @@
 /** MiniMax Coding Plan 官方模型路由服务（与智谱 Coding Plan 同构）。 */
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
+import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { MiniMaxApiClient } from './api-client.ts'
 import type { MiniMaxDashboard, MiniMaxStatus } from './protocol.ts'
