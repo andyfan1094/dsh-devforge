@@ -199,12 +199,11 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
         <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
         <div className={css['keyInputRow']}>
           <input
-            type="password"
+            type="password" autoComplete="new-password"
             className={css['keyInput']}
             placeholder={status?.credentialConfigured === true ? '已配置 · 输入新 Key 可覆盖' : '粘贴 MINIMAX_CN_API_KEY（订阅 Key）'}
             value={keyDraft}
             onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
-            autoComplete="off"
             spellCheck={false}
           />
           <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === ''} onClick={() => { void saveKey() }}>{savingKey ? '保存中…' : '保存 Key'}</button>

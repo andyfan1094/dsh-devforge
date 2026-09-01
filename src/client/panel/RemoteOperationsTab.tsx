@@ -177,13 +177,13 @@ export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Elem
           {form.transport === 'ssh' && form.authKind === 'password' && (
             <label className={css['field']}>
               <span>密码</span>
-              <input type="password" value={form.password} onChange={event => updateForm({ password: event.target.value })} />
+              <input type="password" autoComplete="new-password" value={form.password} onChange={event => updateForm({ password: event.target.value })} />
             </label>
           )}
           {form.transport === 'winrm' && (
             <label className={css['field']}>
               <span>密码</span>
-              <input type="password" value={form.password} onChange={event => updateForm({ password: event.target.value })} />
+              <input type="password" autoComplete="new-password" value={form.password} onChange={event => updateForm({ password: event.target.value })} />
             </label>
           )}
           {form.transport === 'ssh' && form.authKind === 'key' && (
@@ -194,7 +194,7 @@ export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Elem
               </label>
               <label className={css['field']}>
                 <span>私钥口令（可选）</span>
-                <input type="password" value={form.passphrase} onChange={event => updateForm({ passphrase: event.target.value })} />
+                <input type="password" autoComplete="new-password" value={form.passphrase} onChange={event => updateForm({ passphrase: event.target.value })} />
               </label>
             </>
           )}

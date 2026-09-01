@@ -241,12 +241,11 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
           <div className={css['metricRow']}><span>受管凭据引用</span><strong>{apiKeyEnv}</strong></div>
           <div className={css['keyInputRow']}>
             <input
-              type="password"
+              type="password" autoComplete="new-password"
               className={css['keyInput']}
               placeholder={status?.credentialConfigured ? '已配置 · 输入新 Key 可覆盖' : '粘贴 ark- 开头的 Agent Plan Key'}
               value={keyDraft}
               onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
-              autoComplete="off"
               spellCheck={false}
             />
             <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === ''} onClick={() => { void saveKey() }}>{savingKey ? '保存中…' : '保存 Plan Key'}</button>
@@ -280,21 +279,19 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
           <div className={css['metricRow']}><span>{status?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY'}</span><strong data-state={status?.usageSecretKeyConfigured ? 'ok' : 'pending'}>{status?.usageSecretKeyConfigured ? '已配置' : '待配置'}</strong></div>
           <div className={css['credentialPair']}>
             <input
-              type="password"
+              type="password" autoComplete="new-password"
               className={css['keyInput']}
               placeholder={status?.usageAccessKeyConfigured ? 'Access Key 已配置 · 输入新值可覆盖' : '粘贴 Access Key'}
               value={accessKeyDraft}
               onChange={(event) => { setAccessKeyDraft(event.target.value); setNotice(null) }}
-              autoComplete="off"
               spellCheck={false}
             />
             <input
-              type="password"
+              type="password" autoComplete="new-password"
               className={css['keyInput']}
               placeholder={status?.usageSecretKeyConfigured ? 'Secret Key 已配置 · 输入新值可覆盖' : '粘贴 Secret Key'}
               value={secretKeyDraft}
               onChange={(event) => { setSecretKeyDraft(event.target.value); setNotice(null) }}
-              autoComplete="off"
               spellCheck={false}
             />
             <button type="button" className={css['ghostButton']} disabled={savingUsageKeys || accessKeyDraft.trim() === '' || secretKeyDraft.trim() === '' || status?.usageCredentialsWritable === false} onClick={() => { void saveUsageCredentials() }}>{savingUsageKeys ? '验证中…' : '保存并验证'}</button>

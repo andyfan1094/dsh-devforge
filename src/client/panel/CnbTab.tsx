@@ -244,7 +244,7 @@ export function CnbTab({ api }: CnbTabProps): JSX.Element {
               </label>
               <label className={css['field']}>
                 <span className={css['fieldLabel']}>访问令牌</span>
-                <input className={css['input']} type="password" value={accountToken} onChange={(event) => { setAccountToken(event.target.value) }} placeholder="cnb.cool → 个人设置 → 访问令牌 创建；编辑时留空保留原值" autoComplete="new-password" />
+                <input className={css['input']} type="password" autoComplete="new-password" value={accountToken} onChange={(event) => { setAccountToken(event.target.value) }} placeholder="cnb.cool → 个人设置 → 访问令牌 创建；编辑时留空保留原值" />
               </label>
               <label className={css['field']}>
                 <span className={css['fieldLabel']}>CNB API 地址</span>

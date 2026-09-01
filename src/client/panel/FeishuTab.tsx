@@ -207,8 +207,8 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
           <h3 className={css['sectionTitle']}>应用连接</h3>
           <div className={css['form']}>
             <label className={css['checkRow']}><input type="checkbox" checked={config.enabled} onChange={(event) => { setConfig({ ...config, enabled: event.target.checked }) }} />启用飞书长连接</label>
-            <label className={css['field']}><span className={css['fieldLabel']}>App ID</span><input className={css['input']} value={config.appId} onChange={(event) => { setConfig({ ...config, appId: event.target.value }) }} placeholder="cli_xxxxxxxxxxxxxxxx" /></label>
-            <label className={css['field']}><span className={css['fieldLabel']}>App Secret</span><input className={css['input']} type="password" value={appSecret} onChange={(event) => { setAppSecret(event.target.value) }} placeholder="留空保留已保存密钥" autoComplete="new-password" /><span className={css['sectionHint']}>{config.appSecretMask}</span></label>
+            <label className={css['field']}><span className={css['fieldLabel']}>App ID</span><input className={css['input']} autoComplete="off" value={config.appId} onChange={(event) => { setConfig({ ...config, appId: event.target.value }) }} placeholder="cli_xxxxxxxxxxxxxxxx" /></label>
+            <label className={css['field']}><span className={css['fieldLabel']}>App Secret</span><input className={css['input']} type="password" autoComplete="new-password" value={appSecret} onChange={(event) => { setAppSecret(event.target.value) }} placeholder="留空保留已保存密钥" /><span className={css['sectionHint']}>{config.appSecretMask}</span></label>
             <label className={css['field']}><span className={css['fieldLabel']}>开放平台地址</span><input className={css['input']} value={config.domain} onChange={(event) => { setConfig({ ...config, domain: event.target.value }) }} /></label>
             <label className={css['field']}><span className={css['fieldLabel']}>独立会话工作目录</span><input className={css['input']} value={config.cwd} onChange={(event) => { setConfig({ ...config, cwd: event.target.value }) }} placeholder="D:/项目" /></label>
           </div>

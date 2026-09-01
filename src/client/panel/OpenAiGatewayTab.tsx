@@ -103,16 +103,15 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
         <div className={css['metricRow']}><span>聊天模型路由</span><strong data-state={routeReady ? 'ok' : 'pending'}>{routeReady ? 'openai-gateway 已就绪' : '待获取模型'}</strong></div>
         <div className={css['metricRow']}><span>受管凭据引用</span><strong>{status?.apiKeyEnv ?? apiKeyEnv}</strong></div>
         <div className={css['keyInputRow']}>
-          <input className={css['keyInput']} type="url" placeholder="https://gateway.example.com 或 …/v1" value={baseURL} onChange={(event) => { setBaseURL(event.target.value); setNotice(null) }} spellCheck={false} />
+          <input className={css['keyInput']} type="url" autoComplete="off" placeholder="https://gateway.example.com 或 …/v1" value={baseURL} onChange={(event) => { setBaseURL(event.target.value); setNotice(null) }} spellCheck={false} />
         </div>
         <div className={css['keyInputRow']}>
           <input
             className={css['keyInput']}
-            type="password"
+            type="password" autoComplete="new-password"
             placeholder={configured ? 'API Key 已配置 · 输入新 Key 可覆盖' : '粘贴中转站 API Key'}
             value={keyDraft}
             onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
-            autoComplete="off"
             spellCheck={false}
           />
           <button type="button" className={css['ghostButton']} disabled={saving || baseURL.trim() === ''} onClick={() => { void save() }}>{saving ? '保存中…' : '保存配置'}</button>

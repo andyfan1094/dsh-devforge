@@ -240,7 +240,7 @@ export function GithubTab({ api }: GithubTabProps): JSX.Element {
               </label>
               <label className={css['field']}>
                 <span className={css['fieldLabel']}>Personal Access Token</span>
-                <input className={css['input']} type="password" value={accountToken} onChange={(event) => { setAccountToken(event.target.value) }} placeholder="编辑账号时留空可保留原 Token" autoComplete="new-password" />
+                <input className={css['input']} type="password" autoComplete="new-password" value={accountToken} onChange={(event) => { setAccountToken(event.target.value) }} placeholder="编辑账号时留空可保留原 Token" />
               </label>
               <label className={css['field']}>
                 <span className={css['fieldLabel']}>GitHub API 地址</span>

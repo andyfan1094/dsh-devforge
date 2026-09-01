@@ -199,11 +199,11 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
             </label>
             <label className={css['field']}>
               <span>6 位备份密码{status.passwordSet ? '（已设置，留空则不修改）' : ''}</span>
-              <input type="password" value={password} onChange={event => setPassword(event.target.value)} maxLength={6} placeholder="6 位" />
+              <input type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} maxLength={6} placeholder="6 位" />
             </label>
             <label className={css['field']}>
               <span>确认密码</span>
-              <input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} maxLength={6} />
+              <input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} maxLength={6} />
             </label>
             <label className={css['field']}>
               <span>同步间隔</span>
@@ -246,7 +246,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
         <div className={css['formGrid']} data-dsh-part="backup-restore">
           <label className={css['field']}>
             <span>6 位备份密码（换电脑恢复时输入）</span>
-            <input type="password" value={restorePassword} onChange={event => setRestorePassword(event.target.value)} maxLength={6} placeholder="6 位" />
+            <input type="password" autoComplete="new-password" value={restorePassword} onChange={event => setRestorePassword(event.target.value)} maxLength={6} placeholder="6 位" />
           </label>
           <div className={css['fieldActions']}>
             <button type="button" className={css['ghostButton']} disabled={busy || restorePassword.length !== 6} onClick={() => { void doPreview() }}>预览远端备份</button>
