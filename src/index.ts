@@ -351,7 +351,6 @@ export function apply(ctx: Context, config?: Config): void {
       // 迁移失败不阻塞插件启动：store 仍会从空库开始，旧文件保留待下次重试。
       ctx.logger.warn('[dsh-devforge] SQLite 迁移失败（不影响启动，旧文件保留）：%s', error instanceof Error ? error.message : String(error))
     }
-    scheduleAutoEnsureModels()
     // CNB 备份调度：enabled 才启动；含启动补跑（距上次推送超间隔立即执行）
     backupScheduler.restart()
     if (value.announceToAgent) {
@@ -373,6 +372,8 @@ export function apply(ctx: Context, config?: Config): void {
     Object.assign(minimaxConfig, value.minimax)
     Object.assign(arkConfig, value.ark)
     Object.assign(openAiConfig, value.openai)
+    // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
+    scheduleAutoEnsureModels()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
     disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled && value.openai?.enabled !== false }, openAiService).dispose
     // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。
