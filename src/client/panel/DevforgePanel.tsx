@@ -36,6 +36,8 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
   const [loaded, setLoaded] = useState(false)
   /** 仅用于打开面板时刷新数据；真正的 view 显隐由 mount.tsx 的 html active CSS 接管。 */
   const [panelOpen, setPanelOpen] = useState(() => controller.getSnapshot().panelOpen)
+  /** 插件版本号，标题旁展示。 */
+  const [version, setVersion] = useState('')
 
   /**
    * 拉取规范数据。首次慢请求期间维持 loaded=false，不能把未返回的数组误解释为空库；
@@ -45,6 +47,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
     try {
       setError('')
       setStandards(await api.listStandards())
+      void api.getDevforgeMeta().then((meta) => { if (meta.version !== '') setVersion(meta.version) }).catch(() => { /* 版本展示失败不影响面板 */ })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -118,7 +121,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
           <span aria-hidden="true">‹</span>
           <span>返回会话</span>
         </button>
-        <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconTiangong size={16} /></span>天工造梦</h2>
+        <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconTiangong size={16} /></span>天工造梦{version !== '' && <span className={css['panelVersion']}>v{version}</span>}</h2>
         <button
           type="button"
           className={css['ghostButton']}

@@ -430,6 +430,12 @@ export class DevforgeApi {
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */
+  /** 读取天工造梦插件元信息（版本号供面板标题展示）。 */
+  async getDevforgeMeta(signal?: AbortSignal): Promise<{ version: string }> {
+    const data = await readJson<{ version?: unknown }>(await fetch('/api/dsh-devforge/meta', { signal }))
+    return { version: typeof data.version === 'string' ? data.version : '' }
+  }
+
   async setCredential(ref: string, value: string): Promise<{ created: boolean; updated: boolean }> {
     return await readJson(await fetch(CREDENTIALS_API.set, {
       method: 'POST',

@@ -11,6 +11,10 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
+import { createRequire } from 'node:module'
+
+/** 插件版本号（供面板标题展示）。 */
+const PLUGIN_VERSION: string = (createRequire(import.meta.url)('../package.json') as { version?: string }).version ?? '0.0.0'
 
 /** JSON 请求体上限。 */
 const MAX_BODY = 256 * 1024
@@ -75,6 +79,15 @@ function guardRestart(req: import('node:http').IncomingMessage, res: import('nod
 /** 组装路由族。 */
 export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore, restartManager: DshWebRestartManager): WebRoute[] {
   return [
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/meta',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        writeJson(res, 200, { ok: true, version: PLUGIN_VERSION })
+      },
+    },
     {
       kind: 'exact',
       path: '/api/dsh-devforge/restart',

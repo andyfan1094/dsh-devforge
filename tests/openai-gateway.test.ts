@@ -4,6 +4,11 @@ import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { OpenAiGatewayClient, OpenAiGatewayError, extractGeneratedImage, normalizeOpenAiBaseURL, openAiApiRoot, parseOpenAiModelList } from '../src/openai/api-client.ts'
 import { buildOpenAiProvider, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// store.db 兜底写入会打开真实默认路径，测试一律隔离到临时 HOME。
+process.env.DSH_HOME = join(tmpdir(), 'dsh-devforge-test-' + String(process.pid))
 
 /** 启动极简 OpenAI 兼容 mock；记录路径、鉴权和请求体。 */
 function startMock(handler: (req: IncomingMessage, body: Record<string, unknown>) => { status?: number; payload: unknown }) {
@@ -68,6 +73,22 @@ test('模型同步：忽略重复 id，遵循中转站返回顺序', () => {
   const synced = syncOpenAiModels([{ id: 'z-old' }], [{ id: 'a' }, { id: 'a' }, { id: 'b' }])
   assert.deepEqual(synced.models.map((model) => model.id), ['a', 'b'])
   assert.deepEqual(synced.removedIds, ['z-old'])
+})
+
+test('openai 配置降级：宿主设置段缺失时读写 store.db 且不报错', async () => {
+  const ctx = {
+    settings: { describe: () => [], mutate: async () => {}, get: () => undefined },
+    credentials: { describe: async () => ({ configured: true, writable: true }), resolve: async () => ({ value: 'k' }) },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+  }
+  const { OpenAiGatewayService } = await import('../src/openai/service.ts')
+  const { getDb, getSettings } = await import('../src/store/db.ts')
+  const service = new OpenAiGatewayService(ctx as never, { enabled: true, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: '', timeoutMs: 300000 })
+  const status = await service.saveConfig({ baseURL: 'https://gw.example.com', imageModel: 'gpt-image-2' })
+  assert.equal(status.baseURL, 'https://gw.example.com')
+  const stored = getSettings(getDb(), 'openai.settings') as Record<string, unknown> | undefined
+  assert.equal(stored?.baseURL, 'https://gw.example.com')
+  assert.equal(stored?.imageModel, 'gpt-image-2')
 })
 
 test('provider：写入 Responses 路由、受管凭据和重试策略', () => {

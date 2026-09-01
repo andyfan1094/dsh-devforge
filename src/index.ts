@@ -27,7 +27,7 @@ import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.t
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
-import { getDb, } from './store/db.ts'
+import { getDb, getSettings } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
@@ -71,6 +71,34 @@ export const inject = [
 
 /** 设置命名空间。 */
 export const DEVFORGE_SETTINGS_NAMESPACE = settingsNamespace('dsh-devforge')
+
+/** 读取 store.db 里的 openai 配置副本；宿主设置段异常时的兜底来源。 */
+function readStoreDbOpenAi(): Partial<OpenAiCapabilityConfig> {
+  try {
+    const stored = getSettings(getDb(), 'openai.settings')
+    return stored && typeof stored === 'object' ? stored as Partial<OpenAiCapabilityConfig> : {}
+  } catch { return {} }
+}
+
+/** 单个能力激活失败不拖垮整段注册/热更新。 */
+function safeActivate(ctx: Context, label: string, fn: () => void): void {
+  try { fn() } catch (error) { ctx.logger?.warn?.('[dsh-devforge] %s 激活失败（已跳过，不影响其他能力）：%s', label, error instanceof Error ? error.message : String(error)) }
+}
+
+/** 设置段就绪自检：宿主竞态导致注册缺失时重试观察并醒目降级日志。 */
+function scheduleSectionReadinessCheck(ctx: Context, tries = 8): void {
+  const timer = setTimeout(() => {
+    try {
+      const ready = ctx.settings.describe().some((item) => item.ns === DEVFORGE_SETTINGS_NAMESPACE)
+      if (ready) ctx.logger?.info?.('[dsh-devforge] 设置段已就绪')
+      else if (tries > 0) scheduleSectionReadinessCheck(ctx, tries - 1)
+      else ctx.logger?.error?.('[dsh-devforge] 设置段注册缺失：openai 配置读写已降级为 store.db 模式（宿主设置面板暂不可写）')
+    } catch {
+      if (tries > 0) scheduleSectionReadinessCheck(ctx, tries - 1)
+    }
+  }, 2500)
+  timer.unref?.()
+}
 
 /** 插件配置（schemastery 校验）。 */
 export interface Config {
@@ -183,6 +211,7 @@ export function apply(ctx: Context, config?: Config): void {
   let current: () => Config = () => config ?? {}
   const resolve = (): Config => {
     const value = current()
+    const storedOpenAi = readStoreDbOpenAi()
     return {
       enabled: value.enabled ?? DEFAULTS.enabled,
       announceToAgent: value.announceToAgent ?? DEFAULTS.announceToAgent,
@@ -217,11 +246,11 @@ export function apply(ctx: Context, config?: Config): void {
         usageTimeoutMs: value.ark?.usageTimeoutMs ?? 15000,
       },
       openai: {
-        enabled: value.openai?.enabled ?? true,
-        baseURL: value.openai?.baseURL ?? '',
-        apiKeyEnv: value.openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
-        imageModel: value.openai?.imageModel ?? '',
-        timeoutMs: value.openai?.timeoutMs ?? 300000,
+        enabled: value.openai?.enabled ?? storedOpenAi.enabled ?? true,
+        baseURL: value.openai?.baseURL ?? storedOpenAi.baseURL ?? '',
+        apiKeyEnv: value.openai?.apiKeyEnv ?? storedOpenAi.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
+        imageModel: value.openai?.imageModel ?? storedOpenAi.imageModel ?? '',
+        timeoutMs: value.openai?.timeoutMs ?? storedOpenAi.timeoutMs ?? 300000,
       },
     }
   }
@@ -352,7 +381,7 @@ export function apply(ctx: Context, config?: Config): void {
       ctx.logger.warn('[dsh-devforge] SQLite 迁移失败（不影响启动，旧文件保留）：%s', error instanceof Error ? error.message : String(error))
     }
     // CNB 备份调度：enabled 才启动；含启动补跑（距上次推送超间隔立即执行）
-    backupScheduler.restart()
+    safeActivate(ctx, 'CNB 备份调度', () => backupScheduler.restart())
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
     }
@@ -375,53 +404,64 @@ export function apply(ctx: Context, config?: Config): void {
     // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
     scheduleAutoEnsureModels()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
-    disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled && value.openai?.enabled !== false }, openAiService).dispose
+    safeActivate(ctx, 'OpenAI 生图工具', () => { disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled === true && value.openai?.enabled !== false }, openAiService).dispose })
     // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。
-    disposeMiniMaxTools = activateMiniMaxTools(ctx, {
-      enabled: value.enabled && value.minimax?.tools !== false,
-      apiKeyEnv: value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
-      timeoutMs: Math.max(value.minimax?.timeoutMs ?? 30000, 10000),
-    }, async () => {
-      const resolved = await ctx.credentials.resolve(credentialRef(value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY'))
-      const apiKeyValue = resolved?.value.trim() ?? ''
-      if (apiKeyValue === '') throw new Error('尚未配置 MiniMax Coding Plan API Key，无法调用官方工具。')
-      return apiKeyValue
-    }).dispose
-    // MiniMax Hub 桌面端 Gateway 工具：调用视频/图像，复用 Hub 客户端已登录账号，无需受管凭据。
-    disposeMiniMaxHubTools = activateMiniMaxHubTools(ctx, {
-      enabled: value.enabled && value.minimax?.hub !== false,
-      ...(typeof value.minimax?.hubGatewayURL === 'string' && value.minimax.hubGatewayURL !== ''
-        ? { gatewayURL: value.minimax.hubGatewayURL }
-        : {}),
-    }).dispose
-    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
-    disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
-      const resolved = await ctx.credentials.resolve(credentialRef(value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY'))
-      const apiKeyValue = resolved?.value.trim() ?? ''
-      if (apiKeyValue === '') throw new Error('尚未配置智谱 Coding Plan API Key，无法调用官方 MCP 工具。')
-      return apiKeyValue
-    }).dispose
-    const remoteActivation = activateRemote(ctx, value.remote ?? { enabled: false })
-    disposeRemote = remoteActivation.dispose
-    // 本地浏览器：独立于远程运维，启用即注册 browser_* 工具。
-    const browserActivation = activateBrowser(ctx, {
-      enabled: value.enabled && value.browser?.enabled === true,
-      headless: value.browser?.headless === true,
-      channel: value.browser?.channel ?? 'chrome',
-      profileDir: value.browser?.profileDir ?? '',
-      timeoutMs: value.browser?.timeoutMs ?? 45000,
+    safeActivate(ctx, 'MiniMax 官方工具', () => {
+      disposeMiniMaxTools = activateMiniMaxTools(ctx, {
+        enabled: value.enabled === true && value.minimax?.tools !== false,
+        apiKeyEnv: value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
+        timeoutMs: Math.max(value.minimax?.timeoutMs ?? 30000, 10000),
+      }, async () => {
+        const resolved = await ctx.credentials.resolve(credentialRef(value.minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY'))
+        const apiKeyValue = resolved?.value.trim() ?? ''
+        if (apiKeyValue === '') throw new Error('尚未配置 MiniMax Coding Plan API Key，无法调用官方工具。')
+        return apiKeyValue
+      }).dispose
     })
-    browserApi = browserActivation.browser
-    disposeBrowser = browserActivation.dispose
+    // MiniMax Hub 桌面端 Gateway 工具：调用视频/图像，复用 Hub 客户端已登录账号，无需受管凭据。
+    safeActivate(ctx, 'MiniMax Hub 工具', () => {
+      disposeMiniMaxHubTools = activateMiniMaxHubTools(ctx, {
+        enabled: value.enabled === true && value.minimax?.hub !== false,
+        ...(typeof value.minimax?.hubGatewayURL === 'string' && value.minimax.hubGatewayURL !== ''
+          ? { gatewayURL: value.minimax.hubGatewayURL }
+          : {}),
+      }).dispose
+    })
+    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
+    safeActivate(ctx, '智谱 MCP 工具', () => {
+      disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled === true && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
+        const resolved = await ctx.credentials.resolve(credentialRef(value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY'))
+        const apiKeyValue = resolved?.value.trim() ?? ''
+        if (apiKeyValue === '') throw new Error('尚未配置智谱 Coding Plan API Key，无法调用官方 MCP 工具。')
+        return apiKeyValue
+      }).dispose
+    })
+    safeActivate(ctx, '远程运维', () => {
+      const remoteActivation = activateRemote(ctx, value.remote ?? { enabled: false })
+      disposeRemote = remoteActivation.dispose
+    })
+    // 本地浏览器：独立于远程运维，启用即注册 browser_* 工具。
+    safeActivate(ctx, '本地浏览器', () => {
+      const browserActivation = activateBrowser(ctx, {
+        enabled: value.enabled === true && value.browser?.enabled === true,
+        headless: value.browser?.headless === true,
+        channel: value.browser?.channel ?? 'chrome',
+        profileDir: value.browser?.profileDir ?? '',
+        timeoutMs: value.browser?.timeoutMs ?? 45000,
+      })
+      browserApi = browserActivation.browser
+      disposeBrowser = browserActivation.dispose
+    })
     // GitHub 兼容接管：注册 github_* 工具与 /api/dsh-github 前缀；与旧插件互斥。
-    disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose
+    safeActivate(ctx, 'GitHub 托管', () => { disposeGithub = activateGithub(ctx, resolve().github ?? { enabled: false }).dispose })
     // CNB 代码托管：注册 cnb_* 工具与 /api/dsh-cnb 前缀（与 GitHub 能力并列，互不影响）。
-    disposeCnb = activateCnb(ctx, resolve().cnb ?? { enabled: false }).dispose
+    safeActivate(ctx, 'CNB 托管', () => { disposeCnb = activateCnb(ctx, resolve().cnb ?? { enabled: false }).dispose })
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
-    disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose
+    safeActivate(ctx, '飞书桥', () => { disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose })
   }
 
   // ---- 设置面板接线（改配置即热更新）----
+  scheduleSectionReadinessCheck(ctx)
   installSettingsSection(ctx, DEVFORGE_SETTINGS_NAMESPACE, Config, config ?? {}, {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {

@@ -4,6 +4,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
+import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
 import type { OpenAiGatewayConfigPatch, OpenAiGatewayStatus } from './protocol.ts'
 
@@ -239,11 +240,19 @@ export class OpenAiGatewayService {
     return { ...(legacyProvider !== undefined ? { provider: legacyProvider } : {}), changed }
   }
 
-  /** 写 dsh-devforge.openai 配置；并发冲突时按最新 revision 重试一次。 */
+  /** 写 openai 配置：store.db 主写（不依赖宿主设置段），宿主段可用时双写触发热更新。 */
   private async writeDevforgeConfig(next: OpenAiCapabilityConfig): Promise<void> {
+    try {
+      putSettings(getDb(), 'openai.settings', next)
+    } catch (error) {
+      this.ctx.logger?.warn?.('[dsh-devforge] openai 配置写入 store.db 失败：%s', error instanceof Error ? error.message : String(error))
+    }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === DEVFORGE_NAMESPACE)
-      if (descriptor === undefined) throw new OpenAiServiceError('天工造梦设置服务尚未就绪。', 409)
+      if (descriptor === undefined) {
+        this.ctx.logger?.warn?.('[dsh-devforge] 宿主设置段未就绪，openai 配置仅存 store.db（面板与路由照常工作）')
+        return
+      }
       const current = descriptor.value as { openai?: Record<string, unknown> } | undefined
       const value = { ...(current?.openai ?? {}), ...next }
       if (deepEqualJson(value, current?.openai)) return
@@ -252,10 +261,14 @@ export class OpenAiGatewayService {
         return
       } catch (error) {
         if (error instanceof SettingsConflictError) {
-          if (attempt === 1) throw new OpenAiServiceError('中转站配置并发更新，请重试。', 409)
+          if (attempt === 1) {
+            this.ctx.logger?.warn?.('[dsh-devforge] 中转站配置并发更新，已保留 store.db 结果')
+            return
+          }
           continue
         }
-        throw error
+        this.ctx.logger?.warn?.('[dsh-devforge] 宿主设置段写入失败，已保留 store.db 结果：%s', error instanceof Error ? error.message : String(error))
+        return
       }
     }
   }
