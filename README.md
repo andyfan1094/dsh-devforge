@@ -9,7 +9,8 @@
 3. **服务工厂操作台**：侧边栏“服务工厂”入口提供开发规范、智谱 Coding Plan、生成任务、新建服务、远程运维、GitHub 和飞书能力。
 4. **智谱 Coding Plan**：复用 DSH 受管凭据 `ZAI_CODING_CN_API_KEY`，一键补齐 `zai-coding-cn` 的 GLM-5.3 与 GLM-5.3-Flash；Host 直连智谱官方监控接口，展示 5 小时、周额度、重置倒计时、近 24 小时／7 天模型和 MCP 用量。Key 不进入浏览器、日志或普通配置。
 5. **火山方舟 Agent Plan**：使用 Plan Key 调用官方套餐模型并同步推理档位；用受管控制面 AK/SK 经火山 OpenAPI V4 签名查询 Agent Plan/Coding Plan 的 5 小时、周、月额度。操作步骤见[火山方舟用量看板教程](docs/火山方舟用量看板教程.md)。
-6. **本机 DSH 重启**：操作台“重启 DSH”按钮和 `devforge_restart` 工具仅在用户明确要求时使用。重启接口要求 loopback 与同源请求，复用现有启动参数，启动日志写入 `$DSH_HOME/logs/dsh-web-restart.log`。
+6. **OpenAI 兼容中转站**：在 Coding Plan 页配置中转站地址和受管 API Key，通过 `GET /v1/models` 获取模型并注册为 `openai-gateway` 聊天路由；可从模型目录指定全局 `generate_image` 的生图模型，生成结果写入工作区并在聊天中内联展示。旧 `dsh-sub2api` 的 OpenAI 地址、凭据引用、模型元数据和生图模型会自动迁移，Key 明文不会被读取或复制。
+7. **本机 DSH 重启**：操作台“重启 DSH”按钮和 `devforge_restart` 工具仅在用户明确要求时使用。重启接口要求 loopback 与同源请求，复用现有启动参数，启动日志写入 `$DSH_HOME/logs/dsh-web-restart.log`。
 7. **可见运营浏览器**：本机前台 Chrome 保存持久登录档案，支持多标签页、页面快照、稳定元素操作和安全图片上传；多个会话共用一个浏览器进程，不复制 Cookie，也不另开隐形浏览器。
 8. **闲鱼运营助手**：发布商品和消息回复分别使用独立标签页，页面状态互不覆盖；真实发布和真实发送均要求用户明确确认，并核验平台结果。
 

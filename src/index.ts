@@ -49,6 +49,9 @@ import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.
 import { activateMiniMaxTools, activateMiniMaxHubTools } from './minimax/tools.ts'
 import { makeArkRoutes } from './ark/routes.ts'
 import { ArkCodingPlanService, type ArkCapabilityConfig } from './ark/service.ts'
+import { makeOpenAiRoutes } from './openai/routes.ts'
+import { OpenAiGatewayService, type OpenAiCapabilityConfig } from './openai/service.ts'
+import { activateOpenAiGenerateImage } from './openai/tools.ts'
 import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
@@ -91,6 +94,8 @@ export interface Config {
   minimax?: MiniMaxCapabilityConfig
   /** 火山方舟 Agent Plan 模型池、推理档位与控制面用量看板。 */
   ark?: ArkCapabilityConfig
+  /** OpenAI 兼容中转站、聊天模型目录与全局生图工具。 */
+  openai?: OpenAiCapabilityConfig
 }
 
 /** 配置默认值。 */
@@ -138,6 +143,13 @@ export const Config = z.object({
     usageSecretKeyEnv: z.string().default('VOLC_SECRET_KEY').description('火山控制面 Secret Key 凭据引用'),
     usageTimeoutMs: z.number().min(1000).max(60000).default(15000).description('火山用量 OpenAPI 超时（毫秒）'),
   }).description('火山方舟 Agent Plan 配置'),
+  openai: z.object({
+    enabled: z.boolean().default(true).description('OpenAI 兼容中转站模型与生图工具'),
+    baseURL: z.string().default('').description('OpenAI 兼容中转站地址（裸主机或 /v1 API 根路径）'),
+    apiKeyEnv: z.string().default('OPENAI_GATEWAY_API_KEY').description('OpenAI 中转站受管凭据引用'),
+    imageModel: z.string().default('').description('generate_image 使用的生图模型'),
+    timeoutMs: z.number().min(1000).max(600000).default(300000).description('中转站生图请求超时（毫秒）'),
+  }).description('OpenAI 兼容中转站配置'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -153,6 +165,7 @@ const DEVFORGE_GUIDANCE = [
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
+  '- OpenAI 中转站：Coding Plan 页内支持中转站地址、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
   '- CNB 代码托管（cnb.cool，国内）：cnb_auth_add / cnb_auth_list / cnb_auth_test / cnb_repo_list / cnb_clone / cnb_pull / cnb_push / cnb_commit / cnb_status / cnb_auth_remove；平台仅支持 HTTPS+访问令牌（Git 用户名固定 cnb），令牌经临时 HTTP 头注入绝不进 URL，推送默认关闭需在天工造梦设置打开。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
@@ -203,6 +216,13 @@ export function apply(ctx: Context, config?: Config): void {
         usageSecretKeyEnv: value.ark?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY',
         usageTimeoutMs: value.ark?.usageTimeoutMs ?? 15000,
       },
+      openai: {
+        enabled: value.openai?.enabled ?? true,
+        baseURL: value.openai?.baseURL ?? '',
+        apiKeyEnv: value.openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
+        imageModel: value.openai?.imageModel ?? '',
+        timeoutMs: value.openai?.timeoutMs ?? 300000,
+      },
     }
   }
 
@@ -220,6 +240,7 @@ export function apply(ctx: Context, config?: Config): void {
   const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
   const minimaxConfig = { enabled: true, apiKeyEnv: 'MINIMAX_CN_API_KEY', timeoutMs: 30000, tools: true }
   const arkConfig: ArkCapabilityConfig = { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY', usageAccessKeyEnv: 'VOLC_ACCESS_KEY', usageSecretKeyEnv: 'VOLC_SECRET_KEY', usageTimeoutMs: 15000 }
+  const openAiConfig: OpenAiCapabilityConfig = { enabled: true, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: '', timeoutMs: 300000 }
   const DISABLED_BROWSER: BrowserStatus = { enabled: false, running: false, ready: false, profileDir: '', message: '浏览器能力未启用，请在天工造梦设置中开启' }
   let browserApi: Pick<BrowserRoutesService, 'status' | 'navigate' | 'snapshot' | 'screenshot' | 'stop'> | undefined
   const browserHolder: BrowserRoutesService = {
@@ -247,6 +268,7 @@ export function apply(ctx: Context, config?: Config): void {
   const zhipuService = new ZhipuCodingPlanService(ctx, zhipuConfig)
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
+  const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
 
   // ---- 启动自动补齐：llm-pi-ai 就绪后把官方模型与推理档位写入设置；无变化时不产生写入。----
   let autoEnsureToken = 0
@@ -259,6 +281,7 @@ export function apply(ctx: Context, config?: Config): void {
           await arkService.ensureModels()
           await zhipuService.ensureModels()
           await minimaxService.ensureModels()
+          await openAiService.ensureProvider()
           return
         } catch { /* llm-pi-ai 尚未就绪或并发冲突：延迟重试，最终放弃并等待下次同步。 */ }
         await new Promise((resolve) => setTimeout(resolve, 5_000))
@@ -274,6 +297,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeZhipuRoutes(zhipuService),
     ...makeMiniMaxRoutes(minimaxService),
     ...makeArkRoutes(arkService),
+    ...makeOpenAiRoutes(openAiService),
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
@@ -289,6 +313,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeZhipuMcp: (() => void) | undefined
   let disposeMiniMaxTools: (() => void) | undefined
   let disposeMiniMaxHubTools: (() => void) | undefined
+  let disposeOpenAiTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
@@ -306,6 +331,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeZhipuMcp?.(); disposeZhipuMcp = undefined
     disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
     disposeMiniMaxHubTools?.(); disposeMiniMaxHubTools = undefined
+    disposeOpenAiTools?.(); disposeOpenAiTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
@@ -344,6 +370,9 @@ export function apply(ctx: Context, config?: Config): void {
     Object.assign(zhipuConfig, value.zhipu)
     Object.assign(minimaxConfig, value.minimax)
     Object.assign(arkConfig, value.ark)
+    Object.assign(openAiConfig, value.openai)
+    // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
+    disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled && value.openai?.enabled !== false }, openAiService).dispose
     // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。
     disposeMiniMaxTools = activateMiniMaxTools(ctx, {
       enabled: value.enabled && value.minimax?.tools !== false,
@@ -428,6 +457,13 @@ export function apply(ctx: Context, config?: Config): void {
             usageAccessKeyEnv: value.ark?.usageAccessKeyEnv ?? 'VOLC_ACCESS_KEY',
             usageSecretKeyEnv: value.ark?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY',
             usageTimeoutMs: value.ark?.usageTimeoutMs ?? 15000,
+          },
+          openai: {
+            enabled: value.openai?.enabled !== false,
+            baseURL: value.openai?.baseURL ?? '',
+            apiKeyEnv: value.openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
+            imageModel: value.openai?.imageModel ?? '',
+            timeoutMs: value.openai?.timeoutMs ?? 300000,
           },
         }
       }

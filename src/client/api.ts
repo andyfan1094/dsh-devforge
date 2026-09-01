@@ -11,6 +11,7 @@ import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type 
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
+import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -324,6 +325,28 @@ export class DevforgeApi {
       body: JSON.stringify(action),
     }))
     return data.result
+  }
+
+  /** 读取 OpenAI 中转站、凭据、聊天路由与生图模型的脱敏状态。 */
+  async getOpenAiGatewayStatus(signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
+    const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.status, { signal }))
+    return data.status
+  }
+
+  /** 保存 OpenAI 中转站地址和生图模型；API Key 走通用受管凭据接口。 */
+  async saveOpenAiGatewayConfig(patch: OpenAiGatewayConfigPatch, signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
+    const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.config, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 调用中转站 GET /v1/models 并合并进聊天模型路由。 */
+  async fetchOpenAiGatewayModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; kept: string[]; total: number }> {
+    return await readJson(await fetch(OPENAI_GATEWAY_API.fetchModels, { method: 'POST', signal }))
   }
 
   /** 读取智谱凭据和最新模型的脱敏状态。 */
