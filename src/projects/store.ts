@@ -57,6 +57,7 @@ export function validateProjectPayload(payload: unknown): string | undefined {
   if (kind !== 'none' && kind !== 'cnb' && kind !== 'github' && kind !== 'git') return 'repoKind 必须是 none/cnb/github/git'
   if (p.repoUrl !== undefined && typeof p.repoUrl !== 'string') return 'repoUrl 必须是字符串'
   if (p.repoBranch !== undefined && typeof p.repoBranch !== 'string') return 'repoBranch 必须是字符串'
+  if (p.siteUrl !== undefined && typeof p.siteUrl !== 'string') return 'siteUrl 必须是字符串'
   return validateDeployTargets(p.deployTargets)
 }
 
@@ -73,6 +74,7 @@ export function listProjects(): ProjectEntry[] {
       repoKind: (parsed.repoKind ?? 'none') as RepoKind,
       repoUrl: typeof parsed.repoUrl === 'string' ? parsed.repoUrl : '',
       repoBranch: typeof parsed.repoBranch === 'string' ? parsed.repoBranch : '',
+      siteUrl: typeof parsed.siteUrl === 'string' ? parsed.siteUrl : '',
       deployTargets: Array.isArray(parsed.deployTargets) ? parsed.deployTargets as DeployTarget[] : [],
       createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0,
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
@@ -97,6 +99,7 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     repoKind: (payload.repoKind ?? existing?.repoKind ?? 'none') as RepoKind,
     repoUrl: typeof payload.repoUrl === 'string' ? payload.repoUrl.trim() : (existing?.repoUrl ?? ''),
     repoBranch: typeof payload.repoBranch === 'string' ? payload.repoBranch.trim() : (existing?.repoBranch ?? ''),
+    siteUrl: typeof payload.siteUrl === 'string' ? payload.siteUrl.trim() : (existing?.siteUrl ?? ''),
     deployTargets: Array.isArray(payload.deployTargets) ? payload.deployTargets as DeployTarget[] : (existing?.deployTargets ?? []),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,

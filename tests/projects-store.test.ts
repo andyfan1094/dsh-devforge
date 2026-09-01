@@ -30,6 +30,7 @@ test('载荷校验：必填项、绝对路径、repoKind 枚举与发布服务�
   assert.equal(validateProjectPayload({ name: 'x', path: 'relative/path' }), 'path 必须是绝对路径')
   assert.equal(validateProjectPayload({ name: 'x', path: '/a', repoKind: 'svn' }), 'repoKind 必须是 none/cnb/github/git')
   assert.equal(validateProjectPayload({ name: 'x', path: '/a', deployTargets: [{ transport: 'ftp', alias: 'a' }] }), 'deployTargets.transport 只能是 ssh 或 winrm')
+  assert.equal(validateProjectPayload({ name: 'x', path: '/a', siteUrl: 123 }), 'siteUrl 必须是字符串')
   assert.equal(validateProjectPayload({ name: 'x', path: '/a', deployTargets: [{ transport: 'ssh', alias: 'my' }] }), undefined)
   assert.equal(validateProjectPayload({ name: 'x', path: '/a' }), undefined)
 })
@@ -43,10 +44,12 @@ test('登记 CRUD：新增、更新保留 createdAt、删除', () => {
     repoKind: 'github',
     repoUrl: 'https://github.com/andyfan1094/dsh-devforge',
     repoBranch: 'main',
+    siteUrl: 'https://modagentai.com',
     deployTargets: [{ transport: 'ssh', alias: 'my' }],
   })
   assert.ok(saved.id !== '')
   assert.equal(saved.createdAt, saved.updatedAt)
+  assert.equal(saved.siteUrl, 'https://modagentai.com')
 
   const updated = saveProject({ id: saved.id, name: '天工造梦插件（改）', path: '/Users/andyfan/Documents/ds/dsh-devforge' })
   assert.equal(updated.createdAt, saved.createdAt)
@@ -57,6 +60,7 @@ test('登记 CRUD：新增、更新保留 createdAt、删除', () => {
   assert.equal(updated.repoKind, 'github')
   assert.equal(updated.repoUrl, 'https://github.com/andyfan1094/dsh-devforge')
   assert.equal(updated.repoBranch, 'main')
+  assert.equal(updated.siteUrl, 'https://modagentai.com')
   assert.deepEqual(updated.deployTargets, [{ transport: 'ssh', alias: 'my' }])
 
   const list = listProjects()

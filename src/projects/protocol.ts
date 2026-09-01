@@ -43,6 +43,8 @@ export interface ProjectEntry {
   repoUrl: string
   /** 仓库当前分支（检测可得，可留空）。 */
   repoBranch: string
+  /** 线上地址（项目发布后的访问网址，可留空）。 */
+  siteUrl: string
   /** 发布对应的服务器列表。 */
   deployTargets: DeployTarget[]
   /** 创建时间（毫秒）。 */

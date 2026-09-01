@@ -34,12 +34,13 @@ interface ProjectFormState {
   repoKind: RepoKind
   repoUrl: string
   repoBranch: string
+  siteUrl: string
   deployTargets: Array<{ transport: 'ssh' | 'winrm'; alias: string }>
 }
 
 /** 空表单。 */
 function emptyForm(): ProjectFormState {
-  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', deployTargets: [] }
+  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [] }
 }
 
 /** 由既有条目构造表单。 */
@@ -52,6 +53,7 @@ function formFromEntry(entry: ProjectEntry): ProjectFormState {
     repoKind: entry.repoKind,
     repoUrl: entry.repoUrl,
     repoBranch: entry.repoBranch,
+    siteUrl: entry.siteUrl,
     deployTargets: entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias })),
   }
 }
@@ -158,6 +160,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       repoKind: editing.repoKind,
       repoUrl: editing.repoUrl,
       repoBranch: editing.repoBranch,
+      siteUrl: editing.siteUrl,
       deployTargets: editing.deployTargets,
     })
     setEditing(null)
@@ -226,6 +229,11 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     {entry.repoUrl !== '' ? entry.repoUrl : '—'}
                     {entry.repoBranch !== '' && ' · ' + entry.repoBranch}
                   </span>
+                  {entry.siteUrl.trim() !== '' && (
+                    <span className={css['resourceMeta']}>
+                      网址：<a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
+                    </span>
+                  )}
                   <span className={css['resourceMeta']}>
                     发布服务器：
                     {entry.deployTargets.length === 0
@@ -320,6 +328,17 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
               placeholder="https://cnb.cool/owner/repo 或 https://github.com/owner/repo"
               {...inputProps}
               onChange={(event) => { setEditing({ ...editing, repoUrl: event.target.value }) }}
+            />
+          </div>
+          <div className={css['field']}>
+            <label className={css['fieldLabel']} htmlFor="project-site">线上地址（发布后的访问网址，可选）</label>
+            <input
+              id="project-site"
+              className={css['input']}
+              value={editing.siteUrl}
+              placeholder="https://modagentai.com"
+              {...inputProps}
+              onChange={(event) => { setEditing({ ...editing, siteUrl: event.target.value }) }}
             />
           </div>
           <div className={css['field']}>
