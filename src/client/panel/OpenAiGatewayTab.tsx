@@ -72,7 +72,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     }
   }
 
-  /** 从 GET /v1/models 获取模型，并保留已有模型的上下文和推理元数据。 */
+  /** 从 GET /v1/models 获取模型，以中转站返回为准同步目录（保留已有元数据，移除已下线模型）。 */
   const fetchModels = async (): Promise<void> => {
     setFetching(true)
     setNotice(null)
@@ -82,7 +82,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
       applyStatus(result.status)
       const suggested = result.status.models.find((model) => /gpt-image|dall-e|imagen|flux|seedream/i.test(model.id))
       if ((result.status.imageModel ?? '') === '' && suggested !== undefined) setImageModel(suggested.id)
-      setNotice({ kind: 'success', text: '获取模型成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
+      setNotice({ kind: 'success', text: '获取模型成功：新增 ' + result.added.length + '、移除 ' + result.removed.length + '、保留 ' + result.kept.length + '，合计 ' + result.total + '。' })
     } catch (error) {
       if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
     } finally {
@@ -122,7 +122,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
       <section className={css['usageSection']}>
         <h3 className={css['sectionTitle']}>模型目录</h3>
         <div className={css['modelToolbar']}>
-          <button type="button" className={css['ghostButton']} disabled={fetching || !configured || baseURL.trim() === ''} onClick={() => { void fetchModels() }} title="调用中转站 GET /v1/models 并合并进聊天模型路由">{fetching ? '获取中…' : '从中转站获取模型'}</button>
+          <button type="button" className={css['ghostButton']} disabled={fetching || !configured || baseURL.trim() === ''} onClick={() => { void fetchModels() }} title="调用中转站 GET /v1/models 并同步聊天模型路由（以中转站返回为准）">{fetching ? '获取中…' : '从中转站获取模型'}</button>
         </div>
         {status?.models.length === 0 ? <div className={css['empty']}>尚未获取模型。</div> : status?.models.map((model) => (
           <div key={model.id} className={css['metricRow']}>

@@ -344,8 +344,8 @@ export class DevforgeApi {
     return data.status
   }
 
-  /** 调用中转站 GET /v1/models 并合并进聊天模型路由。 */
-  async fetchOpenAiGatewayModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; kept: string[]; total: number }> {
+  /** 调用中转站 GET /v1/models 并同步聊天模型路由（以中转站返回为准）。 */
+  async fetchOpenAiGatewayModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; removed: string[]; kept: string[]; total: number }> {
     return await readJson(await fetch(OPENAI_GATEWAY_API.fetchModels, { method: 'POST', signal }))
   }
 

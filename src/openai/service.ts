@@ -46,16 +46,22 @@ function defaultModelProfile(model: OpenAiDiscoveredModel): Record<string, unkno
   }
 }
 
-/** 合并新发现模型：保留已有模型的上下文、模态和推理档位，只追加缺失 id。 */
-export function mergeOpenAiModels(existing: Array<Record<string, unknown>>, discovered: OpenAiDiscoveredModel[]): Array<Record<string, unknown>> {
-  const result = existing.map((model) => ({ ...model }))
-  const ids = new Set(result.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  for (const model of discovered) {
-    if (ids.has(model.id)) continue
-    ids.add(model.id)
-    result.push(defaultModelProfile(model))
+/** 同步中转站目录：以 GET /v1/models 返回为准，保留已有模型元数据，移除中转站已下线的模型。 */
+export function syncOpenAiModels(existing: Array<Record<string, unknown>>, discovered: OpenAiDiscoveredModel[]): { models: Array<Record<string, unknown>>; removedIds: string[] } {
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const model of existing) {
+    if (typeof model.id === 'string' && model.id !== '') byId.set(model.id, model)
   }
-  return result
+  const models: Array<Record<string, unknown>> = []
+  const seen = new Set<string>()
+  for (const model of discovered) {
+    if (seen.has(model.id)) continue
+    seen.add(model.id)
+    const previous = byId.get(model.id)
+    models.push(previous !== undefined ? { ...previous } : defaultModelProfile(model))
+  }
+  const removedIds = [...byId.keys()].filter((id) => !seen.has(id))
+  return { models, removedIds }
 }
 
 /** 构造 llm-pi-ai 的 OpenAI Responses 路由，复用 DSH 内置协议适配器。 */
@@ -143,20 +149,23 @@ export class OpenAiGatewayService {
     return await this.ensureProvider()
   }
 
-  /** 调 GET /v1/models，把模型合并进 OpenAI 中转聊天路由。 */
-  async fetchModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; kept: string[]; total: number }> {
+  /** 调 GET /v1/models，以中转站返回为准同步聊天模型路由：保留已有元数据，移除已下线模型。 */
+  async fetchModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; removed: string[]; kept: string[]; total: number }> {
     if (this.config.baseURL.trim() === '') throw new OpenAiServiceError('请先保存 OpenAI 中转站地址。', 400)
     const client = this.client()
     let discovered: OpenAiDiscoveredModel[]
     try { discovered = await client.fetchModels(signal) } catch (error) { throw this.mapClientError(error) }
+    if (discovered.length === 0) throw new OpenAiServiceError('中转站返回 0 个模型，为防误清空已保留现有目录。', 502)
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const provider = section?.providers?.[OPENAI_PROVIDER_ID]
     const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
     const beforeIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-    const models = mergeOpenAiModels(existing, discovered)
+    const { models, removedIds } = syncOpenAiModels(existing, discovered)
     await this.writeProvider(models, true)
+    const afterIds = new Set(models.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
     const added = models.map((model) => model.id).filter((id): id is string => typeof id === 'string' && !beforeIds.has(id))
-    return { status: await this.status(), added, kept: [...beforeIds], total: models.length }
+    const kept = [...beforeIds].filter((id) => afterIds.has(id))
+    return { status: await this.status(), added, removed: removedIds, kept, total: models.length }
   }
 
   /** 启动时迁移旧 Sub2API OpenAI 配置并建立新路由；只迁移凭据引用。 */

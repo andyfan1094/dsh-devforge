@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { OpenAiGatewayClient, OpenAiGatewayError, extractGeneratedImage, normalizeOpenAiBaseURL, openAiApiRoot, parseOpenAiModelList } from '../src/openai/api-client.ts'
-import { buildOpenAiProvider, mergeOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
+import { buildOpenAiProvider, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
 
 /** 启动极简 OpenAI 兼容 mock；记录路径、鉴权和请求体。 */
 function startMock(handler: (req: IncomingMessage, body: Record<string, unknown>) => { status?: number; payload: unknown }) {
@@ -51,13 +51,23 @@ test('模型目录：忽略空 id 与重复项', () => {
   assert.deepEqual(models, [{ id: 'gpt-5.6-sol' }, { id: 'gpt-image-2', name: 'GPT Image 2' }])
 })
 
-test('模型合并：保留旧模型完整元数据，只追加新模型', () => {
-  const existing = [{ id: 'gpt-5.6-sol', contextWindow: 1_050_000, reasoningEfforts: { max: 'max' } }]
-  const merged = mergeOpenAiModels(existing, [{ id: 'gpt-5.6-sol' }, { id: 'gpt-image-2', name: 'GPT Image 2' }])
-  assert.equal(merged.length, 2)
-  assert.equal(merged[0]?.contextWindow, 1_050_000)
-  assert.deepEqual(merged[0]?.reasoningEfforts, { max: 'max' })
-  assert.equal(merged[1]?.reasoningEfforts, false)
+test('模型同步：保留旧模型完整元数据，移除中转站已下线模型', () => {
+  const existing = [
+    { id: 'gpt-5.6-sol', contextWindow: 1_050_000, reasoningEfforts: { max: 'max' } },
+    { id: 'glm-5.3', contextWindow: 1_000_000 },
+  ]
+  const synced = syncOpenAiModels(existing, [{ id: 'gpt-5.6-sol' }, { id: 'gpt-image-2', name: 'GPT Image 2' }])
+  assert.equal(synced.models.length, 2)
+  assert.equal(synced.models[0]?.contextWindow, 1_050_000)
+  assert.deepEqual(synced.models[0]?.reasoningEfforts, { max: 'max' })
+  assert.equal(synced.models[1]?.reasoningEfforts, false)
+  assert.deepEqual(synced.removedIds, ['glm-5.3'])
+})
+
+test('模型同步：忽略重复 id，遵循中转站返回顺序', () => {
+  const synced = syncOpenAiModels([{ id: 'z-old' }], [{ id: 'a' }, { id: 'a' }, { id: 'b' }])
+  assert.deepEqual(synced.models.map((model) => model.id), ['a', 'b'])
+  assert.deepEqual(synced.removedIds, ['z-old'])
 })
 
 test('provider：写入 Responses 路由、受管凭据和重试策略', () => {
