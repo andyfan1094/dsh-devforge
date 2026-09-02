@@ -85,11 +85,25 @@ export function collectLoaderEntries(loader: unknown): LoaderEntryLite[] {
   } catch {
     return []
   }
-  if (!Array.isArray(raw)) return []
+  // entries() 实测返回可迭代对象（非数组，cordis loader 服务如此，inventory 网关用 for...of 消费），统一摊平。
+  let items: readonly unknown[]
+  if (Array.isArray(raw)) {
+    items = raw
+  } else if (raw !== null && typeof raw === 'object' && typeof (raw as Iterable<unknown>)[Symbol.iterator] === 'function') {
+    try {
+      items = Array.from(raw as Iterable<unknown>)
+    } catch {
+      return []
+    }
+  } else {
+    return []
+  }
   const result: LoaderEntryLite[] = []
-  for (const item of raw) {
-    if (item === null || typeof item !== 'object') continue
-    const record = item as { options?: { name?: unknown; group?: unknown }; disabled?: unknown }
+  for (const item of items) {
+    // Map 摊平后是 [key, value] 对，取值部分。
+    const node = Array.isArray(item) && item.length === 2 ? item[1] : item
+    if (node === null || typeof node !== 'object') continue
+    const record = node as { options?: { name?: unknown; group?: unknown }; disabled?: unknown }
     const moduleName = record.options?.name
     if (typeof moduleName !== 'string' || moduleName.length === 0) continue
     // 分组条目只是容器，本身不是插件。
@@ -204,11 +218,21 @@ export interface PluginBriefDiagnostics {
   userCount: number
   /** 激活过程异常摘要；空串 = 无异常。 */
   error: string
+  /** loader 用哪条路径解析成功：ctx / root / get-ctx / get-root / none。 */
+  loaderPath: string
+  /** loader.entries 成员的类型（function 之外的值都说明服务形状和预期不符）。 */
+  entriesType: string
+  /** entries() 原始返回是否为数组。 */
+  rawIsArray: boolean
+  /** entries() 原始返回长度（非数组为 -1）。 */
+  rawLength: number
+  /** 首条原始条目的 JSON 样本（截断）或 entries() 抛错摘要。 */
+  sample: string
 }
 
-/** 空 {} 诊断快照（未激活时的占位）。 */
-function emptyDiagnostics(): PluginBriefDiagnostics {
-  return { loaderResolved: false, entryCount: 0, userCount: 0, error: '' }
+/** 空诊断快照（未激活时的占位）。 */
+export function emptyDiagnostics(): PluginBriefDiagnostics {
+  return { loaderResolved: false, entryCount: 0, userCount: 0, error: '', loaderPath: 'none', entriesType: 'unknown', rawIsArray: false, rawLength: -1, sample: '' }
 }
 
 /** 注入面：注册的节句柄 + 当前文本 + 诊断。 */
@@ -244,18 +268,27 @@ export function activatePluginBrief(
 
   // loader 解析链：ctx.loader → ctx.root.loader → ctx.get('loader')；每条都独立防抛。
   const resolveLoader = (): unknown => {
-    const holders: unknown[] = [holder, holder.root]
-    for (const h of holders) {
+    const holders: Array<{ label: string; h: unknown }> = [
+      { label: 'ctx', h: holder },
+      { label: 'root', h: holder.root },
+    ]
+    for (const { label, h } of holders) {
       if (h === null || typeof h !== 'object') continue
       const record = h as Record<string, unknown>
       try {
         const direct = record.loader
-        if (direct !== undefined && direct !== null) return direct
+        if (direct !== undefined && direct !== null) {
+          diag.loaderPath = label
+          return direct
+        }
       } catch { /* 属性代理抛错换下一条 */ }
       if (typeof record.get === 'function') {
         try {
           const viaGet = (record.get as (name: string) => unknown).call(h, 'loader')
-          if (viaGet !== undefined && viaGet !== null) return viaGet
+          if (viaGet !== undefined && viaGet !== null) {
+            diag.loaderPath = 'get-' + label
+            return viaGet
+          }
         } catch { /* get 抛错换下一条 */ }
       }
     }
@@ -278,6 +311,42 @@ export function activatePluginBrief(
     const current = collectLoaderEntries(loader)
     diag.entryCount = current.length
     diag.userCount = current.filter((entry) => !isCoreModule(entry.moduleName)).length
+    // 形状探针：entries 成员类型 / 原始返回形态 / 首条样本，排障用（随诊断路由透出）。
+    const probe = loader as { entries?: unknown } | null | undefined
+    diag.entriesType = typeof probe?.entries
+    let raw: unknown
+    if (typeof probe?.entries === 'function') {
+      try {
+        raw = (probe.entries as () => unknown).call(probe)
+      } catch (error) {
+        diag.sample = 'entries() 抛错：' + (error instanceof Error ? error.message : String(error))
+      }
+    } else if (probe !== null && typeof probe === 'object') {
+      raw = probe.entries
+    }
+    diag.rawIsArray = Array.isArray(raw)
+    diag.rawLength = Array.isArray(raw) ? raw.length : -1
+    if (diag.sample === '' && raw !== null && typeof raw === 'object') {
+      let items: unknown[] | undefined
+      if (Array.isArray(raw)) {
+        items = raw
+      } else if (typeof (raw as Iterable<unknown>)[Symbol.iterator] === 'function') {
+        try {
+          items = Array.from(raw as Iterable<unknown>)
+        } catch {
+          items = undefined
+        }
+      }
+      if (items && items.length > 0) {
+        // Map 摊平后是 [key, value] 对，样本取值部分。
+        const first = Array.isArray(items[0]) && (items[0] as unknown[]).length === 2 ? (items[0] as unknown[])[1] : items[0]
+        try {
+          diag.sample = JSON.stringify(first)?.slice(0, 400) ?? 'null'
+        } catch {
+          diag.sample = '样本序列化失败'
+        }
+      }
+    }
     return renderPluginBrief(current, readInfo)
   }
 

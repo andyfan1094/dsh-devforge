@@ -58,7 +58,7 @@ import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
-import { activatePluginBrief, type PluginBriefConfig } from './plugin-brief.ts'
+import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -348,7 +348,7 @@ export function apply(ctx: Context, config?: Config): void {
   let pluginBriefSurface: ReturnType<typeof activatePluginBrief> = {
     dispose: () => {},
     currentText: () => '',
-    diagnostics: () => ({ loaderResolved: false, entryCount: 0, userCount: 0, error: '' }),
+    diagnostics: () => emptyDiagnostics(),
   }
 
   // ---- 可重挂表面（路由/工具/系统提示）----
@@ -405,7 +405,7 @@ export function apply(ctx: Context, config?: Config): void {
     pluginBriefSurface = {
       dispose: () => {},
       currentText: () => '',
-      diagnostics: () => ({ loaderResolved: false, entryCount: 0, userCount: 0, error: '' }),
+      diagnostics: () => emptyDiagnostics(),
     }
     backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
