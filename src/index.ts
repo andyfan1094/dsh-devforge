@@ -38,6 +38,11 @@ import { backupNowTool, backupStatusTool } from './backup/tools.ts'
 import { HostStore as SshHostStore } from './remote/ssh/store.ts'
 import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
+import { RagService } from './rag/service.ts'
+import { RagStore } from './rag/rag-store.ts'
+import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
+import { makeRagRoutes } from './rag/routes.ts'
+import { ragSearchTool } from './rag/tools.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
 import type { BrowserStatus } from './browser/protocol.ts'
 import { makeBrowserRoutes } from './browser/routes.ts'
@@ -381,6 +386,15 @@ export function apply(ctx: Context, config?: Config): void {
     diagnostics: () => emptyDiagnostics(),
   }
 
+  // ---- RAG 记忆中枢：智谱 embedding 凭据每次解析（Key 更新无需重启）----
+  const ragEmbedder = new ZhipuEmbedder(async () => {
+    const resolved = await ctx.credentials.resolve(credentialRef('ZAI_CODING_CN_API_KEY'))
+    const value = resolved?.value.trim()
+    if (value === undefined || value === '') throw new RagEmbeddingError('尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。', 400)
+    return value
+  })
+  const ragService = new RagService(new RagStore(), ragEmbedder)
+
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
     ...makeRoutes(engine, standards, restartManager, () => ({
@@ -400,8 +414,9 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
+    ...makeRagRoutes(ragService),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool()]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

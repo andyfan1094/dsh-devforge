@@ -39,6 +39,10 @@ const HOST_EXTERNALS = [
   // 远程运维引擎的原生/网络依赖：原生模块必须运行时解析，不能打进 bundle。
   'ssh2',
   'ws',
+  // RAG 记忆中枢运行时依赖：纯 JS 但体积大（pdfjs 内核），运行时从 profile 依赖树解析。
+  '@orama/orama',
+  'unpdf',
+  'mammoth',
 ]
 
 /** 虚拟 id 包装：把 module CSS 挡在 tsdown 自带 css 管线之外。 */
