@@ -80,11 +80,12 @@ export function PluginUpdateTab({ api }: { api: DevforgeApi }): JSX.Element {
             <div key={item.packageName} className={css['metricRow']}>
               <span>
                 <strong>{item.packageName}</strong>
-                <span className={css['sectionHint']}> {item.repo}</span>
+                <span className={css['sectionHint']}> {item.via === 'site' ? '官网发布' : item.via === 'github' ? 'GitHub' : ''}</span>
               </span>
               <strong>
                 本地 {item.installed === '' ? '未装' : 'v' + item.installed}
                 {item.latest !== '' ? ' · 最新 v' + item.latest : ''}
+                {item.via !== 'none' ? ' · ' + (item.via === 'site' ? '官网' : 'GitHub') : ''}
                 {item.status === 'update-available' ? ' · 可更新' : item.reason !== '' ? ' · ' + item.reason : ' · ' + STATUS_LABEL[item.status]}
               </strong>
               <button

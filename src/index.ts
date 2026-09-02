@@ -136,7 +136,7 @@ export interface Config {
   /** 已安装插件功能总览注入子配置。 */
   pluginBrief?: Partial<PluginBriefConfig>
   /** 插件更新子配置。 */
-  pluginUpdate?: { enabled?: boolean; profile?: string; sources?: Array<{ packageName: string; repo: string }> }
+  pluginUpdate?: { enabled?: boolean; profile?: string; sources?: Array<{ packageName: string; indexUrl?: string; repo?: string }> }
 }
 
 /** 配置默认值。 */
@@ -203,9 +203,10 @@ export const Config = z.object({
     profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
     sources: z.array(z.object({
       packageName: z.string().description('npm 包名'),
-      repo: z.string().description('GitHub 仓库（owner/repo），Latest Release 提供新版本'),
-    })).default([{ packageName: 'dsh-devforge', repo: 'andyfan1094/dsh-devforge' }]).description('更新源登记表：只允许升级登记过的包'),
-  }).description('插件更新：对比 GitHub Latest Release 并一键升级'),
+      indexUrl: z.string().default('').description('官网版本清单地址（downloads/index.json，含 sha256），留空则走 GitHub 兜底'),
+      repo: z.string().default('').description('GitHub 仓库（owner/repo），官网清单不可用时兜底'),
+    })).default([{ packageName: 'dsh-devforge', indexUrl: 'https://modagentai.com/downloads/index.json', repo: 'andyfan1094/dsh-devforge' }]).description('更新源登记表：只允许升级登记过的包'),
+  }).description('插件更新：官网清单优先，GitHub 兜底'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
