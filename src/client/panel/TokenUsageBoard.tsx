@@ -83,6 +83,27 @@ export function TokenUsageBoard({ api }: TokenUsageBoardProps): JSX.Element {
           <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => void load()}>{loading ? '扫描中…' : '刷新'}</button>
         </div>
       </div>
+      {/* 汇总统计条（辉哥要求合计置顶）：总 tokens / 输入 / 输出 / 请求次数，一眼读全。 */}
+      {activeWindow !== null && (
+        <div className={css['tokenBoardStats']}>
+          <div className={css['tokenBoardStat']}>
+            <span className={css['tokenBoardStatLabel']}>总 tokens</span>
+            <span className={css['tokenBoardStatValue']}>{formatTokens(totalAll)}</span>
+          </div>
+          <div className={css['tokenBoardStat']}>
+            <span className={css['tokenBoardStatLabel']}>输入</span>
+            <span className={css['tokenBoardStatValue']}>↑ {formatTokens(activeWindow.inputTokens)}</span>
+          </div>
+          <div className={css['tokenBoardStat']}>
+            <span className={css['tokenBoardStatLabel']}>输出</span>
+            <span className={css['tokenBoardStatValue']}>↓ {formatTokens(activeWindow.outputTokens)}</span>
+          </div>
+          <div className={css['tokenBoardStat']}>
+            <span className={css['tokenBoardStatLabel']}>请求次数</span>
+            <span className={css['tokenBoardStatValue']}>{activeWindow.requests}</span>
+          </div>
+        </div>
+      )}
       {error !== null && (
         <p className={css['overviewError']} role="alert">
           {error} <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => void load()}>重试</button>
@@ -95,11 +116,6 @@ export function TokenUsageBoard({ api }: TokenUsageBoardProps): JSX.Element {
       {error === null && activeWindow !== null && activeWindow.rows.map((row) => (
         <TokenRowView key={row.provider + ' / ' + row.model} row={row} totalAll={totalAll} />
       ))}
-      {error === null && activeWindow !== null && activeWindow.rows.length > 0 && (
-        <p className={css['tokenBoardSum']}>
-          合计 ↑{formatTokens(activeWindow.inputTokens)} · ↓{formatTokens(activeWindow.outputTokens)} · {activeWindow.requests} 次请求
-        </p>
-      )}
       {report !== null && report.skipped.length > 0 && (
         <p className={css['overviewEmpty']} title={report.skipped.map((item) => item.file + ': ' + item.reason).join('\n')}>
           {report.skipped.length} 个会话文件正在写入，本次跳过

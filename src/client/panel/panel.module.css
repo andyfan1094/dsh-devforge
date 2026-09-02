@@ -325,13 +325,18 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .codePlanDashboard { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-grid-gap); overflow: auto; }
 .tokenBoardHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .tokenBoardHint { margin: 2px 0 0; font-size: 11px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+/* 汇总统计条（置顶合计）：四格指标，竖线分隔，等宽数字。 */
+.tokenBoardStats { display: flex; flex-wrap: wrap; gap: 8px 0; padding: 10px 0 11px; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.tokenBoardStat { display: flex; min-width: 96px; flex-direction: column; gap: 2px; padding: 0 18px; border-left: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.tokenBoardStat:first-child { padding-left: 0; border-left: none; }
+.tokenBoardStatLabel { font-size: 10.5px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.tokenBoardStatValue { font-size: 14px; font-weight: 600; color: var(--dsw-alias-label-primary, #1f2329); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tokenBoardActions { display: flex; flex: none; align-items: center; gap: 8px; }
 .tokenBoardRow { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 9px 0 7px; border-top: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
 .tokenBoardTop { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
 .tokenBoardTop strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .tokenBoardTotal { flex: none; font-size: 12.5px; font-weight: 600; color: var(--dsw-alias-label-primary, #1f2329); font-variant-numeric: tabular-nums; }
 .tokenBoardDetail { overflow-wrap: anywhere; font-size: 11px; color: var(--dsw-alias-label-secondary, #667085); font-variant-numeric: tabular-nums; }
-.tokenBoardSum { margin: 0; padding-top: 9px; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary, #667085); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 960px) {
   .githubSplit, .feishuGrid, .usageGrid { grid-template-columns: minmax(0, 1fr); }
