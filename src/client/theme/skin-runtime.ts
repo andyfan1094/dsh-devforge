@@ -36,6 +36,55 @@ const KEY_WALLPAPER_FIT = NS + ':wallpaper-fit'
 const ACCENT_SOURCE = 'dsh-devforge:accent'
 const WALLPAPER_SOURCE = 'dsh-devforge:wallpaper'
 
+/** ThemeRuntime 主题注册租约：客户端重组时多个 runtime 共用同一组主题注册。 */
+interface ThemeRegistrationService {
+  register(definition: { id: string; colorScheme: 'light' | 'dark'; tokens: Record<string, string> }): () => void
+}
+
+interface ThemeLease {
+  users: number
+  disposers: Array<() => void>
+}
+
+const themeLeases = new WeakMap<object, ThemeLease>()
+
+/**
+ * 获取一份主题注册租约。模型设置刷新可能触发插件 client 重组，
+ * 引用计数保证旧 runtime 销毁时不会卸掉新 runtime 仍在使用的主题。
+ */
+function acquireThemeLease(themeSvc: ThemeRegistrationService): () => void {
+  const key = themeSvc as object
+  let lease = themeLeases.get(key)
+  if (lease === undefined) {
+    lease = { users: 0, disposers: [] }
+    for (const skin of SKINS) {
+      try {
+        lease.disposers.push(themeSvc.register({
+          id: skin.id,
+          colorScheme: skin.colorScheme,
+          tokens: skin.tokens as Record<string, string>,
+        }))
+      } catch (error) {
+        // 已由宿主或另一个兼容 runtime 注册时保留现有主题，不重复接管其生命周期。
+        console.warn('[dsh-devforge:skin] 注册皮肤 ' + skin.id + ' 失败：', error)
+      }
+    }
+    themeLeases.set(key, lease)
+  }
+  lease.users += 1
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    lease!.users -= 1
+    if (lease!.users > 0) return
+    for (const dispose of lease!.disposers.splice(0).reverse()) {
+      try { dispose() } catch { /* 主题服务销毁时忽略重复清理 */ }
+    }
+    themeLeases.delete(key)
+  }
+}
+
 /** 默认值。 */
 const DEFAULT_WALLPAPER_OPACITY = 0.82
 const DEFAULT_WALLPAPER_BLUR = 0
@@ -53,8 +102,8 @@ export const WALLPAPER_FITS: readonly WallpaperFit[] = ['cover', 'contain', 'str
 export interface SkinState {
   /**
    * 当前选中的内置皮肤 id；未选为 null（跟随 system）。
-   * 真相源是 ctx.theme.getTheme().active.id；这里每次 bump 时同步，
-   * 以保证 UI 高亮和 GUI 实际着色始终一致。
+   * 正常状态与 ctx.theme.getTheme().active.id 保持一致；外部设置刷新造成短暂
+   * 回退时，以本插件 localStorage 中的持久化目标为准并自动恢复。
    */
   skinId: string | null
   /** 当前强调色（#rrggbb）；未选为 null。 */
@@ -178,30 +227,34 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   let disposeWallpaperLayer: (() => void) | null = null
   let wallpaperEl: HTMLDivElement | null = null
   let applyingShade = false
-  const disposers: Array<() => void> = []
+  let applyingTheme = false
+  let restoreTimer: ReturnType<typeof setTimeout> | undefined
+  let desiredSkinId: string | null = null
 
   const themeSvc = ctx.theme
   if (themeSvc === undefined) {
     console.warn('[dsh-devforge:skin] ctx.theme 不可用，换肤功能降级')
   }
+  const savedSkin = readStorage(KEY_SKIN)
+  if (savedSkin !== null && findSkin(savedSkin) !== undefined) desiredSkinId = savedSkin
+  const releaseThemeLease = themeSvc === undefined ? undefined : acquireThemeLease(themeSvc)
 
-  /** 从 ctx.theme 把激活皮肤同步进 state（真相源在官方 runtime）。 */
+  /** 读取官方 runtime 当前激活的内置皮肤 id；system/light/dark 返回 null。 */
+  function activeSkinId(): string | null {
+    if (themeSvc === undefined) return null
+    try {
+      const candidate = themeSvc.getTheme().active.id
+      return typeof candidate === 'string' && findSkin(candidate) !== undefined ? candidate : null
+    } catch { return null }
+  }
+
+  /** 从 ctx.theme 同步状态；持久化目标存在时优先保留目标，避免外部设置刷新闪回原皮。 */
   function syncFromTheme(): void {
     if (themeSvc === undefined) return
-    let activeId: string | null = null
-    try {
-      const snap = themeSvc.getTheme()
-      const candidate = snap.active.id
-      if (typeof candidate === 'string' && findSkin(candidate) !== undefined) {
-        activeId = candidate
-      }
-    } catch {
-      // 取不到快照就跳过，等待下一次 theme/change
-      return
-    }
-    if (activeId !== state.skinId) {
-      state.skinId = activeId
-    }
+    const activeId = activeSkinId()
+    // 主题服务可能在模型设置刷新后短暂恢复为 system；本地持久化目标才是本插件皮肤的权威选择。
+    const nextId = desiredSkinId !== null && activeId !== desiredSkinId ? desiredSkinId : activeId
+    if (nextId !== state.skinId) state.skinId = nextId
   }
 
   function bump(): void {
@@ -310,20 +363,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     }
   }
 
-  /** 注册全部皮肤（重复 id 由 ThemeRuntime 内部抛错）。 */
-  for (const skin of SKINS) {
-    if (themeSvc === undefined) break
-    try {
-      const d = themeSvc.register({
-        id: skin.id,
-        colorScheme: skin.colorScheme,
-        tokens: skin.tokens as Record<string, string>,
-      })
-      disposers.push(d)
-    } catch (e) {
-      console.warn('[dsh-devforge:skin] 注册皮肤 ' + skin.id + ' 失败：', e)
-    }
-  }
+  // 主题注册由 acquireThemeLease 统一持有，避免 client 重组时旧 runtime 抢先卸载主题。
 
   /** 引导恢复：皮肤。
    *
@@ -334,31 +374,52 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
    * 所以引导恢复必须主动 setTheme 并在 ThemeRuntime 初始化完成窗口内
    * 做多次重试，确保 GUI presenter 拿到的是用户选择的皮肤。
    */
-  if (themeSvc !== undefined) {
-    const savedSkin = readStorage(KEY_SKIN)
-    if (savedSkin !== null && findSkin(savedSkin) !== undefined) {
-      const restore = (attempt: number): void => {
-        try {
-          themeSvc.setTheme(savedSkin)
-        } catch (e) {
-          console.warn('[dsh-devforge:skin] 恢复皮肤失败（第 ' + attempt + ' 次）：', e)
-        }
-        let confirmed = false
-        try {
-          confirmed = themeSvc.getTheme().active.id === savedSkin
-        } catch {
-          confirmed = false
-        }
-        if (confirmed || attempt >= 4) {
-          syncFromTheme()
-          bump()
-          return
-        }
-        window.setTimeout(() => { restore(attempt + 1) }, 200)
-      }
-      restore(1)
+  /**
+   * 恢复持久化皮肤。模型选择会触发 Host 设置刷新，ThemeRuntime 可能随后把偏好
+   * 重新采纳为 system；每次恢复都带上短重试，并由 theme/change 继续兜底。
+   */
+  function restoreDesiredSkin(attempt: number): void {
+    if (themeSvc === undefined || desiredSkinId === null) return
+    const target = desiredSkinId
+    if (activeSkinId() === target) {
+      syncFromTheme()
+      bump()
+      return
     }
+    applyingTheme = true
+    try {
+      themeSvc.setTheme(target)
+    } catch (error) {
+      console.warn('[dsh-devforge:skin] 恢复皮肤失败（第 ' + attempt + ' 次）：', error)
+    } finally {
+      applyingTheme = false
+    }
+    syncFromTheme()
+    if (activeSkinId() === target) {
+      bump()
+      return
+    }
+    if (attempt >= 12) {
+      console.warn('[dsh-devforge:skin] 主题服务未接受持久化皮肤：' + target)
+      bump()
+      return
+    }
+    restoreTimer = setTimeout(() => {
+      restoreTimer = undefined
+      restoreDesiredSkin(attempt + 1)
+    }, 200)
   }
+
+  /** 延迟一次恢复，合并同一批主题刷新事件，避免 setTheme 重入。 */
+  function scheduleSkinRestore(): void {
+    if (themeSvc === undefined || desiredSkinId === null || applyingTheme || restoreTimer !== undefined) return
+    restoreTimer = setTimeout(() => {
+      restoreTimer = undefined
+      restoreDesiredSkin(1)
+    }, 0)
+  }
+
+  if (themeSvc !== undefined && desiredSkinId !== null) restoreDesiredSkin(1)
 
   /** 引导恢复：强调色。 */
   {
@@ -392,7 +453,9 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
       const prevSkinId = state.skinId
       syncFromTheme()
       if (state.wallpaper !== null) applyWallpaperShade()
-      // 仅在 active.id 发生变化时通知订阅者，避免 wallpaper 滑块拖动时噪声触发重渲染。
+      // 模型选择或设置刷新导致回到 system 时，重新应用本地持久化皮肤。
+      if (!applyingTheme && desiredSkinId !== null && activeSkinId() !== desiredSkinId) scheduleSkinRestore()
+      // 仅在有效皮肤 id 发生变化时通知订阅者，避免壁纸遮罩重铺产生噪声。
       if (state.skinId !== prevSkinId) bump()
     })
     if (typeof off === 'function') disposeThemeListen = off
@@ -404,6 +467,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function applySkin(id: string | null): boolean {
     if (themeSvc === undefined) return false
     if (id === null) {
+      // 清除目标后，后续 Host 设置刷新不再自动抢回自定义皮肤。
+      desiredSkinId = null
       try { themeSvc.setTheme('system') } catch (e) { console.warn('[dsh-devforge:skin] 恢复系统主题失败：', e); state.error = 'setTheme 抛错：' + (e instanceof Error ? e.message : String(e)); bump(); return false }
       if (!writeStorage(KEY_SKIN, null)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
       state.error = undefined
@@ -411,6 +476,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
       return true
     }
     if (findSkin(id) === undefined) return false
+    // 先更新目标，再调用 ThemeRuntime；setTheme 同步发出 theme/change 时也能看到正确目标。
+    desiredSkinId = id
     try { themeSvc.setTheme(id) } catch (e) { console.warn('[dsh-devforge:skin] 切换皮肤失败：', e); state.error = 'setTheme 抛错：' + (e instanceof Error ? e.message : String(e)); bump(); return false }
     if (!writeStorage(KEY_SKIN, id)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
     state.error = undefined
@@ -505,11 +572,15 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     disposeAccentLayer = null
     disposeWallpaperLayer?.()
     disposeWallpaperLayer = null
+    if (restoreTimer !== undefined) {
+      clearTimeout(restoreTimer)
+      restoreTimer = undefined
+    }
     if (wallpaperEl !== null) {
       wallpaperEl.remove()
       wallpaperEl = null
     }
-    for (const d of disposers.splice(0)) d()
+    releaseThemeLease?.()
     listeners.clear()
   }
 

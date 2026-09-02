@@ -13,6 +13,7 @@ import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
+import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
@@ -449,6 +450,18 @@ export class DevforgeApi {
   /** 拉取 MiniMax 官方在售模型清单并合并进 provider。 */
   async fetchMiniMaxModels(signal?: AbortSignal): Promise<{ status: MiniMaxStatus; added: string[]; kept: string[]; total: number }> {
     return await readJson(await fetch(MINIMAX_API.fetchModels, { method: 'POST', signal }))
+  }
+
+  /** 读取硅基流动凭据和模型路由的脱敏状态。 */
+  async getSiliconFlowStatus(signal?: AbortSignal): Promise<SiliconFlowStatus> {
+    const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.status, { signal }))
+    return data.status
+  }
+
+  /** 拉取并同步硅基流动全部模型到 DSH 模型目录。 */
+  async setupSiliconFlowModels(signal?: AbortSignal): Promise<SiliconFlowStatus> {
+    const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.ensure, { method: 'POST', signal }))
+    return data.status
   }
 
   /** 读取火山方舟 Agent/Coding Plan 的脱敏状态。 */

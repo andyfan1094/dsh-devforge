@@ -1,7 +1,7 @@
 /** OpenAI 兼容中转站面板路由（loopback + 同源写入围栏）。 */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from '../loopback.ts'
-import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch } from './protocol.ts'
+import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig } from './protocol.ts'
 import { OpenAiGatewayService, OpenAiServiceError } from './service.ts'
 
 /** 输出不可缓存 JSON。 */
@@ -81,9 +81,28 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
         try {
           const body = await readBody(req)
-          if (typeof body.baseURL !== 'string') throw new OpenAiServiceError('baseURL 必须是字符串。', 400)
-          const patch: OpenAiGatewayConfigPatch = { baseURL: body.baseURL }
-          if (typeof body.imageModel === 'string') patch.imageModel = body.imageModel
+          let patch: OpenAiGatewayConfigPatch
+          if (body.endpoints !== undefined) {
+            if (!Array.isArray(body.endpoints)) throw new OpenAiServiceError('endpoints 必须是数组。', 400)
+            const endpoints: OpenAiGatewayEndpointConfig[] = []
+            for (const item of body.endpoints) {
+              if (item === null || typeof item !== 'object' || Array.isArray(item)) throw new OpenAiServiceError('端点配置必须是对象。', 400)
+              const value = item as Record<string, unknown>
+              if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.baseURL !== 'string' || typeof value.apiKeyEnv !== 'string') throw new OpenAiServiceError('端点必须包含 id、name、baseURL 和 apiKeyEnv 字符串。', 400)
+              const endpoint: OpenAiGatewayEndpointConfig = { id: value.id, name: value.name, baseURL: value.baseURL, apiKeyEnv: value.apiKeyEnv }
+              if (value.imageModel !== undefined) {
+                if (typeof value.imageModel !== 'string') throw new OpenAiServiceError('imageModel 必须是字符串。', 400)
+                endpoint.imageModel = value.imageModel
+              }
+              endpoints.push(endpoint)
+            }
+            patch = { endpoints }
+          } else {
+            if (typeof body.baseURL !== 'string') throw new OpenAiServiceError('baseURL 必须是字符串。', 400)
+            patch = { baseURL: body.baseURL }
+            if (typeof body.apiKeyEnv === 'string') patch.apiKeyEnv = body.apiKeyEnv
+            if (typeof body.imageModel === 'string') patch.imageModel = body.imageModel
+          }
           writeJson(res, 200, { ok: true, status: await service.saveConfig(patch) })
         } catch (error) { writeError(res, error) }
       },

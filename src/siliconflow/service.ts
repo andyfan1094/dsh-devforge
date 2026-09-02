@@ -1,9 +1,8 @@
 /**
- * 硅基流动 SiliconFlow 能力服务 —— 模型目录、余额看板、受管凭据。
+ * 硅基流动 SiliconFlow 能力服务 —— 模型目录、受管凭据与 RAG 向量入口。
  *
  * - 模型目录：GET /v1/models 全量合并进 llm-pi-ai providers.siliconflow（会话可直接选）；
  *   FREE_MODELS 内置免费标注（参考，以官网为准），免费/全部可筛；
- * - 余额：GET /v1/user/info（balance/totalBalance）；
  * - 凭据：SILICONFLOW_API_KEY 受管引用，每次请求重新解析；错误一律脱敏。
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,7 +10,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
-import type { SiliconFlowStatus, SiliconFlowUserInfo } from './protocol.ts'
+import type { SiliconFlowStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 /** llm-pi-ai 下的 provider 路由 id（模型目录 providers 键）。 */
@@ -47,17 +46,6 @@ export function parseModelIds(payload: unknown): string[] {
     if (typeof id === 'string' && id.trim() !== '' && !ids.includes(id.trim())) ids.push(id.trim())
   }
   return ids
-}
-
-/** 从 /v1/user/info 响应提取余额（防御式）。 */
-export function parseUserInfo(payload: unknown): SiliconFlowUserInfo | undefined {
-  const body = payload as { code?: unknown; data?: { balance?: unknown; totalBalance?: unknown } | null } | null
-  const data = body?.data
-  if (data === null || typeof data !== 'object') return undefined
-  const balance = typeof data.balance === 'string' || typeof data.balance === 'number' ? String(data.balance) : ''
-  const total = typeof data.totalBalance === 'string' || typeof data.totalBalance === 'number' ? String(data.totalBalance) : ''
-  if (balance === '' && total === '') return undefined
-  return { balance, totalBalance: total, fetchedAt: Date.now() }
 }
 
 /** 合并 siliconflow provider 配置：只补缺失模型和凭据引用，保留用户显式字段。 */
@@ -122,14 +110,6 @@ export class SiliconFlowService {
       }
     }
     throw new SiliconFlowServiceError('模型设置并发更新，请重试。', 409)
-  }
-
-  /** 余额看板。 */
-  async userInfo(): Promise<SiliconFlowUserInfo> {
-    const apiKey = await this.resolveApiKey()
-    const info = parseUserInfo(await this.get('/user/info', apiKey))
-    if (info === undefined) throw new SiliconFlowServiceError('硅基流动余额信息不可用（响应缺少 balance 字段）。', 502)
-    return info
   }
 
   /** 在线模型清单（不写目录，面板浏览用）。 */

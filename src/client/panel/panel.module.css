@@ -608,3 +608,41 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
   letter-spacing: .02em;
 }
 
+/* OpenAI 多端点工作区：左侧端点索引，右侧编辑与模型状态。 */
+.openAiWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }
+.sectionHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.sectionHeader .sectionTitle { margin: 0; }
+.endpointLayout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; min-width: 0; }
+.endpointList { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 4px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
+.endpointItem { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: 3px; padding: 9px 10px; color: var(--dsw-alias-label-primary, #1f2329); text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: inherit; }
+.endpointItem:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.endpointItem[data-active] { background: var(--dsw-alias-bg-base, #fff); border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 40%, transparent); box-shadow: 0 1px 2px rgb(15 23 42 / 8%); }
+.endpointItem strong, .endpointItem span, .endpointItem small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.endpointItem strong { font-size: 12.5px; }
+.endpointItem span { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
+.endpointItem small { color: var(--dsw-alias-label-tertiary, #98a2b3); font-size: 10.5px; }
+.endpointEditor { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 2px 0; }
+.endpointHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 7px; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.endpointHeader > div { min-width: 0; }
+.endpointHeader h4 { margin: 0 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.endpointHeader span { color: var(--dsw-alias-label-tertiary, #98a2b3); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.fieldGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; min-width: 0; }
+.endpointModelList { display: flex; min-width: 0; max-height: 190px; flex-direction: column; overflow: auto; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.endpointModelList .metricRow { padding: 6px 0; }
+.imageModelEditor { display: flex; min-width: 0; align-items: end; gap: 12px; padding-top: 2px; }
+.imageModelEditor .compactField { min-width: 0; }
+.imageModelEditor .sectionHint { flex: 1; margin: 0; line-height: 1.5; }
+@media (max-width: 960px) {
+  .endpointLayout { grid-template-columns: minmax(150px, 200px) minmax(0, 1fr); }
+  .sectionHeader { align-items: flex-start; flex-direction: column; }
+  .sectionHeader .inlineActions { width: 100%; flex-wrap: wrap; }
+}
+@media (max-width: 620px) {
+  .endpointLayout { grid-template-columns: minmax(0, 1fr); }
+  .endpointList { max-height: 190px; overflow: auto; }
+  .fieldGrid { grid-template-columns: minmax(0, 1fr); }
+  .imageModelEditor { align-items: stretch; flex-direction: column; }
+  .sectionHeader .inlineActions { align-items: stretch; }
+  .sectionHeader .inlineActions .sectionHint { width: 100%; }
+}
+

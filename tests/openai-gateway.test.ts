@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { OpenAiGatewayClient, OpenAiGatewayError, extractGeneratedImage, normalizeOpenAiBaseURL, openAiApiRoot, parseOpenAiModelList } from '../src/openai/api-client.ts'
-import { buildOpenAiProvider, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
+import { buildOpenAiProvider, normalizeOpenAiEndpoints, openAiProviderId, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -73,6 +73,78 @@ test('模型同步：忽略重复 id，遵循中转站返回顺序', () => {
   const synced = syncOpenAiModels([{ id: 'z-old' }], [{ id: 'a' }, { id: 'a' }, { id: 'b' }])
   assert.deepEqual(synced.models.map((model) => model.id), ['a', 'b'])
   assert.deepEqual(synced.removedIds, ['z-old'])
+})
+
+test('多端点配置：规范化地址、去重 id，首端点保持旧 provider id', () => {
+  const endpoints = normalizeOpenAiEndpoints({ ...config, endpoints: [
+    { id: 'Primary', name: '主站', baseURL: 'https://one.example.com/v1/', apiKeyEnv: 'ONE_KEY' },
+    { id: 'second', name: '第二站', baseURL: 'https://two.example.com', apiKeyEnv: 'TWO_KEY' },
+    { id: 'SECOND', name: '重复站', baseURL: 'https://three.example.com', apiKeyEnv: 'THREE_KEY' },
+  ] })
+  assert.deepEqual(endpoints.map((endpoint) => endpoint.baseURL), ['https://one.example.com/v1', 'https://two.example.com', 'https://three.example.com'])
+  assert.deepEqual(endpoints.map((endpoint) => endpoint.id), ['Primary', 'second', 'SECOND-2'])
+  assert.equal(openAiProviderId(endpoints[0]!, 0), 'openai-gateway')
+  assert.equal(openAiProviderId(endpoints[1]!, 1), 'openai-gateway-second')
+  assert.equal(openAiProviderId(endpoints[2]!, 2), 'openai-gateway-second-2')
+})
+
+test('多端点 ensureProvider：分别保留模型路由并清理删除端点与旧 Sub2API 路由', async () => {
+  const sections: Record<string, Record<string, unknown>> = {
+    'llm-pi-ai': {
+      providers: {
+        'openai-gateway': { models: [{ id: 'primary-model' }], userField: 'keep' },
+        'openai-gateway-second': { models: [{ id: 'second-model' }] },
+        'openai-gateway-stale': { models: [{ id: 'stale-model' }] },
+        'sub2api-openai': { models: [{ id: 'legacy-model' }] },
+      },
+    },
+  }
+  const getAt = (root: Record<string, unknown>, path: string[]): { parent: Record<string, unknown>; key: string } => {
+    let parent = root
+    for (const part of path.slice(0, -1)) {
+      const next = parent[part]
+      if (next === null || typeof next !== 'object' || Array.isArray(next)) parent[part] = {}
+      parent = parent[part] as Record<string, unknown>
+    }
+    return { parent, key: path[path.length - 1] ?? '' }
+  }
+  const ctx = {
+    settings: {
+      get: (ns: string) => sections[String(ns)],
+      describe: () => Object.entries(sections).map(([ns, value]) => ({ ns, value, revision: 1 })),
+      mutate: async (ns: string, operations: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) => {
+        const section = sections[String(ns)] ?? (sections[String(ns)] = {})
+        for (const operation of operations) {
+          const { parent, key } = getAt(section, operation.path)
+          if (operation.op === 'set') parent[key] = operation.value
+          else delete parent[key]
+        }
+      },
+    },
+    credentials: {
+      describe: async () => ({ configured: true, writable: true }),
+      resolve: async () => ({ value: 'test-key' }),
+    },
+    logger: { warn: () => {} },
+  }
+  const endpoints = [
+    { id: 'primary', name: '主站', baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY', imageModel: 'image-one' },
+    { id: 'second', name: '第二站', baseURL: 'https://two.example.com', apiKeyEnv: 'TWO_KEY', imageModel: 'image-two' },
+  ]
+  const liveConfig: OpenAiCapabilityConfig = { ...config, baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY', imageModel: 'image-one', endpoints }
+  const service = new (await import('../src/openai/service.ts')).OpenAiGatewayService(ctx as never, liveConfig)
+  const status = await service.ensureProvider()
+  const providers = sections['llm-pi-ai']?.providers as Record<string, Record<string, unknown>>
+  assert.equal(status.endpoints.length, 2)
+  assert.equal(status.endpoints[1]?.providerId, 'openai-gateway-second')
+  assert.equal((providers['openai-gateway']?.userField), 'keep')
+  assert.equal(providers['openai-gateway-second']?.models?.[0]?.id, 'second-model')
+  assert.equal(providers['openai-gateway-stale'], undefined)
+  assert.equal(providers['sub2api-openai'], undefined)
+
+  await service.saveConfig({ endpoints: [endpoints[0]!] })
+  assert.equal(providers['openai-gateway-second'], undefined)
+  assert.equal(providers['openai-gateway']?.models?.[0]?.id, 'primary-model')
 })
 
 test('openai 配置降级：宿主设置段缺失时读写 store.db 且不报错', async () => {

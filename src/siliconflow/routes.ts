@@ -38,15 +38,7 @@ export function makeSiliconFlowRoutes(service: SiliconFlowService): WebRoute[] {
         catch (error) { writeJson(res, (error as { status?: number }).status ?? 400, { ok: false, error: (error as Error).message.slice(0, 200) }) }
       },
     },
-    {
-      kind: 'exact',
-      path: '/api/dsh-devforge/siliconflow/user',
-      handler: async (req, res) => {
-        if (!guard(req, res)) return
-        try { writeJson(res, 200, { ok: true, user: await service.userInfo() }) }
-        catch (error) { writeJson(res, (error as { status?: number }).status ?? 400, { ok: false, error: (error as Error).message.slice(0, 200) }) }
-      },
-    },
+
     {
       kind: 'exact',
       path: '/api/dsh-devforge/siliconflow/models',

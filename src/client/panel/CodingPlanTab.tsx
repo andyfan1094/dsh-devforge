@@ -4,10 +4,12 @@ import type { ArkStatus } from '../../ark/protocol.ts'
 import type { MiniMaxStatus } from '../../minimax/protocol.ts'
 import type { ZhipuStatus } from '../../zhipu/protocol.ts'
 import type { OpenAiGatewayStatus } from '../../openai/protocol.ts'
+import type { SiliconFlowStatus } from '../../siliconflow/protocol.ts'
 import { ArkCodingPlanTab } from './ArkCodingPlanTab.tsx'
 import { TokenUsageBoard } from './TokenUsageBoard.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
+import { SiliconFlowCodingPlanTab } from './SiliconFlowCodingPlanTab.tsx'
 import { CodingPlanAsideUsage, INITIAL_CARD, arkCard, minimaxCard, zhipuCard } from './CodingPlanAsideUsage.tsx'
 import type { OverviewCardState, OverviewCards, OverviewProvider } from './CodingPlanAsideUsage.tsx'
 import { ZhipuCodingPlanTab } from './ZhipuCodingPlanTab.tsx'
@@ -18,19 +20,16 @@ export interface CodingPlanTabProps {
   api: DevforgeApi
 }
 
-type Provider = 'dashboard' | OverviewProvider | 'openai'
+type Provider = 'dashboard' | OverviewProvider | 'openai' | 'siliconflow'
 type Section = 'config' | 'usage'
-
-/** 三家卡片状态的键名，方便统一 setState。 */
-type CardKey = keyof OverviewCards
 
 /** 把单家卡片异常转成卡片错误态的错误文案。 */
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-/** 收敛所有 Coding Plan 服务商为一个工作区；默认落在三家用量总览。
- * 三家用量在本组件统一加载：控制面板总览与左侧「用量速览」共享同一份数据，切页签不重复拉取。 */
+/** 收敛所有 Coding Plan 服务商为一个工作区；默认落在四家服务商总览。
+ * 三家额度卡片在本组件统一加载：控制面板总览与左侧「用量速览」共享同一份数据，硅基流动只展示凭据和模型路由状态。 */
 export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const [provider, setProvider] = useState<Provider>('dashboard')
   const [section, setSection] = useState<Section>('config')
@@ -38,6 +37,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const [minimaxStatus, setMiniMaxStatus] = useState<MiniMaxStatus | null>(null)
   const [arkStatus, setArkStatus] = useState<ArkStatus | null>(null)
   const [openAiStatus, setOpenAiStatus] = useState<OpenAiGatewayStatus | null>(null)
+  const [siliconFlowStatus, setSiliconFlowStatus] = useState<SiliconFlowStatus | null>(null)
   // 三家用量卡片：父层单一数据源，初始全部处于加载态。
   const [cards, setCards] = useState<OverviewCards>({ zhipu: INITIAL_CARD, minimax: INITIAL_CARD, ark: INITIAL_CARD })
   // 正在刷新的商家；'all' = 侧栏整体刷新；null = 空闲。
@@ -47,9 +47,11 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const usageMounted = useRef(false)
 
   const isDashboard = provider === 'dashboard'
-  const active = provider === 'zhipu' ? zhipuStatus : provider === 'minimax' ? minimaxStatus : provider === 'ark' ? arkStatus : provider === 'openai' ? openAiStatus : null
-  const providerLabel = isDashboard ? '三家用量总览' : provider === 'zhipu' ? '智谱 GLM' : provider === 'minimax' ? 'MiniMax' : provider === 'ark' ? '火山方舟' : 'OpenAI 中转'
+  const active = provider === 'zhipu' ? zhipuStatus : provider === 'minimax' ? minimaxStatus : provider === 'ark' ? arkStatus : provider === 'openai' ? openAiStatus : provider === 'siliconflow' ? siliconFlowStatus : null
+  const providerLabel = isDashboard ? '四家服务商总览' : provider === 'zhipu' ? '智谱 GLM' : provider === 'minimax' ? 'MiniMax' : provider === 'ark' ? '火山方舟' : provider === 'siliconflow' ? '硅基流动' : 'OpenAI 中转'
   const toolsCount = provider === 'zhipu' ? 5 : provider === 'minimax' ? 5 : provider === 'openai' ? 1 : 0
+  const capabilityLabel = provider === 'ark' ? '凭据模式' : provider === 'siliconflow' ? '目录能力' : '工具能力'
+  const capabilityValue = provider === 'ark' ? '单 Key' : provider === 'siliconflow' ? '免费/全部模型' : toolsCount + ' 个'
   const statusLabel = active === null ? '正在读取' : active.credentialConfigured ? '已配置' : '待配置'
   const modelsReady = active !== null && active.providerConfigured && active.models.length > 0 && active.models.every((model) => model.configured)
 
@@ -58,17 +60,20 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const zhipuInfo = sideInfo(cards.zhipu)
   const minimaxInfo = sideInfo(cards.minimax)
   const arkInfo = sideInfo(cards.ark)
-  const configuredCount = [zhipuInfo, minimaxInfo, arkInfo].filter((info) => info.loaded && info.configured).length
-  const allLoaded = zhipuInfo.loaded && minimaxInfo.loaded && arkInfo.loaded
+  const siliconFlowInfo = { loaded: siliconFlowStatus !== null, configured: siliconFlowStatus?.credentialConfigured ?? false }
+  const configuredCount = [zhipuInfo, minimaxInfo, arkInfo, siliconFlowInfo].filter((info) => info.loaded && info.configured).length
+  const allLoaded = zhipuInfo.loaded && minimaxInfo.loaded && arkInfo.loaded && siliconFlowInfo.loaded
 
   const onZhipuStatus = useCallback((next: ZhipuStatus): void => setZhipuStatus(next), [])
   const onMiniMaxStatus = useCallback((next: MiniMaxStatus): void => setMiniMaxStatus(next), [])
   const onArkStatus = useCallback((next: ArkStatus): void => setArkStatus(next), [])
   const onOpenAiStatus = useCallback((next: OpenAiGatewayStatus): void => setOpenAiStatus(next), [])
+  const onSiliconFlowStatus = useCallback((next: SiliconFlowStatus): void => setSiliconFlowStatus(next), [])
   const providerMeta = useMemo(() => {
     if (isDashboard) return ''
     if (provider === 'ark') return active?.credentialConfigured ? 'Agent Plan 单 Key 已配置' : '需要填写 Agent Plan API Key'
     if (provider === 'openai') return active?.credentialConfigured ? 'OpenAI 兼容中转站已配置' : '需要填写中转站地址和 API Key'
+    if (provider === 'siliconflow') return active?.credentialConfigured ? '硅基流动凭据已配置 · 可同步免费/全部模型' : '需要填写硅基流动 API Key'
     return active?.credentialConfigured ? '官方凭据已配置' : '需要填写 API Key'
   }, [active, provider, isDashboard])
 
@@ -113,18 +118,27 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
     }
   }, [refreshing, loadZhipu, loadMiniMax, loadArk])
 
-  // 挂载即拉一次三家用量 + 每分钟心跳；卸载后丢弃一切 setState。
+  /** 硅基流动没有官方余额接口，只读取凭据和模型路由状态。 */
+  const loadSiliconFlow = useCallback(async (): Promise<void> => {
+    try {
+      const next = await api.getSiliconFlowStatus()
+      if (usageMounted.current) setSiliconFlowStatus(next)
+    } catch { /* 仅影响总览状态，不阻断其它服务商 */ }
+  }, [api])
+
+  // 挂载即拉一次服务状态；卸载后丢弃一切 setState。
   useEffect(() => {
     usageMounted.current = true
     void loadZhipu()
     void loadMiniMax()
     void loadArk(false)
+    void loadSiliconFlow()
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => {
       usageMounted.current = false
       window.clearInterval(timer)
     }
-  }, [loadZhipu, loadMiniMax, loadArk])
+  }, [loadZhipu, loadMiniMax, loadArk, loadSiliconFlow])
 
   /** 未配置商家跳转到对应使用配置页。 */
   const navigateToProvider = useCallback((target: OverviewProvider): void => {
@@ -142,11 +156,12 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         <dl className={css['planInfoList']}>
           {isDashboard ? (
             <>
-              <div><dt>服务商</dt><dd>3 家</dd></div>
-              <div><dt>凭据已配置</dt><dd data-state={allLoaded && configuredCount === 3 ? 'ok' : 'pending'}>{allLoaded ? configuredCount + '/3' : '读取中'}</dd></div>
+              <div><dt>服务商</dt><dd>4 家</dd></div>
+              <div><dt>凭据已配置</dt><dd data-state={allLoaded && configuredCount === 4 ? 'ok' : 'pending'}>{allLoaded ? configuredCount + '/4' : '读取中'}</dd></div>
               <div><dt>智谱 GLM</dt><dd data-state={zhipuInfo.loaded && zhipuInfo.configured ? 'ok' : 'pending'}>{zhipuInfo.loaded ? (zhipuInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
               <div><dt>MiniMax</dt><dd data-state={minimaxInfo.loaded && minimaxInfo.configured ? 'ok' : 'pending'}>{minimaxInfo.loaded ? (minimaxInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
               <div><dt>火山方舟</dt><dd data-state={arkInfo.loaded && arkInfo.configured ? 'ok' : 'pending'}>{arkInfo.loaded ? (arkInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
+              <div><dt>硅基流动</dt><dd data-state={siliconFlowInfo.loaded && siliconFlowInfo.configured ? 'ok' : 'pending'}>{siliconFlowInfo.loaded ? (siliconFlowInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
             </>
           ) : (
             <>
@@ -154,7 +169,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
               <div><dt>订阅状态</dt><dd data-state={active?.credentialConfigured ? 'ok' : 'pending'}>{statusLabel}</dd></div>
               <div><dt>模型数量</dt><dd>{active?.models.length ?? 0} 个</dd></div>
               <div><dt>模型路由</dt><dd data-state={modelsReady ? 'ok' : 'pending'}>{modelsReady ? '已就绪' : '待完善'}</dd></div>
-              <div><dt>{provider === 'ark' ? '凭据模式' : '工具能力'}</dt><dd data-state="ok">{provider === 'ark' ? '单 Key' : toolsCount + ' 个'}</dd></div>
+              <div><dt>{capabilityLabel}</dt><dd data-state="ok">{capabilityValue}</dd></div>
             </>
           )}
         </dl>
@@ -167,7 +182,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         <header className={css['codePlanHeader']}>
           <div>
             <h3>Coding Plan</h3>
-            <p>统一管理智谱、MiniMax、火山方舟与 OpenAI 中转站的 API Key、模型路由、工具和套餐用量。</p>
+            <p>统一管理智谱、MiniMax、火山方舟、硅基流动与 OpenAI 中转站的 API Key、模型路由和工具。</p>
           </div>
         </header>
 
@@ -176,10 +191,11 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           <button type="button" role="tab" data-active={provider === 'zhipu' ? '' : undefined} aria-selected={provider === 'zhipu'} onClick={() => setProvider('zhipu')}>智谱 GLM</button>
           <button type="button" role="tab" data-active={provider === 'minimax' ? '' : undefined} aria-selected={provider === 'minimax'} onClick={() => setProvider('minimax')}>MiniMax</button>
           <button type="button" role="tab" data-active={provider === 'ark' ? '' : undefined} aria-selected={provider === 'ark'} onClick={() => setProvider('ark')}>火山方舟</button>
+          <button type="button" role="tab" data-active={provider === 'siliconflow' ? '' : undefined} aria-selected={provider === 'siliconflow'} onClick={() => { setProvider('siliconflow'); setSection('config') }}>硅基流动</button>
           <button type="button" role="tab" data-active={provider === 'openai' ? '' : undefined} aria-selected={provider === 'openai'} onClick={() => { setProvider('openai'); setSection('config') }}>OpenAI 中转</button>
         </div>
 
-        {!isDashboard && provider !== 'openai' && (
+        {!isDashboard && provider !== 'openai' && provider !== 'siliconflow' && (
           <div className={css['codePlanSectionTabs']} role="tablist" aria-label="Coding Plan 内容">
             <button type="button" role="tab" data-active={section === 'config' ? '' : undefined} aria-selected={section === 'config'} onClick={() => setSection('config')}>使用配置</button>
             <button type="button" role="tab" data-active={section === 'usage' ? '' : undefined} aria-selected={section === 'usage'} onClick={() => setSection('usage')}>用量统计</button>
@@ -196,6 +212,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           {provider === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" section={section} embedded onStatusChange={onZhipuStatus} />}
           {provider === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" section={section} embedded onStatusChange={onMiniMaxStatus} />}
           {provider === 'ark' && <ArkCodingPlanTab api={api} apiKeyEnv="ARK_CODING_PLAN_API_KEY" section={section} embedded onStatusChange={onArkStatus} />}
+          {provider === 'siliconflow' && <SiliconFlowCodingPlanTab api={api} apiKeyEnv="SILICONFLOW_API_KEY" onStatusChange={onSiliconFlowStatus} />}
           {provider === 'openai' && <OpenAiGatewayTab api={api} apiKeyEnv="OPENAI_GATEWAY_API_KEY" onStatusChange={onOpenAiStatus} />}
         </div>
       </div>

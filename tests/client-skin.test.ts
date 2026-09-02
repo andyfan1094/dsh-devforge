@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import { en, zh, zhDict } from '../src/client/locales.ts'
 import { ACCENT_PRESETS, adjustHex, deriveAccentOverrides, hexToRgb, mixHex, normalizeHex, pickTextOn, relativeLuminance, rgbaStr } from '../src/client/theme/accent.ts'
 import { REQUIRED_TOKEN_KEYS, SKINS, findSkin } from '../src/client/theme/skins.ts'
+import { createSkinRuntime } from '../src/client/theme/skin-runtime.ts'
 
 test('normalizeHex 接受 #rgb / #rrggbb，非法输入返回 null', () => {
   assert.equal(normalizeHex('#abc'), '#aabbcc')
@@ -148,5 +149,51 @@ test('zhDict 中每个 skin.* key 都有对应 en 条目且 zh === en 互译', (
       assert.ok((en[k] ?? '').length > 0, 'en[' + k + '] 不能为空')
       assert.ok((zh[k] ?? '').length > 0, 'zh[' + k + '] 不能为空')
     }
+  }
+})
+
+test('换肤运行时：外部设置刷新与 client 重挂载不会清掉所选皮肤', async () => {
+  const root = globalThis as unknown as { window?: unknown }
+  const hadWindow = Object.prototype.hasOwnProperty.call(root, 'window')
+  const previousWindow = root.window
+  const values = new Map<string, string>()
+  Object.defineProperty(root, 'window', {
+    configurable: true,
+    value: { localStorage: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } } },
+  })
+  const themeListeners = new Set<() => void>()
+  const registrations = new Set<string>()
+  let registerCount = 0
+  let activeId = 'system'
+  const emitThemeChange = (): void => { for (const listener of [...themeListeners]) listener() }
+  const theme = {
+    register: (definition: { id: string }) => { registerCount += 1; registrations.add(definition.id); return () => { registrations.delete(definition.id) } },
+    getTheme: () => ({ active: { id: activeId, colorScheme: activeId === 'system' ? 'light' : 'dark', tokens: {} } }),
+    setTheme: (id: string) => { activeId = id; emitThemeChange() },
+    overrideTokens: () => () => {},
+  }
+  const ctx = { theme, on: (_event: string, listener: () => void) => { themeListeners.add(listener); return () => { themeListeners.delete(listener) } } }
+  const skinId = SKINS[0]!.id
+  try {
+    const first = createSkinRuntime(ctx as never)
+    assert.equal(first.applySkin(skinId), true)
+    const second = createSkinRuntime(ctx as never)
+    assert.equal(registerCount, SKINS.length, '重复挂载不能重复注册主题')
+    assert.equal(second.getState().skinId, skinId)
+
+    activeId = 'system'
+    emitThemeChange()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(activeId, skinId, '外部设置刷新后应恢复持久化皮肤')
+    assert.equal(first.getState().skinId, skinId)
+    assert.equal(second.getState().skinId, skinId)
+
+    first.dispose()
+    assert.equal(registrations.size, SKINS.length, '旧 runtime 释放不能卸掉新 runtime 仍使用的主题')
+    second.dispose()
+    assert.equal(registrations.size, 0, '最后一个 runtime 释放后才卸载主题')
+  } finally {
+    if (hadWindow) Object.defineProperty(root, 'window', { configurable: true, value: previousWindow })
+    else Reflect.deleteProperty(root, 'window')
   }
 })

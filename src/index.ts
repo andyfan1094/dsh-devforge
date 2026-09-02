@@ -48,7 +48,7 @@ import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, typ
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
-import { SiliconFlowService } from './siliconflow/service.ts'
+import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
 import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSettings as RagSettingsPartial } from './rag/protocol.ts'
@@ -208,7 +208,14 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('OpenAI 兼容中转站模型与生图工具'),
     baseURL: z.string().default('').description('OpenAI 兼容中转站地址（裸主机或 /v1 API 根路径）'),
     apiKeyEnv: z.string().default('OPENAI_GATEWAY_API_KEY').description('OpenAI 中转站受管凭据引用'),
-    imageModel: z.string().default('').description('generate_image 使用的生图模型'),
+    imageModel: z.string().default('').description('主端点的 generate_image 生图模型'),
+    endpoints: z.array(z.object({
+      id: z.string().description('端点稳定标识'),
+      name: z.string().description('端点显示名称'),
+      baseURL: z.string().description('端点地址（裸主机或 /v1）'),
+      apiKeyEnv: z.string().description('端点受管凭据引用'),
+      imageModel: z.string().default('').description('该端点的生图模型'),
+    })).default([]).description('OpenAI 兼容中转端点列表；为空时兼容旧版 baseURL 配置'),
     timeoutMs: z.number().min(1000).max(600000).default(300000).description('中转站生图请求超时（毫秒）'),
   }).description('OpenAI 兼容中转站配置'),
   constraints: z.object({
@@ -222,7 +229,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('会话记忆层（自动沉淀+主动注入）总开关；细项在「记忆工作台」页配置'),
   }).description('会话记忆层配置'),
   siliconflow: z.object({
-    enabled: z.boolean().default(true).description('硅基流动 Provider（模型目录+余额看板+免费向量）'),
+    enabled: z.boolean().default(true).description('硅基流动 Provider（模型目录+免费向量）'),
     apiKeyEnv: z.string().default('SILICONFLOW_API_KEY').description('硅基流动受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('硅基流动接口超时（毫秒）'),
   }).description('硅基流动配置'),
@@ -250,7 +257,8 @@ const DEVFORGE_GUIDANCE = [
   '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
-  '- OpenAI 中转站：Coding Plan 页内支持中转站地址、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
+  '- OpenAI 中转站：Coding Plan 页内支持多个中转端点、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
+  '- 硅基流动：Coding Plan 页内支持 API Key、免费/全部模型目录同步；记忆中枢可直接使用 BAAI/bge-m3 向量模型，不依赖余额接口。',
   '- CNB 代码托管（cnb.cool，国内）：cnb_auth_add / cnb_auth_list / cnb_auth_test / cnb_repo_list / cnb_clone / cnb_pull / cnb_push / cnb_commit / cnb_status / cnb_auth_remove；平台仅支持 HTTPS+访问令牌（Git 用户名固定 cnb），令牌经临时 HTTP 头注入绝不进 URL，推送默认关闭需在天工造梦设置打开。',
   '- browser_tabs / browser_upload：管理同一可见 Chrome 的多标签页，并安全上传本机图片；多个会话共用持久登录档案。',
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
@@ -307,6 +315,7 @@ export function apply(ctx: Context, config?: Config): void {
         baseURL: value.openai?.baseURL ?? storedOpenAi.baseURL ?? '',
         apiKeyEnv: value.openai?.apiKeyEnv ?? storedOpenAi.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
         imageModel: value.openai?.imageModel ?? storedOpenAi.imageModel ?? '',
+        endpoints: value.openai?.endpoints?.length ? value.openai.endpoints : storedOpenAi.endpoints ?? [],
         timeoutMs: value.openai?.timeoutMs ?? storedOpenAi.timeoutMs ?? 300000,
       },
       constraints: {
@@ -373,7 +382,8 @@ export function apply(ctx: Context, config?: Config): void {
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
-  const siliconFlowService = new SiliconFlowService(ctx, { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000 })
+  const siliconFlowConfig: SiliconFlowCapabilityConfig = { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000 }
+  const siliconFlowService = new SiliconFlowService(ctx, siliconFlowConfig)
 
   // ---- 启动自动补齐：llm-pi-ai 就绪后把官方模型与推理档位写入设置；无变化时不产生写入。----
   let autoEnsureToken = 0
@@ -424,10 +434,21 @@ export function apply(ctx: Context, config?: Config): void {
     if (value === undefined || value === '') throw new RagEmbeddingError(missing, 400)
     return value
   }
+  const ragOpenAiCredential = async (): Promise<string> => {
+    const openai = resolve().openai
+    const env = openai?.endpoints?.[0]?.apiKeyEnv ?? openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY'
+    return await ragCredential(env, '尚未配置 OpenAI 中转站主端点 API Key（受管凭据引用：' + env + '）。')()
+  }
+  const ragOpenAiBaseURL = (): string => {
+    const openai = resolve().openai
+    const baseURL = openai?.endpoints?.[0]?.baseURL ?? openai?.baseURL ?? ''
+    // ZhipuEmbedder 的 path 固定为 /v1/embeddings，避免用户填写 /v1 时重复拼接。
+    return baseURL.replace(/\/v1\/?$/i, '')
+  }
   const ragEmbedders = {
     zhipu: new ZhipuEmbedder(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。')),
     ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', path: '/embeddings', model: 'doubao-embedding' }),
-    'openai-gateway': new ZhipuEmbedder(ragCredential('OPENAI_GATEWAY_API_KEY', '尚未配置 OpenAI 中转站 API Key（OPENAI_GATEWAY_API_KEY）。'), { baseURLProvider: () => resolve().openai?.baseURL ?? '', path: '/v1/embeddings', model: 'text-embedding-3-small' }),
+    'openai-gateway': new ZhipuEmbedder(ragOpenAiCredential, { baseURLProvider: ragOpenAiBaseURL, path: '/v1/embeddings', model: 'text-embedding-3-small' }),
     // 本地 Ollama：零额度免费无限用（bge-m3 中文 1024 维）；key 占位不影响（Ollama 不校验）。
     ollama: new ZhipuEmbedder(async () => 'ollama-local', { baseURL: 'http://localhost:11434', path: '/v1/embeddings', model: 'bge-m3' }),
     // 自定义 OpenAI 兼容渠道（硅基流动/智谱开放平台/百炼等）：地址与凭据引用名存 rag.settings，
@@ -629,6 +650,7 @@ export function apply(ctx: Context, config?: Config): void {
     Object.assign(minimaxConfig, value.minimax)
     Object.assign(arkConfig, value.ark)
     Object.assign(openAiConfig, value.openai)
+    Object.assign(siliconFlowConfig, value.siliconflow)
     // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
     scheduleAutoEnsureModels()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
@@ -734,6 +756,7 @@ export function apply(ctx: Context, config?: Config): void {
             baseURL: value.openai?.baseURL ?? '',
             apiKeyEnv: value.openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
             imageModel: value.openai?.imageModel ?? '',
+            endpoints: value.openai?.endpoints ?? [],
             timeoutMs: value.openai?.timeoutMs ?? 300000,
           },
         }
