@@ -4,6 +4,7 @@
  */
 
 import { DEVFORGE_API, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
+import type { TokenUsageReport } from '../usage/tokens.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
@@ -489,6 +490,12 @@ export class DevforgeApi {
   async getDevforgeMeta(signal?: AbortSignal): Promise<{ version: string }> {
     const data = await readJson<{ version?: unknown }>(await fetch('/api/dsh-devforge/meta', { signal }))
     return { version: typeof data.version === 'string' ? data.version : '' }
+  }
+
+  /** 读取本机会话库聚合的模型 token 计量报告（今日/本周/全部三窗同返）。 */
+  async getTokenUsage(signal?: AbortSignal): Promise<TokenUsageReport> {
+    const data = await readJson<{ report: TokenUsageReport }>(await fetch(DEVFORGE_API.tokenUsage, { signal }))
+    return data.report
   }
 
   async setCredential(ref: string, value: string): Promise<{ created: boolean; updated: boolean }> {

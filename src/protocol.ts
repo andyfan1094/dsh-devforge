@@ -33,6 +33,8 @@ export const DEVFORGE_API = {
   pluginUpdateCheck: '/api/dsh-devforge/plugin-update/check',
   /** 插件更新：一键升级指定包。 */
   pluginUpdateApply: '/api/dsh-devforge/plugin-update/apply',
+  /** 模型 token 计量：本机会话库聚合的三窗用量报告。 */
+  tokenUsage: '/api/dsh-devforge/usage/tokens',
 } as const
 
 /** CNB 备份：面板状态响应（settings/state/passwordSet/accounts）。 */

@@ -13,6 +13,7 @@ import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
 import { detectProjectGit, listProjects, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
+import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 
 /** 插件版本号（供面板标题展示）。 */
@@ -142,6 +143,21 @@ export function makeRoutes(
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
         const result = restartManager.requestRestart()
         writeJson(res, 202, { ok: true, result })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/usage/tokens',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          // 只读聚合，零凭据参与；首次全量扫描较大时由共享扫描去重并发。
+          const report = await collectTokenUsageShared()
+          writeJson(res, 200, { ok: true, report })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
     {

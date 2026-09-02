@@ -6,6 +6,7 @@ import type { ZhipuStatus } from '../../zhipu/protocol.ts'
 import type { OpenAiGatewayStatus } from '../../openai/protocol.ts'
 import { ArkCodingPlanTab } from './ArkCodingPlanTab.tsx'
 import { CodingPlanAsideUsage } from './CodingPlanAsideUsage.tsx'
+import { TokenUsageBoard } from './TokenUsageBoard.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
 import { UsageOverviewTab, INITIAL_CARD, arkCard, minimaxCard, zhipuCard } from './UsageOverviewTab.tsx'
@@ -159,7 +160,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           )}
         </dl>
         {providerMeta !== '' && <p className={css['planInfoHint']}>{providerMeta}</p>}
-        {/* 套餐信息下方的常驻用量速览：任何服务商页签下都可见。 */}
+        {/* 套餐信息下方的常驻「用量速览」：套餐额度卡片，任何服务商页签下都可见。 */}
         <CodingPlanAsideUsage cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />
       </aside>
 
@@ -187,7 +188,13 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         )}
 
         <div className={css['codePlanContent']}>
-          {isDashboard && <UsageOverviewTab cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />}
+          {isDashboard && (
+            <div className={css['codePlanDashboard']}>
+              {/* 右区上：模型用量（token 计量）；右区下：三家用量总览卡片。 */}
+              <TokenUsageBoard api={api} />
+              <UsageOverviewTab cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />
+            </div>
+          )}
           {provider === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" section={section} embedded onStatusChange={onZhipuStatus} />}
           {provider === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" section={section} embedded onStatusChange={onMiniMaxStatus} />}
           {provider === 'ark' && <ArkCodingPlanTab api={api} apiKeyEnv="ARK_CODING_PLAN_API_KEY" section={section} embedded onStatusChange={onArkStatus} />}

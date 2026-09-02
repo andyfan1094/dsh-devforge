@@ -289,7 +289,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .overviewError { margin: 0; overflow-wrap: anywhere; color: var(--dsw-alias-state-error-primary, #dc2626); font-size: 12px; }
 .overviewCardActions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
 
-/* ---- Coding Plan 侧栏用量速览：套餐信息下方的常驻紧凑看板 ---- */
+/* ---- Coding Plan 侧栏用量速览：套餐信息下方的常驻紧凑看板（左） ---- */
 .asideUsage { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
 .asideUsageHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .asideUsageTitle { margin: 0; font-size: 12px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); }
@@ -319,6 +319,20 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .asideUsageGo { padding: 0; font: inherit; font-size: 11px; color: var(--dsw-alias-state-business-primary, #2563eb); background: transparent; border: none; cursor: pointer; }
 .asideUsageGo:hover { text-decoration: underline; }
 .asideUsageGo:disabled { opacity: .45; cursor: default; }
+
+/* ---- 控制面板右区：模型用量看板（token 计量） ---- */
+.codePlanDashboard { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-grid-gap); overflow: auto; }
+/* 嵌入纵排栈后，总览工作区不再各自滚动，由栈统一滚动。 */
+.codePlanDashboard .overviewWorkspace { flex: none; overflow: visible; }
+.tokenBoardHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.tokenBoardHint { margin: 2px 0 0; font-size: 11px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.tokenBoardActions { display: flex; flex: none; align-items: center; gap: 8px; }
+.tokenBoardRow { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 9px 0 7px; border-top: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.tokenBoardTop { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tokenBoardTop strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.tokenBoardTotal { flex: none; font-size: 12.5px; font-weight: 600; color: var(--dsw-alias-label-primary, #1f2329); font-variant-numeric: tabular-nums; }
+.tokenBoardDetail { overflow-wrap: anywhere; font-size: 11px; color: var(--dsw-alias-label-secondary, #667085); font-variant-numeric: tabular-nums; }
+.tokenBoardSum { margin: 0; padding-top: 9px; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary, #667085); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 960px) {
   .asideUsage { grid-column: 1 / -1; }
