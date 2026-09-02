@@ -8,8 +8,8 @@ import { ArkCodingPlanTab } from './ArkCodingPlanTab.tsx'
 import { TokenUsageBoard } from './TokenUsageBoard.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
-import { UsageOverviewTab, INITIAL_CARD, arkCard, minimaxCard, zhipuCard } from './UsageOverviewTab.tsx'
-import type { OverviewCardState, OverviewCards, OverviewProvider } from './UsageOverviewTab.tsx'
+import { CodingPlanAsideUsage, INITIAL_CARD, arkCard, minimaxCard, zhipuCard } from './CodingPlanAsideUsage.tsx'
+import type { OverviewCardState, OverviewCards, OverviewProvider } from './CodingPlanAsideUsage.tsx'
 import { ZhipuCodingPlanTab } from './ZhipuCodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -159,7 +159,8 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           )}
         </dl>
         {providerMeta !== '' && <p className={css['planInfoHint']}>{providerMeta}</p>}
-        {/* 侧栏不再放用量卡片：套餐额度看右区下方三张卡片，模型 token 计量看右区顶部看板。 */}
+        {/* 辉哥定稿：三家用量卡片挪到左侧栏，默认全部展开；右区只留模型 token 计量看板。 */}
+        <CodingPlanAsideUsage cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />
       </aside>
 
       <div className={css['codePlanMain']}>
@@ -188,9 +189,8 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         <div className={css['codePlanContent']}>
           {isDashboard && (
             <div className={css['codePlanDashboard']}>
-              {/* 右区上：模型用量（token 计量）；右区下：三家用量总览卡片。 */}
+              {/* 右区只放模型用量（token 计量）；套餐用量卡片在左侧栏。 */}
               <TokenUsageBoard api={api} />
-              <UsageOverviewTab cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />
             </div>
           )}
           {provider === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" section={section} embedded onStatusChange={onZhipuStatus} />}
