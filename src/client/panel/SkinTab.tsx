@@ -130,6 +130,12 @@ export function SkinTab({ skin }: SkinTabProps): JSX.Element {
         <div className={css['banner']} data-kind="error" role="alert">{wallpaperError}</div>
       )}
 
+      {state.error !== undefined && state.error !== '' && (
+        <div className={css['banner']} data-kind="error" role="alert">
+          {state.error}
+        </div>
+      )}
+
       {/* 皮肤网格 */}
       <div className={css['sectionTitle']}>{tt('skin.skinsTitle')}</div>
       <div className={css['skinGrid']} role="list">

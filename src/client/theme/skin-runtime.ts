@@ -51,7 +51,11 @@ export const WALLPAPER_FITS: readonly WallpaperFit[] = ['cover', 'contain', 'str
 
 /** 用户态快照（订阅者使用）。 */
 export interface SkinState {
-  /** 当前选中的内置皮肤 id；未选为 null（跟随 system）。 */
+  /**
+   * 当前选中的内置皮肤 id；未选为 null（跟随 system）。
+   * 真相源是 ctx.theme.getTheme().active.id；这里每次 bump 时同步，
+   * 以保证 UI 高亮和 GUI 实际着色始终一致。
+   */
   skinId: string | null
   /** 当前强调色（#rrggbb）；未选为 null。 */
   accent: string | null
@@ -63,6 +67,12 @@ export interface SkinState {
   blur: number
   /** 显示方式。 */
   fit: WallpaperFit
+  /**
+   * 最近一次 localStorage 写入失败的描述（配额耗尽/被浏览器策略禁用等）。
+   * SkinTab 会在 UI 顶部展示一条 banner；写入成功时为 undefined。
+   * 任意一次 set* 调用成功后会自动清除。
+   */
+  error?: string
   /** 变更计数（订阅者用 useEffect 依赖）。 */
   revision: number
 }
@@ -101,13 +111,15 @@ function readStorage(key: string): string | null {
   }
 }
 
-/** 安全写入 localStorage（full / quota exceeded 仅警告）。 */
-function writeStorage(key: string, value: string | null): void {
+/** 安全写入 localStorage；返回是否成功（full / quota exceeded / 隐私模式仅警告）。 */
+function writeStorage(key: string, value: string | null): boolean {
   try {
     if (value === null) window.localStorage.removeItem(key)
     else window.localStorage.setItem(key, value)
+    return true
   } catch (e) {
     console.warn('[dsh-devforge:skin] localStorage 写入失败：', e)
+    return false
   }
 }
 
@@ -173,7 +185,27 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     console.warn('[dsh-devforge:skin] ctx.theme 不可用，换肤功能降级')
   }
 
+  /** 从 ctx.theme 把激活皮肤同步进 state（真相源在官方 runtime）。 */
+  function syncFromTheme(): void {
+    if (themeSvc === undefined) return
+    let activeId: string | null = null
+    try {
+      const snap = themeSvc.getTheme()
+      const candidate = snap.active.id
+      if (typeof candidate === 'string' && findSkin(candidate) !== undefined) {
+        activeId = candidate
+      }
+    } catch {
+      // 取不到快照就跳过，等待下一次 theme/change
+      return
+    }
+    if (activeId !== state.skinId) {
+      state.skinId = activeId
+    }
+  }
+
   function bump(): void {
+    syncFromTheme()
     state.revision += 1
     for (const l of listeners) l(state)
   }
@@ -293,16 +325,38 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     }
   }
 
-  /** 引导恢复：皮肤。 */
+  /** 引导恢复：皮肤。
+   *
+   * 关键风险：ThemeRuntime 的 host settings 持久化只接 light/dark/system，
+   * 因此插件侧 setTheme('devforge-xxx') 在 in-memory 切换 OK，但 settings
+   * 写入会被 schema 拒掉。reload 时 ThemeRuntime 会从 settings 恢复默认
+   * preference，把插件侧的选择覆盖。本地 localStorage 才是稳定真相源，
+   * 所以引导恢复必须主动 setTheme 并在 ThemeRuntime 初始化完成窗口内
+   * 做多次重试，确保 GUI presenter 拿到的是用户选择的皮肤。
+   */
   if (themeSvc !== undefined) {
     const savedSkin = readStorage(KEY_SKIN)
     if (savedSkin !== null && findSkin(savedSkin) !== undefined) {
-      try {
-        themeSvc.setTheme(savedSkin)
-        state.skinId = savedSkin
-      } catch (e) {
-        console.warn('[dsh-devforge:skin] 恢复皮肤失败：', e)
+      const restore = (attempt: number): void => {
+        try {
+          themeSvc.setTheme(savedSkin)
+        } catch (e) {
+          console.warn('[dsh-devforge:skin] 恢复皮肤失败（第 ' + attempt + ' 次）：', e)
+        }
+        let confirmed = false
+        try {
+          confirmed = themeSvc.getTheme().active.id === savedSkin
+        } catch {
+          confirmed = false
+        }
+        if (confirmed || attempt >= 4) {
+          syncFromTheme()
+          bump()
+          return
+        }
+        window.setTimeout(() => { restore(attempt + 1) }, 200)
       }
+      restore(1)
     }
   }
 
@@ -332,10 +386,14 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     if (wp !== null && wp.length > 0) state.wallpaper = wp
   }
 
-  /** 监听主题变更（重新铺壁纸遮罩）。 */
+  /** 监听主题变更：同步 state + 必要时重铺壁纸遮罩。 */
   if (typeof ctx.on === 'function') {
     const off = ctx.on('theme/change', () => {
+      const prevSkinId = state.skinId
+      syncFromTheme()
       if (state.wallpaper !== null) applyWallpaperShade()
+      // 仅在 active.id 发生变化时通知订阅者，避免 wallpaper 滑块拖动时噪声触发重渲染。
+      if (state.skinId !== prevSkinId) bump()
     })
     if (typeof off === 'function') disposeThemeListen = off
   }
@@ -346,16 +404,16 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function applySkin(id: string | null): boolean {
     if (themeSvc === undefined) return false
     if (id === null) {
-      try { themeSvc.setTheme('system') } catch (e) { console.warn('[dsh-devforge:skin] 恢复系统主题失败：', e); return false }
-      state.skinId = null
-      writeStorage(KEY_SKIN, null)
+      try { themeSvc.setTheme('system') } catch (e) { console.warn('[dsh-devforge:skin] 恢复系统主题失败：', e); state.error = 'setTheme 抛错：' + (e instanceof Error ? e.message : String(e)); bump(); return false }
+      if (!writeStorage(KEY_SKIN, null)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+      state.error = undefined
       bump()
       return true
     }
     if (findSkin(id) === undefined) return false
-    try { themeSvc.setTheme(id) } catch (e) { console.warn('[dsh-devforge:skin] 切换皮肤失败：', e); return false }
-    state.skinId = id
-    writeStorage(KEY_SKIN, id)
+    try { themeSvc.setTheme(id) } catch (e) { console.warn('[dsh-devforge:skin] 切换皮肤失败：', e); state.error = 'setTheme 抛错：' + (e instanceof Error ? e.message : String(e)); bump(); return false }
+    if (!writeStorage(KEY_SKIN, id)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+    state.error = undefined
     bump()
     return true
   }
@@ -365,7 +423,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
       disposeAccentLayer?.()
       disposeAccentLayer = null
       state.accent = null
-      writeStorage(KEY_ACCENT, null)
+      if (!writeStorage(KEY_ACCENT, null)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+      state.error = undefined
       bump()
       return true
     }
@@ -373,7 +432,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     if (normalized === null) return false
     applyAccentLayer(normalized)
     state.accent = normalized
-    writeStorage(KEY_ACCENT, normalized)
+    if (!writeStorage(KEY_ACCENT, normalized)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+    state.error = undefined
     bump()
     return true
   }
@@ -390,14 +450,16 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function setWallpaper(url: string | null): boolean {
     if (url === null) {
       state.wallpaper = null
-      writeStorage(KEY_WALLPAPER, null)
+      if (!writeStorage(KEY_WALLPAPER, null)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+      state.error = undefined
       whenBodyReady(applyWallpaper)
       bump()
       return true
     }
     if (!isValidWallpaperUrl(url)) return false
     state.wallpaper = url
-    writeStorage(KEY_WALLPAPER, url)
+    if (!writeStorage(KEY_WALLPAPER, url)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
+    state.error = undefined
     whenBodyReady(applyWallpaper)
     bump()
     return true
@@ -406,7 +468,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function setWallpaperOpacity(opacity: number): void {
     const v = Math.max(0, Math.min(1, opacity))
     state.opacity = v
-    writeStorage(KEY_WALLPAPER_OPACITY, String(v))
+    if (!writeStorage(KEY_WALLPAPER_OPACITY, String(v))) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）' }
+    else { state.error = undefined }
     applyWallpaper()
     bump()
   }
@@ -414,7 +477,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function setWallpaperBlur(blur: number): void {
     const v = Math.max(0, Math.min(24, Math.round(blur)))
     state.blur = v
-    writeStorage(KEY_WALLPAPER_BLUR, String(v))
+    if (!writeStorage(KEY_WALLPAPER_BLUR, String(v))) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）' }
+    else { state.error = undefined }
     if (state.wallpaper !== null) updateWallpaperEl()
     bump()
   }
@@ -422,7 +486,8 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function setWallpaperFit(fit: WallpaperFit): void {
     if (!(WALLPAPER_FITS as readonly string[]).includes(fit)) return
     state.fit = fit
-    writeStorage(KEY_WALLPAPER_FIT, fit)
+    if (!writeStorage(KEY_WALLPAPER_FIT, fit)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）' }
+    else { state.error = undefined }
     if (state.wallpaper !== null) updateWallpaperEl()
     bump()
   }
