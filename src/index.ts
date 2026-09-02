@@ -59,6 +59,7 @@ import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
+import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -134,6 +135,8 @@ export interface Config {
   constraints?: Partial<ConstraintsConfig>
   /** 已安装插件功能总览注入子配置。 */
   pluginBrief?: Partial<PluginBriefConfig>
+  /** 插件更新子配置。 */
+  pluginUpdate?: { enabled?: boolean; profile?: string; sources?: Array<{ packageName: string; repo: string }> }
 }
 
 /** 配置默认值。 */
@@ -195,6 +198,14 @@ export const Config = z.object({
   pluginBrief: z.object({
     enabled: z.boolean().default(true).description('已安装插件功能总览注入开关'),
   }).description('插件能力总览：自动枚举本机安装的插件并把功能说明注入模型上下文'),
+  pluginUpdate: z.object({
+    enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
+    profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
+    sources: z.array(z.object({
+      packageName: z.string().description('npm 包名'),
+      repo: z.string().description('GitHub 仓库（owner/repo），Latest Release 提供新版本'),
+    })).default([{ packageName: 'dsh-devforge', repo: 'andyfan1094/dsh-devforge' }]).description('更新源登记表：只允许升级登记过的包'),
+  }).description('插件更新：对比 GitHub Latest Release 并一键升级'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -276,6 +287,11 @@ export function apply(ctx: Context, config?: Config): void {
       pluginBrief: {
         enabled: value.pluginBrief?.enabled ?? true,
       },
+      pluginUpdate: {
+        enabled: value.pluginUpdate?.enabled ?? true,
+        profile: value.pluginUpdate?.profile ?? 'web',
+        sources: value.pluginUpdate?.sources?.length ? value.pluginUpdate.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
+      },
     }
   }
 
@@ -344,6 +360,19 @@ export function apply(ctx: Context, config?: Config): void {
     })()
   }
 
+  /** 插件更新服务：check 面板数据源 + apply 一键升级（重启仍走 devforge_restart 确认红线）。 */
+  const pluginUpdateService = new PluginUpdateService({
+    getConfig: () => {
+      const value = resolve().pluginUpdate
+      return {
+        enabled: value?.enabled ?? true,
+        profile: value?.profile ?? 'web',
+        sources: value?.sources?.length ? value.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
+      }
+    },
+    readInstalled: createDefaultInstalledReader(),
+  })
+
   /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本与诊断。 */
   let pluginBriefSurface: ReturnType<typeof activatePluginBrief> = {
     dispose: () => {},
@@ -357,7 +386,10 @@ export function apply(ctx: Context, config?: Config): void {
       enabled: resolve().pluginBrief?.enabled ?? true,
       text: pluginBriefSurface.currentText(),
       diag: pluginBriefSurface.diagnostics(),
-    })),
+    }), {
+      check: () => pluginUpdateService.check(),
+      apply: (packageName: string) => pluginUpdateService.apply(packageName),
+    }),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(zhipuService),

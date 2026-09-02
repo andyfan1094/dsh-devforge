@@ -14,6 +14,7 @@ import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageD
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
+import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -203,6 +204,21 @@ export class DevforgeApi {
   /** 请求本机 DSH Web 重启；成功后当前连接会短暂断开。 */
   async restartDsh(): Promise<{ scheduled: boolean; message: string }> {
     const data = await readJson<{ result: { scheduled: boolean; message: string } }>(await fetch(DEVFORGE_API.restart, { method: 'POST' }))
+    return data.result
+  }
+
+  /** 插件更新：检查全部登记源（对比 GitHub Latest Release）。 */
+  async checkPluginUpdates(): Promise<{ enabled: boolean; items: UpdateCheckItem[] }> {
+    return await readJson(await fetch(DEVFORGE_API.pluginUpdateCheck))
+  }
+
+  /** 插件更新：一键升级指定包（白名单内），返回需重启标记。 */
+  async applyPluginUpdate(packageName: string): Promise<PluginUpdateApplyResult> {
+    const data = await readJson<{ result: PluginUpdateApplyResult }>(await fetch(DEVFORGE_API.pluginUpdateApply, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ packageName }),
+    }))
     return data.result
   }
 

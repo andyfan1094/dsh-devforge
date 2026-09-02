@@ -8,6 +8,7 @@
  */
 
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { PluginUpdateApplyResult, UpdateCheckItem } from './plugin-update.ts'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
@@ -78,7 +79,13 @@ function guardRestart(req: import('node:http').IncomingMessage, res: import('nod
 }
 
 /** 组装路由族。 */
-export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore, restartManager: DshWebRestartManager, pluginBrief: () => { enabled: boolean; text: string; diag: { loaderResolved: boolean; entryCount: number; userCount: number; error: string } }): WebRoute[] {
+export function makeRoutes(
+  engine: ForgeEngine,
+  standards: import('./standards.ts').StandardsStore,
+  restartManager: DshWebRestartManager,
+  pluginBrief: () => { enabled: boolean; text: string; diag: { loaderResolved: boolean; entryCount: number; userCount: number; error: string } },
+  pluginUpdate: { check: () => Promise<{ enabled: boolean; items: UpdateCheckItem[] }>; apply: (packageName: string) => Promise<PluginUpdateApplyResult> },
+): WebRoute[] {
   return [
     {
       kind: 'exact',
@@ -98,6 +105,33 @@ export function makeRoutes(engine: ForgeEngine, standards: import('./standards.t
         // 返回当前实际注入的总览文本与诊断，供暂存环境验收「所见即所注」。
         const brief = pluginBrief()
         writeJson(res, 200, { ok: true, enabled: brief.enabled, text: brief.text, diag: brief.diag })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-update/check',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const result = await pluginUpdate.check()
+        writeJson(res, 200, { ok: true, enabled: result.enabled, items: result.items })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-update/apply',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        const body = await readJsonBody(req)
+        const packageName = typeof body?.packageName === 'string' ? body.packageName : ''
+        if (packageName === '') { writeJson(res, 400, { ok: false, error: '缺少 packageName' }); return }
+        try {
+          const result = await pluginUpdate.apply(packageName)
+          writeJson(res, 200, { ok: true, result })
+        } catch (error) {
+          writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
     {

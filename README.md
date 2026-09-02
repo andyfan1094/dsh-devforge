@@ -14,6 +14,7 @@
 8. **可见运营浏览器**：本机前台 Chrome 保存持久登录档案，支持多标签页、页面快照、稳定元素操作和安全图片上传；多个会话共用一个浏览器进程，不复制 Cookie，也不另开隐形浏览器。
 9. **闲鱼运营助手**：发布商品和消息回复分别使用独立标签页，页面状态互不覆盖；真实发布和真实发送均要求用户明确确认，并核验平台结果。
 10. **已安装插件功能总览注入**：自动枚举 Loader 中用户安装的插件并读取各包描述，把「每个插件是干什么的」以动态系统提示节注入所有会话上下文；插件装卸、启停后实时跟随，官方核心内置模块仅汇总计数以防上下文膨胀。可通过设置里的「已安装插件功能总览注入开关」关闭，访问 `GET /api/dsh-devforge/plugin-brief` 可查看当前实际注入文本。
+11. **插件更新**：操作台「插件更新」页签对比 GitHub Latest Release 检查更新源登记表里的插件（默认登记 dsh-devforge 自己，可在设置里加包名→仓库），一键升级走下载 tgz → `dsh plugin add` 的同一条人工验证路径；升级后提示重启 DSH 生效（重启仍需用户确认）。
 
 ## 可见运营浏览器
 
@@ -45,11 +46,21 @@ pnpm run build
 
 ## 从 GitHub 安装
 
+方式一（推荐，Release 直链免构建，其他电脑一条命令）：
+
+```sh
+dsh plugin --profile web add https://github.com/andyfan1094/dsh-devforge/releases/latest/download/dsh-devforge-0.13.0.tgz
+```
+
+每次发版 tgz 文件名带版本号，新版本请到 [Releases 页](https://github.com/andyfan1094/dsh-devforge/releases) 复制对应直链替换；装完重启 DSH Web Host 生效。已装好的机器也可以直接在「天工造梦 → 插件更新」页签一键检查并升级。
+
+方式二（源码安装，目标机执行 `prepare` 构建）：
+
 ```sh
 dsh plugin --profile web add github:andyfan1094/dsh-devforge#main
 ```
 
-GitHub 安装会执行 `prepare` 构建。安装完成后，确认 web profile 的 `package.json` 依赖项和 `dsh.profile.bundles` 均包含 `dsh-devforge`，再重启 DSH Web Host。
+源码安装会执行 `prepare` 构建。安装完成后，确认 web profile 的 `package.json` 依赖项和 `dsh.profile.bundles` 均包含 `dsh-devforge`，再重启 DSH Web Host。
 
 ## 规范文件
 
