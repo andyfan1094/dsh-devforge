@@ -29,7 +29,7 @@ type Tab = 'standards' | 'browser' | 'codeplan' | 'remote' | 'projects' | 'repos
 
 /** 主面板组件。 */
 export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Element {
-  const [tab, setTab] = useState<Tab>('standards')
+  const [tab, setTab] = useState<Tab>('codeplan')
   const [standards, setStandards] = useState<StandardSummary[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
   const [restarting, setRestarting] = useState(false)
@@ -148,9 +148,9 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
       </div>
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
+        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'standards'} data-active={tab === 'standards' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('standards') }}><IconStandards />开发规范</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}><IconBrowser />浏览器</button>
-        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}><IconServer />远程运维</button>
         <button type="button" role="tab" aria-selected={tab === 'projects'} data-active={tab === 'projects' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('projects') }}><IconProject />项目</button>
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
