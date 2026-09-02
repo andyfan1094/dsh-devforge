@@ -27,8 +27,8 @@ export const RAG_API = {
   settingsTest: '/api/dsh-devforge/rag/settings/test',
 } as const
 
-/** 向量渠道（对应天工造梦已接的 Provider，凭据复用受管凭据表）。 */
-export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway'
+/** 向量渠道（对应天工造梦已接的 Provider，凭据复用受管凭据表；ollama=本机免费无限）。 */
+export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama'
 
 /** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */
 export type RagKbSource = 'manual' | 'project' | 'mirror' | 'memory'

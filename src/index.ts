@@ -411,6 +411,8 @@ export function apply(ctx: Context, config?: Config): void {
     zhipu: new ZhipuEmbedder(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。')),
     ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', path: '/embeddings', model: 'doubao-embedding' }),
     'openai-gateway': new ZhipuEmbedder(ragCredential('OPENAI_GATEWAY_API_KEY', '尚未配置 OpenAI 中转站 API Key（OPENAI_GATEWAY_API_KEY）。'), { baseURLProvider: () => resolve().openai?.baseURL ?? '', path: '/v1/embeddings', model: 'text-embedding-3-small' }),
+    // 本地 Ollama：零额度免费无限用（bge-m3 中文 1024 维）；key 占位不影响（Ollama 不校验）。
+    ollama: new ZhipuEmbedder(async () => 'ollama-local', { baseURL: 'http://localhost:11434', path: '/v1/embeddings', model: 'bge-m3' }),
   }
   const ragStore = new RagStore()
   const ragService = new RagService(ragStore, ragEmbedders)

@@ -234,8 +234,8 @@ export function RagTab() {
   )
 }
 /** 渠道中文标签与各渠道默认向量模型提示。 */
-const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转' }
-const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small' }
+const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama' }
+const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3' }
 
 /** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，保存前守卫提示。 */
 function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void }): JSX.Element {
