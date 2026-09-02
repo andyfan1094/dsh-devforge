@@ -14,10 +14,10 @@ import type { RagDocument, RagKnowledgeBase, RagSearchHit, RagSearchRequest, Rag
 import { RagStore, type RagChunkRecord } from './rag-store.ts'
 import { vectorKey } from './embedder.ts'
 
-/** 向量化器接口（ZhipuEmbedder 实现之；单测注入 FakeEmbedder）。 */
+/** 向量化器接口（ZhipuEmbedder 实现；单测注入 FakeEmbedder）。model 每次传入，随设置动态切换。 */
 export interface RagEmbedder {
-  embed(texts: string[]): Promise<Float32Array[]>
-  embedQuery(text: string): Promise<Float32Array>
+  embed(texts: string[], model?: string): Promise<Float32Array[]>
+  embedQuery(text: string, model?: string): Promise<Float32Array>
 }
 
 /** 全局默认设置（面板未配置时的兜底值）。 */
@@ -32,16 +32,22 @@ export const DEFAULT_RAG_SETTINGS: RagSettings = {
 /** RAG 服务（进程内单例由接线层持有）。 */
 export class RagService {
   private readonly store: RagStore
-  private readonly embedder: RagEmbedder
+  /** 渠道 → 向量化器：设置里切渠道即切凭据与端点（面板可配）。 */
+  private readonly embedders: Record<string, RagEmbedder>
   private readonly engines = new Map<string, RagIndexEngine>()
 
-  constructor(store: RagStore, embedder: RagEmbedder) {
+  constructor(store: RagStore, embedders: Record<string, RagEmbedder>) {
     this.store = store
-    this.embedder = embedder
+    this.embedders = embedders
   }
 
   getSettings(): RagSettings {
     return this.store.getRagSettings() ?? DEFAULT_RAG_SETTINGS
+  }
+
+  /** 按当前设置的渠道取向量化器；未知渠道回退智谱。 */
+  pickEmbedder(settings: RagSettings): RagEmbedder {
+    return this.embedders[settings.embedding.provider] ?? this.embedders.zhipu!
   }
 
   putSettings(settings: RagSettings): void {
@@ -79,6 +85,7 @@ export class RagService {
   async ingestText(kbId: string, fileName: string, text: string): Promise<RagDocument> {
     const settings = this.getSettings()
     const model = settings.embedding.model
+    const embedder = this.pickEmbedder(settings)
     const hash = createHash('sha256').update(text).digest('hex')
 
     // 幂等：同名同内容且已就绪 → 零成本返回
@@ -99,7 +106,7 @@ export class RagService {
       else pending.push(i)
     }
     if (pending.length > 0) {
-      const embedded = await this.embedder.embed(pending.map(i => chunks[i].text))
+      const embedded = await embedder.embed(pending.map(i => chunks[i].text), model)
       for (let j = 0; j < pending.length; j++) {
         const chunkIdx = pending[j]
         const key = vectorKey(model, chunks[chunkIdx].text)
@@ -153,7 +160,7 @@ export class RagService {
     const vectorWeight = request.vectorWeight ?? settings.search.vectorWeight
     const kbIds = request.kbIds ?? this.listKbs().map(kb => kb.id)
     if (kbIds.length === 0) return []
-    const queryVector = await this.embedder.embedQuery(request.query)
+    const queryVector = await this.pickEmbedder(settings).embedQuery(request.query, settings.embedding.model)
     const all: RagIndexHit[] = []
     for (const kbId of kbIds) {
       const engine = await this.ensureEngine(kbId)

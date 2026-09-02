@@ -23,6 +23,8 @@ export const RAG_API = {
   search: '/api/dsh-devforge/rag/search',
   /** 全局设置读写。 */
   settings: '/api/dsh-devforge/rag/settings',
+  /** 向量渠道连通性测试（不入库，实时调用）。 */
+  settingsTest: '/api/dsh-devforge/rag/settings/test',
 } as const
 
 /** 向量渠道（对应天工造梦已接的 Provider，凭据复用受管凭据表）。 */

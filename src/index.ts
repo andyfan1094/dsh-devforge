@@ -386,14 +386,19 @@ export function apply(ctx: Context, config?: Config): void {
     diagnostics: () => emptyDiagnostics(),
   }
 
-  // ---- RAG 记忆中枢：智谱 embedding 凭据每次解析（Key 更新无需重启）----
-  const ragEmbedder = new ZhipuEmbedder(async () => {
-    const resolved = await ctx.credentials.resolve(credentialRef('ZAI_CODING_CN_API_KEY'))
+  // ---- RAG 记忆中枢：三渠道向量化器（凭据每次解析，面板设置即切即用）----
+  const ragCredential = (env: string, missing: string) => async (): Promise<string> => {
+    const resolved = await ctx.credentials.resolve(credentialRef(env))
     const value = resolved?.value.trim()
-    if (value === undefined || value === '') throw new RagEmbeddingError('尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。', 400)
+    if (value === undefined || value === '') throw new RagEmbeddingError(missing, 400)
     return value
-  })
-  const ragService = new RagService(new RagStore(), ragEmbedder)
+  }
+  const ragEmbedders = {
+    zhipu: new ZhipuEmbedder(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。')),
+    ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', path: '/embeddings', model: 'doubao-embedding' }),
+    'openai-gateway': new ZhipuEmbedder(ragCredential('OPENAI_GATEWAY_API_KEY', '尚未配置 OpenAI 中转站 API Key（OPENAI_GATEWAY_API_KEY）。'), { baseURLProvider: () => resolve().openai?.baseURL ?? '', path: '/v1/embeddings', model: 'text-embedding-3-small' }),
+  }
+  const ragService = new RagService(new RagStore(), ragEmbedders)
 
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
@@ -414,7 +419,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
-    ...makeRagRoutes(ragService),
+    ...makeRagRoutes(ragService, ragEmbedders),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService)]
   let disposeRoutes: (() => void) | undefined

@@ -4,7 +4,7 @@
  * → 底部一行式设置。样式复用 panel.module.css 主题类（深浅色自动适配），
  * 信息密度优先且守住块间距底线（辉哥排版偏好）。
  */
-import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { RAG_API, type RagDocument, type RagKnowledgeBase, type RagSearchHit, type RagSettings } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 
@@ -233,29 +233,82 @@ export function RagTab() {
     </div>
   )
 }
-/** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。 */
-function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: () => void }): JSX.Element {
-  const { settings, busy, onChange, onSave } = props
+/** 渠道中文标签与各渠道默认向量模型提示。 */
+const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转' }
+const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small' }
+
+/** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，保存前守卫提示。 */
+function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void }): JSX.Element {
+  const { settings, busy, onChange } = props
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState('')
+  /** 初始快照：判断渠道/模型是否发生变化（变化 → 旧向量不兼容，需重新入库）。 */
+  const initialRef = useRef(settings.embedding.provider + '|' + settings.embedding.model)
+
+  const save = (): void => {
+    const key = settings.embedding.provider + '|' + settings.embedding.model
+    if (key !== initialRef.current) {
+      const confirmed = window.confirm('向量模型已切换，旧向量与新空间不兼容：已入库文档需要删除后重新入库（或等待后续版本的自动重嵌）。确认保存？')
+      if (!confirmed) return
+    }
+    props.onSave(settings)
+    initialRef.current = key
+  }
+
+  const testConnection = async (): Promise<void> => {
+    setTesting(true)
+    setTestResult('')
+    try {
+      const data = await api<{ dim: number }>(RAG_API.settingsTest, { method: 'POST', body: JSON.stringify({ provider: settings.embedding.provider, model: settings.embedding.model }) })
+      setTestResult('✅ 连接正常，向量维度 ' + data.dim)
+    } catch (error) {
+      setTestResult('❌ ' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <div style={card}>
       <div style={row}>
-        <span className={css.badge}>向量：{settings.embedding.provider} / {settings.embedding.model}</span>
-        <span className={css.badge}>重排：{settings.rerank.mode}</span>
+        <div style={{ flex: '0 0 130px' }}>
+          <span className={css.fieldLabel}>向量渠道</span>
+          <select className={css.input} value={settings.embedding.provider} onChange={(e) => {
+            const provider = e.target.value as RagSettings['embedding']['provider']
+            onChange({ ...settings, embedding: { provider, model: PROVIDER_MODEL_HINT[provider] ?? settings.embedding.model } })
+          }}>
+            {Object.entries(PROVIDER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+        <div style={{ flex: '0 0 190px' }}>
+          <span className={css.fieldLabel}>向量模型</span>
+          <input className={css.input} value={settings.embedding.model} placeholder={PROVIDER_MODEL_HINT[settings.embedding.provider] ?? '模型名'} onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, model: e.target.value } })} />
+        </div>
+        <button type="button" className={css.ghostButton} disabled={busy || testing} onClick={testConnection}>{testing ? '测试中…' : '测试连接'}</button>
+        <div style={{ flex: '0 0 118px' }}>
+          <span className={css.fieldLabel}>重排</span>
+          <select className={css.input} value={settings.rerank.mode} onChange={(e) => onChange({ ...settings, rerank: { ...settings.rerank, mode: e.target.value as RagSettings['rerank']['mode'] } })}>
+            <option value="zhipu">智谱 rerank</option>
+            <option value="llm">LLM 兜底</option>
+            <option value="off">关闭</option>
+          </select>
+        </div>
         <label style={{ fontSize: 12, opacity: 0.85 }}>块大小
-          <input className={css.input} style={{ width: 72, marginLeft: 6 }} type="number" value={settings.chunk.maxSize} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, maxSize: Number(e.target.value) || 512 } })} />
+          <input className={css.input} style={{ width: 68, marginLeft: 6 }} type="number" value={settings.chunk.maxSize} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, maxSize: Number(e.target.value) || 512 } })} />
         </label>
         <label style={{ fontSize: 12, opacity: 0.85 }}>重叠
-          <input className={css.input} style={{ width: 64, marginLeft: 6 }} type="number" value={settings.chunk.overlap} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, overlap: Number(e.target.value) || 64 } })} />
+          <input className={css.input} style={{ width: 60, marginLeft: 6 }} type="number" value={settings.chunk.overlap} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, overlap: Number(e.target.value) || 64 } })} />
         </label>
         <label style={{ fontSize: 12, opacity: 0.85 }}>默认 Top-K
-          <input className={css.input} style={{ width: 60, marginLeft: 6 }} type="number" value={settings.search.topK} onChange={(e) => onChange({ ...settings, search: { ...settings.search, topK: Number(e.target.value) || 8 } })} />
+          <input className={css.input} style={{ width: 58, marginLeft: 6 }} type="number" value={settings.search.topK} onChange={(e) => onChange({ ...settings, search: { ...settings.search, topK: Number(e.target.value) || 8 } })} />
         </label>
         <label style={{ fontSize: 12, opacity: 0.85 }}>阈值(0=不过滤)
-          <input className={css.input} style={{ width: 64, marginLeft: 6 }} type="number" step="0.05" value={settings.search.threshold} onChange={(e) => onChange({ ...settings, search: { ...settings.search, threshold: Number(e.target.value) || 0 } })} />
+          <input className={css.input} style={{ width: 60, marginLeft: 6 }} type="number" step="0.05" value={settings.search.threshold} onChange={(e) => onChange({ ...settings, search: { ...settings.search, threshold: Number(e.target.value) || 0 } })} />
         </label>
         <div style={{ flex: 1 }} />
-        <button type="button" className={css.ghostButton} disabled={busy} onClick={onSave}>保存设置</button>
+        <button type="button" className={css.ghostButton} disabled={busy} onClick={save}>保存设置</button>
       </div>
+      {testResult !== '' && <div style={{ fontSize: 12, marginTop: 6, opacity: 0.9 }}>{testResult}</div>}
     </div>
   )
 }

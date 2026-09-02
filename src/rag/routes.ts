@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { isLoopbackRequest } from '../loopback.ts'
 import { RagEmbeddingError } from './embedder.ts'
 import { RagParserError, parseFile } from './parser.ts'
-import type { RagService } from './service.ts'
+import type { RagEmbedder, RagService } from './service.ts'
 
 /** RAG 文档上传体上限（PDF/DOCX 走 base64，放宽到 16MB）。 */
 const MAX_BODY = 16 * 1024 * 1024
@@ -58,7 +58,7 @@ function fail(res: import('node:http').ServerResponse, error: unknown): void {
   writeJson(res, 502, { ok: false, error: message.slice(0, 200) })
 }
 
-export function makeRagRoutes(service: RagService): WebRoute[] {
+export function makeRagRoutes(service: RagService, embedders: Record<string, RagEmbedder>): WebRoute[] {
   return [
     {
       kind: 'exact',
@@ -188,6 +188,23 @@ export function makeRagRoutes(service: RagService): WebRoute[] {
           if (typeof body?.topK === 'number' && body.topK > 0) request.topK = Math.floor(body.topK)
           if (typeof body?.vectorWeight === 'number' && body.vectorWeight >= 0 && body.vectorWeight <= 1) request.vectorWeight = body.vectorWeight
           writeJson(res, 200, { ok: true, hits: await service.search(request) })
+        } catch (error) { fail(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/rag/settings/test',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        try {
+          if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+          const body = await readJsonBody(req)
+          const provider = typeof body?.provider === 'string' ? body.provider : ''
+          const model = typeof body?.model === 'string' && body.model.trim() !== '' ? body.model.trim() : ''
+          const embedder = embedders[provider]
+          if (embedder === undefined) { writeJson(res, 400, { ok: false, error: '未知渠道：' + provider }); return }
+          const vector = await embedder.embedQuery('RAG 渠道连通性测试', model === '' ? undefined : model)
+          writeJson(res, 200, { ok: true, dim: vector.length })
         } catch (error) { fail(res, error) }
       },
     },

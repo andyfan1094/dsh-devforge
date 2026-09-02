@@ -14,11 +14,11 @@ import { RagService, type RagEmbedder } from '../src/rag/service.ts'
 /** 伪向量化器：同文本同向量，调用计数器验证防重复计费。 */
 class FakeEmbedder implements RagEmbedder {
   calls = 0
-  async embed(texts: string[]): Promise<Float32Array[]> {
+  async embed(texts: string[], _model?: string): Promise<Float32Array[]> {
     this.calls++
     return texts.map(t => this.vectorOf(t))
   }
-  async embedQuery(text: string): Promise<Float32Array> {
+  async embedQuery(text: string, _model?: string): Promise<Float32Array> {
     this.calls++
     return this.vectorOf(text)
   }
@@ -32,7 +32,7 @@ function makeService(): { service: RagService; fake: FakeEmbedder; dir: string }
   const dir = mkdtempSync(join(tmpdir(), 'rag-service-'))
   const store = new RagStore(join(dir, 'main.db'), join(dir, 'vec.db'))
   const fake = new FakeEmbedder()
-  return { service: new RagService(store, fake), fake, dir }
+  return { service: new RagService(store, { zhipu: fake, ark: fake, 'openai-gateway': fake }), fake, dir }
 }
 
 const DOC_TEXT = '# 部署\n天工造梦暂存实例需要隔离 HOME 启动，端口 3081。\n\n# 生产\n生产实例运行在 3080 端口。'

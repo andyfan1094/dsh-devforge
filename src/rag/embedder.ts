@@ -43,50 +43,62 @@ export function buildRequestBody(model: string, input: string[]): string {
   return JSON.stringify({ model, input })
 }
 
-/** 智谱 embeddings 客户端。 */
+/**
+ * OpenAI 兼容 embeddings 客户端（智谱/方舟/OpenAI 中转三渠道共用，凭据与端点注入）。
+ * 保留 ZhipuEmbedder 名称兼容既有接线；渠道差异只体现在 baseURL/path/model。
+ */
 export class ZhipuEmbedder {
   private readonly resolveApiKey: () => Promise<string>
-  private readonly model: string
+  private readonly defaultModel: string
   private readonly baseURL: string
+  /** 动态地址供给（OpenAI 中转站地址面板可改，每次请求重新读取）。 */
+  private readonly baseURLProvider?: () => string
+  /** embeddings 端点路径（智谱 /api/paas/v4/embeddings，OpenAI 兼容 /embeddings）。 */
+  private readonly path: string
   private readonly timeoutMs: number
   private readonly batchSize: number
 
-  constructor(resolveApiKey: () => Promise<string>, options?: { model?: string; baseURL?: string; timeoutMs?: number; batchSize?: number }) {
+  constructor(resolveApiKey: () => Promise<string>, options?: { model?: string; baseURL?: string; baseURLProvider?: () => string; path?: string; timeoutMs?: number; batchSize?: number }) {
     this.resolveApiKey = resolveApiKey
-    this.model = options?.model ?? 'embedding-3'
+    this.defaultModel = options?.model ?? 'embedding-3'
+    this.baseURLProvider = options?.baseURLProvider
     this.baseURL = options?.baseURL ?? 'https://open.bigmodel.cn'
+    this.path = options?.path ?? '/api/paas/v4/embeddings'
     this.timeoutMs = options?.timeoutMs ?? 30000
     this.batchSize = options?.batchSize ?? 16
   }
 
-  /** 批量向量化：自动分片、按 index 归位、合并返回。 */
-  async embed(texts: string[]): Promise<Float32Array[]> {
+  /** 批量向量化：自动分片、按 index 归位、合并返回。model 可覆盖构造默认。 */
+  async embed(texts: string[], model?: string): Promise<Float32Array[]> {
     if (texts.length === 0) return []
+    const useModel = model ?? this.defaultModel
     const batches = makeBatches(texts, this.batchSize)
     const out: Float32Array[] = new Array(texts.length)
     for (const batch of batches) {
-      const vectors = await this.embedBatch(batch)
-      // 单批内顺序即原文顺序（智谱按 input 顺序返回）
+      const vectors = await this.embedBatch(batch, useModel)
+      // 单批内顺序即原文顺序（上游按 input 顺序返回）
       for (let i = 0; i < batch.length; i++) out[texts.indexOf(batch[i], 0)] = vectors[i]
     }
     return out
   }
 
   /** 单条向量化（查询向量的快速路径）。 */
-  async embedQuery(text: string): Promise<Float32Array> {
-    const [vec] = await this.embedBatch([text])
+  async embedQuery(text: string, model?: string): Promise<Float32Array> {
+    const [vec] = await this.embedBatch([text], model ?? this.defaultModel)
     return vec
   }
 
   /** 单批请求。 */
-  private async embedBatch(batch: string[]): Promise<Float32Array[]> {
+  private async embedBatch(batch: string[], model: string): Promise<Float32Array[]> {
     const apiKey = await this.resolveApiKey()
+    const target = (this.baseURLProvider?.() ?? '').trim() || this.baseURL
+    if (target === '') throw new RagEmbeddingError('尚未配置 OpenAI 中转站地址，请先在天工造梦「Coding Plan」页签填写。', 400)
     let response: Response
     try {
-      response = await fetch(this.baseURL + '/api/paas/v4/embeddings', {
+      response = await fetch(target + this.path, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-        body: buildRequestBody(this.model, batch),
+        body: buildRequestBody(model, batch),
         signal: AbortSignal.timeout(this.timeoutMs),
       })
     } catch (error) {
