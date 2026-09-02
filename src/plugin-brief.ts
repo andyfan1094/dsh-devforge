@@ -210,8 +210,13 @@ export function activatePluginBrief(
   } | null
   if (holder === null || typeof holder !== 'object') return { dispose: () => {}, currentText: () => '' }
 
-  // 读取 loader：优先属性访问，退回 ctx.get('loader')。
-  let loader: unknown = holder.loader
+  // 读取 loader：属性访问与 ctx.get 都可能因 cordis 的 inject 规则抛错，全部包住。
+  let loader: unknown
+  try {
+    loader = holder.loader
+  } catch {
+    loader = undefined
+  }
   if (loader === undefined || loader === null) {
     if (typeof holder.get === 'function') {
       try {

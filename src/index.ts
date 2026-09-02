@@ -70,6 +70,9 @@ export const name = 'devforge'
 export const inject = [
   'webServer', 'tools', 'systemPrompt', 'credentials', 'settings', 'agents', 'agentDefaultModel', 'llm', 'agentPresets',
   'workspaceRegistry', 'sessionPersistence', 'sessionTitle', 'attachments',
+  // 插件能力总览需要枚举 Loader 条目（0.12.0）；cordis 规定 ctx 上访问未声明服务会抛
+  // "cannot get property ... without inject"，所以 loader 必须显式声明（宿主核心服务，恒可用）。
+  'loader',
 ]
 
 /** 设置命名空间。 */
