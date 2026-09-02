@@ -23,8 +23,15 @@ const PLATFORM_MODULES = [
 /** 运行时豁免（快照存储引擎，预设文档记录）。 */
 const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
 
+/**
+ * 主题服务（@deepseek-ai/dsh-client-ui-theme）通过 dsh.client.inject 在 GUI 端
+ * 加载后由模块表解析；客户端 bundle 必须把它视为外部包，否则会拖进 schemastery
+ * 等 node-only 依赖导致 client 包报错（参考 0.14.3 client bundle 修复教训）。
+ */
+const THEME_SERVICE = '@deepseek-ai/dsh-client-ui-theme'
+
 /** loader 模块表应答的 externals。 */
-const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
+const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION, THEME_SERVICE]
 
 /** 宿主半边运行时从 profile 依赖树解析的 SDK 包。 */
 const HOST_EXTERNALS = [

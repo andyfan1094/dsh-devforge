@@ -6,13 +6,15 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { StandardDetail, StandardSummary } from '../../protocol.ts'
 import type { PanelController } from './controller.ts'
+import type { SkinRuntimeApi } from '../theme/skin-runtime.ts'
 import { BrowserTab } from './BrowserTab.tsx'
 import { PluginUpdateTab } from './PluginUpdateTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { ProjectsTab } from './ProjectsTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow } from './icons.tsx'
+import { SkinTab } from './SkinTab.tsx'
+import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow, IconSkin } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import { RagTab } from './RagTab.tsx'
 import { MemoryTab } from './MemoryTab.tsx'
@@ -25,13 +27,15 @@ export interface DevforgePanelProps {
   controller: PanelController
   /** API 客户端。 */
   api: DevforgeApi
+  /** 皮肤运行时（来自 mountPanel 注入；插件可选以保持兼容）。 */
+  skin?: SkinRuntimeApi
 }
 
 /** 页签类型。 */
-type Tab = 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate'
+type Tab = 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
-export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Element {
+export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JSX.Element {
   const [tab, setTab] = useState<Tab>('codeplan')
   const [standards, setStandards] = useState<StandardSummary[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
@@ -162,6 +166,7 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新</button>
+        <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>
         <span className={css['toolbarSpacer']} />
         <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云服务器购买 · 点击直达（新标签打开）">⚡ 雨云服务器购买</a>
       </div>
@@ -213,6 +218,8 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
         {tab === 'feishu' && <FeishuTab api={api} />}
 
         {tab === 'pluginupdate' && <PluginUpdateTab api={api} />}
+
+        {tab === 'skin' && skin !== undefined && <SkinTab skin={skin} />}
 
       </div>
 

@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { DevforgeApi } from './api.ts'
 import { DevforgePanel } from './panel/DevforgePanel.tsx'
 import type { PanelController } from './panel/controller.ts'
+import type { SkinRuntimeApi } from './theme/skin-runtime.ts'
 import css from './panel/panel.module.css'
 
 /** 注入的中心视图容器。 */
@@ -40,8 +41,9 @@ function conversationColumn(): HTMLElement | undefined {
  * 挂载一次性 React root；容器被壳整树替换后才卸载重建。
  * @param controller 唯一开关状态源。
  * @param api 天工造梦 HTTP API。
+ * @param skin 皮肤运行时（可选；缺省时皮肤页签隐藏，其它功能正常）。
  */
-export function mountPanel(controller: PanelController, api: DevforgeApi): () => void {
+export function mountPanel(controller: PanelController, api: DevforgeApi, skin?: SkinRuntimeApi): () => void {
   let root: Root | undefined
   let container: HTMLDivElement | undefined
 
@@ -64,7 +66,7 @@ export function mountPanel(controller: PanelController, api: DevforgeApi): () =>
     container.className = css['view'] ?? ''
     column.appendChild(container)
     root = createRoot(container)
-    root.render(<DevforgePanel controller={controller} api={api} />)
+    root.render(<DevforgePanel controller={controller} api={api} skin={skin} />)
   }
 
   // 首次 apply 可能早于 AppFrame 挂载；同 SSH 一样等中栏出现再创建 view。

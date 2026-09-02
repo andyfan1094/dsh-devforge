@@ -9,11 +9,13 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { DevforgeApi } from './api.ts'
 import { en, zh, type DevforgeKey } from './locales.ts'
 import { mountPanel } from './mount.tsx'
 import { PanelController } from './panel/controller.ts'
 import { mountSidebarEntry } from './sidebar-entry.ts'
+import { createSkinRuntime } from './theme/skin-runtime.ts'
 
 /** locale 命名空间。 */
 const NS = 'dsh-devforge'
@@ -26,7 +28,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** 前置服务（runtime 就绪后再挂 UI）。 */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale', 'settingsScope', 'theme']
 
 /** 类型面（导出纪律：client 面只出类型与插件契约）。 */
 export type { PanelControllerSnapshot } from './panel/controller.ts'
@@ -48,15 +50,24 @@ export function apply(ctx: ClientContext): void {
 
   const controller = new PanelController()
   const api = new DevforgeApi()
+  // 皮肤引导恢复须早于面板首次打开；自身降级不影响其它挂载。
+  let skin: ReturnType<typeof createSkinRuntime> | undefined
+  try {
+    skin = createSkinRuntime(ctx)
+  } catch (error) {
+    console.warn('[dsh-devforge] skin runtime init failed:', error)
+  }
+
   const disposers: Array<() => void> = []
   try {
     disposers.push(mountSidebarEntry(controller))
-    disposers.push(mountPanel(controller, api))
+    disposers.push(mountPanel(controller, api, skin))
   } catch (error) {
     // 挂载失败降级：面板不可用但 GUI 无恙
     console.warn('[dsh-devforge] mount failed:', error)
   }
   ctx.effect(() => () => {
     for (const dispose of disposers.splice(0)) dispose()
+    skin?.dispose()
   }, 'dsh-devforge: ui mounts')
 }

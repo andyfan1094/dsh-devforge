@@ -118,3 +118,16 @@ export function IconUpdate({ size }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** 皮肤：调色板（半圆 + 三色滴），表达换肤 + 强调色。 */
+export function IconSkin({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2v-.5c0-.55.45-1 1-1H16a4 4 0 0 0 4-4 8 8 0 0 0-8-7.5z" />
+      <circle cx="7.5" cy="11" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="11" cy="7" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="9" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="15.5" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
