@@ -4,7 +4,7 @@
  * 上游已停用余额查询接口，因此本页不显示余额字段，控制台链接只用于账户管理；
  * 模型列表通过 Host 端拉取并写入 llm-pi-ai，浏览器不接触 API Key。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { SiliconFlowStatus } from '../../siliconflow/protocol.ts'
 import css from './panel.module.css'
@@ -16,7 +16,6 @@ const SILICONFLOW_CONSOLE = 'https://cloud.siliconflow.cn'
 export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: string; onStatusChange?: (status: SiliconFlowStatus) => void }): JSX.Element {
   const { api, apiKeyEnv, onStatusChange } = props
   const [status, setStatus] = useState<SiliconFlowStatus | null>(null)
-  const [filter, setFilter] = useState<'free' | 'all'>('free')
   const [keyDraft, setKeyDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [savingKey, setSavingKey] = useState(false)
@@ -74,17 +73,13 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
       const next = await api.setupSiliconFlowModels()
       if (!mounted.current) return
       applyStatus(next)
-      setNotice({ kind: 'success', text: '已从硅基流动同步模型：共 ' + next.models.length + ' 个；模型已写入 DSH 模型设置。' })
+      setNotice({ kind: 'success', text: '已按系列精选同步硅基流动模型：共 ' + next.models.length + ' 个对话模型写入 DSH 模型设置。' })
     } catch (error) {
       if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
     } finally { if (mounted.current) setSyncing(false) }
   }
 
-  const visibleModels = useMemo(() => {
-    const models = status?.models ?? []
-    return filter === 'free' ? models.filter((model) => model.free) : models
-  }, [filter, status])
-  const freeCount = status?.models.filter((model) => model.free).length ?? 0
+  const models = status?.models ?? []
   const routeReady = status?.providerConfigured === true && status.models.length > 0 && status.models.every((model) => model.configured)
 
   return (
@@ -107,18 +102,14 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
         <div className={css['usageToolbar']}>
           <h3 className={css['sectionTitle']}>模型目录</h3>
           <div className={css['toolbarSpacer']} />
-          <span className={css['sectionHint']}>免费 {freeCount} · 全部 {status?.models.length ?? 0}</span>
+          <span className={css['sectionHint']}>已收录 {models.length} 个（各系列最新版）</span>
           <button type="button" className={css['ghostButton']} disabled={syncing || status?.credentialConfigured !== true} onClick={() => { void syncModels() }}>{syncing ? '同步中…' : '从硅基流动同步'}</button>
         </div>
-        <div className={css['segmented']} role="group" aria-label="模型筛选">
-          <button type="button" data-active={filter === 'free' ? '' : undefined} onClick={() => setFilter('free')}>免费模型</button>
-          <button type="button" data-active={filter === 'all' ? '' : undefined} onClick={() => setFilter('all')}>全部模型</button>
-        </div>
-        <p className={css['sectionHint']}>免费标签按服务工厂维护的硅基流动免费模型清单标注；硅基流动模型接口不返回价格字段，最终以官网为准。</p>
-        {visibleModels.length === 0 ? <div className={css['empty']}>暂无模型。先保存 Key，再点击「从硅基流动同步」。</div> : (
+        <p className={css['sectionHint']}>同步按系列精选：每个系列只保留版本最高的对话模型；图片/视频/语音/OCR/向量/重排等非对话模型与 Pro/LoRA 变体自动跳过，以在线清单为准。</p>
+        {models.length === 0 ? <div className={css['empty']}>暂无模型。先保存 Key，再点击「从硅基流动同步」。</div> : (
           <div className={css['tableWrap']} style={{ maxHeight: 430, overflow: 'auto' }}>
             <div className={css['resourceList']}>
-              {visibleModels.map((model) => <div key={model.id} className={css['resourceRow']}>
+              {models.map((model) => <div key={model.id} className={css['resourceRow']}>
                 <div className={css['resourceInfo']}><strong className={css['resourceTitle']}>{model.id}</strong><span className={css['resourceMeta']}>{model.configured ? '已写入 DSH 模型路由' : '待同步到 DSH'}</span></div>
                 {model.free && <span className={css['badge']} data-kind="success">免费</span>}
                 <span className={css['badge']} data-kind={model.configured ? 'success' : 'pending'}>{model.configured ? '已接入' : '待接入'}</span>

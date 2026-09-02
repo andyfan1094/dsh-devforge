@@ -1,8 +1,8 @@
 /**
  * 硅基流动 SiliconFlow 能力服务 —— 模型目录、受管凭据与 RAG 向量入口。
  *
- * - 模型目录：GET /v1/models 全量合并进 llm-pi-ai providers.siliconflow（会话可直接选）；
- *   FREE_MODELS 内置免费标注（参考，以官网为准），免费/全部可筛；
+ * - 模型目录：GET /v1/models 按系列精选最新版对话模型后合并进 llm-pi-ai providers.siliconflow；
+ *   FREE_MODELS 内置免费标注（参考，以官网为准）；
  * - 凭据：SILICONFLOW_API_KEY 受管引用，每次请求重新解析；错误一律脱敏。
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -46,6 +46,65 @@ export function parseModelIds(payload: unknown): string[] {
     if (typeof id === 'string' && id.trim() !== '' && !ids.includes(id.trim())) ids.push(id.trim())
   }
   return ids
+}
+
+/** 非对话用途关键词：图片/视频/语音/OCR/向量/重排等不进聊天模型目录。 */
+const NON_CHAT_MODEL_PATTERN = /embedding|reranker|bge|image|i2v|t2v|asr|gsr|tts|ocr|voice|captioner|kolors|whisper/i
+
+/** 从模型名提取版本号：跳过参数规模（32B/A13B）与日期快照（0414/2507）。 */
+function parseModelVersion(base: string): number[] | null {
+  for (const token of base.split(/[-_]/)) {
+    if (/^\d{4}$/.test(token)) continue
+    const match = /^([A-Za-z]+)?(\d+(?:\.\d+)*)([A-Za-z]+)?$/.exec(token)
+    if (match === null) continue
+    if ((match[3] ?? '').toLowerCase() === 'b') continue
+    return match[2]!.split('.').map(Number)
+  }
+  return null
+}
+
+/** 逐段比较版本号；缺位按 0 补齐（3 < 3.5，5.2 > 4.5）。 */
+function compareVersions(a: number[], b: number[]): number {
+  const length = Math.max(a.length, b.length)
+  for (let index = 0; index < length; index += 1) {
+    const left = a[index] ?? 0
+    const right = b[index] ?? 0
+    if (left !== right) return left - right
+  }
+  return 0
+}
+
+/**
+ * 按系列精选最新版对话模型（辉哥定稿：每系列只保留版本最高的那批）。
+ * 规则：剔除 Pro/LoRA 变体与图片/视频/语音/OCR/向量/重排等非对话模型；
+ * 以「系列 + 能力线（chat/vl/omni/coder）」分组只留版本最高的成员；
+ * 无版本号的模型（如 Seed-OSS-36B）随所在组整体保留；跨组织同名系列合并为一族。
+ */
+export function curateLatestChatModels(ids: string[]): string[] {
+  const families = new Map<string, Array<{ id: string; version: number[] | null }>>()
+  for (const raw of ids) {
+    if (raw.startsWith('Pro/') || raw.startsWith('LoRA/')) continue
+    if (NON_CHAT_MODEL_PATTERN.test(raw)) continue
+    const base = raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw
+    const tag = /-VL(-|$)|\d+V$/.test(base) ? 'vl' : /omni/i.test(base) ? 'omni' : /coder|code/i.test(base) ? 'coder' : 'chat'
+    const series = (/^[A-Za-z]+/.exec(base)?.[0] ?? base).toLowerCase()
+    const key = series + ':' + tag
+    const bucket = families.get(key) ?? []
+    bucket.push({ id: raw, version: parseModelVersion(base) })
+    families.set(key, bucket)
+  }
+  const result: string[] = []
+  for (const bucket of families.values()) {
+    const versioned = bucket.filter((item): item is { id: string; version: number[] } => item.version !== null)
+    if (versioned.length === 0) {
+      for (const item of bucket) result.push(item.id)
+      continue
+    }
+    let max = versioned[0]!.version
+    for (const item of versioned) if (compareVersions(item.version, max) > 0) max = item.version
+    for (const item of versioned) if (compareVersions(item.version, max) === 0) result.push(item.id)
+  }
+  return result.sort()
 }
 
 /** 合并 siliconflow provider 配置：只补缺失模型和凭据引用，保留用户显式字段。 */
@@ -95,10 +154,10 @@ export class SiliconFlowService {
     }
   }
 
-  /** 拉取全量模型清单并合并进 DSH 模型目录（会话可直接选）。 */
+  /** 拉取在线模型清单，按系列精选最新版对话模型后合并进 DSH 模型目录。 */
   async ensureModels(): Promise<SiliconFlowStatus> {
     const apiKey = await this.resolveApiKey()
-    const ids = parseModelIds(await this.get('/models', apiKey))
+    const ids = curateLatestChatModels(parseModelIds(await this.get('/models', apiKey)))
     if (ids.length === 0) throw new SiliconFlowServiceError('硅基流动模型清单为空（检查 Key 与网络）。', 502)
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)

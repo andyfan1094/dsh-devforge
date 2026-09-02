@@ -12,7 +12,7 @@ import { join } from 'node:path'
 // store.db 兜底写入会打开真实默认路径，测试一律隔离到临时 HOME。
 process.env.DSH_HOME = join(tmpdir(), 'dsh-devforge-test-' + String(process.pid))
 
-const { mergeSiliconFlowProvider, parseModelIds, SILICONFLOW_PROVIDER_ID } = await import('../src/siliconflow/service.ts')
+const { curateLatestChatModels, mergeSiliconFlowProvider, parseModelIds, SILICONFLOW_PROVIDER_ID } = await import('../src/siliconflow/service.ts')
 
 test('provider 合并：目录外路由必须带 api 与 baseURL，容量走 provider 兜底', () => {
   const merged = mergeSiliconFlowProvider(undefined, 'SILICONFLOW_API_KEY', ['deepseek-ai/DeepSeek-V4-Flash', 'BAAI/bge-m3'])
@@ -46,3 +46,38 @@ test('模型清单解析：兼容 data 数组、裸数组并去重空值', () =>
   assert.deepEqual(parseModelIds(null), [])
   assert.equal(SILICONFLOW_PROVIDER_ID, 'siliconflow')
 })
+
+test('模型精选：每系列只保留最高版本，剔除非对话与 Pro/LoRA 变体', () => {
+  const curated = curateLatestChatModels([
+    'zai-org/GLM-5.2', 'Pro/zai-org/GLM-5.1', 'zai-org/GLM-4.5V', 'zai-org/GLM-4.5-Air', 'THUDM/GLM-4-32B-0414', 'THUDM/GLM-Z1-9B-0414',
+    'deepseek-ai/DeepSeek-V4-Flash', 'deepseek-ai/DeepSeek-V4-Pro', 'deepseek-ai/DeepSeek-V3.2', 'Pro/deepseek-ai/DeepSeek-V3.2', 'deepseek-ai/DeepSeek-R1',
+    'Qwen/Qwen3.6-35B-A3B', 'Qwen/Qwen3.6-27B', 'Qwen/Qwen3.5-397B-A17B', 'Qwen/Qwen3-32B', 'Qwen/Qwen2.5-72B-Instruct', 'LoRA/Qwen/Qwen2.5-7B-Instruct',
+    'Qwen/Qwen3-VL-32B-Instruct', 'Qwen/Qwen3-VL-32B-Thinking', 'Qwen/Qwen3-VL-Embedding-8B', 'Qwen/Qwen3-Omni-30B-A3B-Instruct', 'Qwen/Qwen3-Omni-30B-A3B-Captioner', 'Qwen/Qwen3-Coder-30B-A3B-Instruct',
+    'moonshotai/Kimi-K2.7-Code', 'Pro/moonshotai/Kimi-K2.6', 'MiniMaxAI/MiniMax-M2.5', 'meituan-longcat/LongCat-2.0', 'nex-agi/Nex-N2-Pro', 'stepfun-ai/Step-3.5-Flash',
+    'inclusionAI/Ling-flash-2.0', 'inclusionAI/Ling-mini-2.0', 'tencent/Hunyuan-MT-7B', 'tencent/Hunyuan-A13B-Instruct', 'ByteDance-Seed/Seed-OSS-36B-Instruct',
+    'Tongyi-MAI/Z-Image-Turbo', 'Wan-AI/Wan2.2-T2V-A14B', 'BAAI/bge-m3', 'Pro/BAAI/bge-m3', 'XingChenAGI/XingChenASR-V3.2', 'deepseek-ai/DeepSeek-OCR', 'FunAudioLLM/CosyVoice2-0.5B',
+  ])
+  assert.deepEqual(curated, [
+    'ByteDance-Seed/Seed-OSS-36B-Instruct',
+    'MiniMaxAI/MiniMax-M2.5',
+    'Qwen/Qwen3-Coder-30B-A3B-Instruct',
+    'Qwen/Qwen3-Omni-30B-A3B-Instruct',
+    'Qwen/Qwen3-VL-32B-Instruct',
+    'Qwen/Qwen3-VL-32B-Thinking',
+    'Qwen/Qwen3.6-27B',
+    'Qwen/Qwen3.6-35B-A3B',
+    'deepseek-ai/DeepSeek-V4-Flash',
+    'deepseek-ai/DeepSeek-V4-Pro',
+    'inclusionAI/Ling-flash-2.0',
+    'inclusionAI/Ling-mini-2.0',
+    'meituan-longcat/LongCat-2.0',
+    'moonshotai/Kimi-K2.7-Code',
+    'nex-agi/Nex-N2-Pro',
+    'stepfun-ai/Step-3.5-Flash',
+    'tencent/Hunyuan-A13B-Instruct',
+    'tencent/Hunyuan-MT-7B',
+    'zai-org/GLM-4.5V',
+    'zai-org/GLM-5.2',
+  ])
+})
+

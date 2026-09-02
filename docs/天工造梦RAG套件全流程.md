@@ -89,7 +89,7 @@
 
 ### 0.16.3 Coding Plan 与稳定性补强 ✅ 已完成
 
-- 硅基流动：Coding Plan 内提供独立页签、受管 API Key、免费参考模型/全部在线模型目录同步；RAG 直接选择硅基流动 BAAI/bge-m3（1024 维），上游已停用的余额接口不再接入。
+- 硅基流动：Coding Plan 内提供独立页签、受管 API Key、按系列精选最新版对话模型目录同步（0.16.4 补线协议声明，0.16.5 系列精选）；RAG 直接选择硅基流动 BAAI/bge-m3（1024 维），上游已停用的余额接口不再接入。
 - OpenAI 中转：保留旧版 baseURL/apiKeyEnv/imageModel 字段与 openai-gateway provider id，同时支持多个端点、独立凭据引用、分别同步模型路由和端点级生图模型；删除端点时清理对应 provider。
 - 皮肤稳定性：客户端重挂载共享主题注册租约；模型选择或设置刷新造成 ThemeRuntime 短暂回到 system 时，按本地持久化选择自动恢复。
 
