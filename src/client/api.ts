@@ -4,7 +4,7 @@
  */
 
 import { DEVFORGE_API, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
-import type { TokenUsageReport } from '../usage/tokens.ts'
+import type { TokenUsageReport } from '../usage/types.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'

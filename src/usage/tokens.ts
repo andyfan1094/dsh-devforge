@@ -44,46 +44,10 @@ interface CacheEntry extends FileScanResult {
   size: number
 }
 
-/** 按模型聚合的一行用量（对外展示模型）。 */
-export interface TokenUsageRow {
-  provider: string
-  model: string
-  requests: number
-  inputTokens: number
-  outputTokens: number
-}
-
-/** 一个时间窗的聚合结果。 */
-export interface TokenUsageWindow {
-  /** 汇总行（全部模型，不截断）。 */
-  requests: number
-  inputTokens: number
-  outputTokens: number
-  /** 按总 token 降序的模型明细。 */
-  rows: TokenUsageRow[]
-}
-
-/** 单日 token 用量点（趋势图数据源，day 为本地日期键升序）。 */
-export interface TokenUsageDailyPoint {
-  day: string
-  inputTokens: number
-  outputTokens: number
-  requests: number
-}
-
-/** 三窗 token 用量报告（一次扫描同时给出，前端切换零请求）。 */
-export interface TokenUsageReport {
-  updatedAt: number
-  /** 扫描到的会话文件数。 */
-  fileCount: number
-  /** 解析失败被跳过的文件（含原因），正常应为空。 */
-  skipped: Array<{ file: string; reason: string }>
-  today: TokenUsageWindow
-  week: TokenUsageWindow
-  all: TokenUsageWindow
-  /** 按本地日升序的每日用量序列（全量历史，前端自行截取最近 N 天画趋势图）。 */
-  daily: TokenUsageDailyPoint[]
-}
+// 用量类型拆至同目录 types.ts（纯类型零 node 依赖）：client 侧只许 import types.ts，
+// 本文件（node:zlib/node:fs 实现）绝不能进入客户端 bundle（0.14.3 彻底修复）。
+import type { TokenUsageRow, TokenUsageWindow, TokenUsageDailyPoint, TokenUsageReport } from './types.ts'
+export type { TokenUsageRow, TokenUsageWindow, TokenUsageDailyPoint, TokenUsageReport }
 
 /** 内部聚合键分隔符（单元分隔符，不会出现在 provider/model 名里）。 */
 const KEY_SEP = '\u241F'

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import { formatLocalDay } from '../../usage/day-format.ts'
-import type { TokenUsageReport, TokenUsageRow } from '../../usage/tokens.ts'
+import type { TokenUsageReport, TokenUsageRow } from '../../usage/types.ts'
 import css from './panel.module.css'
 
 export interface TokenUsageBoardProps {
