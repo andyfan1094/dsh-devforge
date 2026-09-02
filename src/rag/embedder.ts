@@ -102,22 +102,22 @@ export class ZhipuEmbedder {
         signal: AbortSignal.timeout(this.timeoutMs),
       })
     } catch (error) {
-      throw new RagEmbeddingError('智谱 embeddings 请求失败：' + safeEmbeddingError(error))
+      throw new RagEmbeddingError('向量渠道请求失败：' + safeEmbeddingError(error))
     }
     if (!response.ok) {
       const body = await response.text().catch(() => '')
-      throw new RagEmbeddingError('智谱 embeddings HTTP ' + response.status + '：' + safeEmbeddingError(body))
+      throw new RagEmbeddingError('向量渠道 HTTP ' + response.status + '：' + safeEmbeddingError(body))
     }
     const payload = (await response.json()) as { data?: Array<{ embedding?: number[]; index?: number }>; error?: { message?: string } }
     if (payload.error?.message !== undefined) {
-      throw new RagEmbeddingError('智谱 embeddings 拒绝：' + safeEmbeddingError(payload.error.message))
+      throw new RagEmbeddingError('向量渠道拒绝：' + safeEmbeddingError(payload.error.message))
     }
     if (!Array.isArray(payload.data) || payload.data.length !== batch.length) {
-      throw new RagEmbeddingError('智谱 embeddings 返回条数不符（期望 ' + batch.length + '）')
+      throw new RagEmbeddingError('向量渠道返回条数不符（期望 ' + batch.length + '）')
     }
     return payload.data.map(item => {
       const vec = item.embedding
-      if (!Array.isArray(vec) || vec.length === 0) throw new RagEmbeddingError('智谱 embeddings 返回向量无效')
+      if (!Array.isArray(vec) || vec.length === 0) throw new RagEmbeddingError('向量渠道返回向量无效')
       return Float32Array.from(vec)
     })
   }
