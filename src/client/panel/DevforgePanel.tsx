@@ -37,6 +37,8 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
   const [loaded, setLoaded] = useState(false)
   /** 仅用于打开面板时刷新数据；真正的 view 显隐由 mount.tsx 的 html active CSS 接管。 */
   const [panelOpen, setPanelOpen] = useState(() => controller.getSnapshot().panelOpen)
+  /** 信息密度档位：默认紧凑（一屏多信息不拥挤），偏好写入 localStorage。 */
+  const [density, setDensity] = useState<'compact' | 'cozy'>(() => (localStorage.getItem('dsh-devforge-density') === 'cozy' ? 'cozy' : 'compact'))
   /** 插件版本号，标题旁展示。 */
   const [version, setVersion] = useState('')
 
@@ -109,8 +111,14 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
     }
   }
 
+  /** 切换密度档并持久化；样式侧由 .panel[data-density] 的 token 覆盖生效。 */
+  const applyDensity = (next: 'compact' | 'cozy'): void => {
+    setDensity(next)
+    try { localStorage.setItem('dsh-devforge-density', next) } catch { /* 存储失败仅影响记忆偏好，不影响当次生效 */ }
+  }
+
   return (
-    <div className={css['panel']} data-dsh-plugin="devforge">
+    <div className={css['panel']} data-dsh-plugin="devforge" data-density={density}>
       <div className={css['panelHeader']}>
         <button
           type="button"
@@ -123,6 +131,10 @@ export function DevforgePanel({ controller, api }: DevforgePanelProps): JSX.Elem
           <span>返回会话</span>
         </button>
         <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconTiangong size={16} /></span>天工造梦{version !== '' && <span className={css['panelVersion']}>v{version}</span>}</h2>
+        <div className={css['segmented']} role="group" aria-label="信息密度" title="紧凑：一屏多信息不拥挤；舒适：更宽松留白">
+          <button type="button" data-active={density === 'compact' || undefined} onClick={() => applyDensity('compact')}>紧凑</button>
+          <button type="button" data-active={density === 'cozy' || undefined} onClick={() => applyDensity('cozy')}>舒适</button>
+        </div>
         <button
           type="button"
           className={css['ghostButton']}
