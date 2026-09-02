@@ -12,7 +12,7 @@ import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type 
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
-import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
+import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
@@ -401,9 +401,15 @@ export class DevforgeApi {
     return data.status
   }
 
-  /** 调用中转站 GET /v1/models 并同步聊天模型路由（以中转站返回为准）。 */
-  async fetchOpenAiGatewayModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; removed: string[]; kept: string[]; total: number }> {
-    return await readJson(await fetch(OPENAI_GATEWAY_API.fetchModels, { method: 'POST', signal }))
+  /** 保存单个 OpenAI 中转端点，不改写其它端点。 */
+  async saveOpenAiGatewayEndpoint(endpoint: OpenAiGatewayEndpointConfig, signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
+    const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint }), signal }))
+    return data.status
+  }
+
+  /** 调用中转站 GET /v1/models，并返回端点级成功或失败结果。 */
+  async fetchOpenAiGatewayModels(endpointId?: string, signal?: AbortSignal): Promise<OpenAiGatewayFetchModelsResult> {
+    return await readJson(await fetch(OPENAI_GATEWAY_API.fetchModels, { method: 'POST', headers: { 'content-type': 'application/json' }, body: endpointId === undefined ? undefined : JSON.stringify({ endpointId }), signal }))
   }
 
   /** 读取智谱凭据和最新模型的脱敏状态。 */

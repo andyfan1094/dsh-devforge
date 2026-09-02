@@ -4,6 +4,7 @@
 export const OPENAI_GATEWAY_API = {
   status: '/api/dsh-devforge/openai/status',
   config: '/api/dsh-devforge/openai/config',
+  endpoint: '/api/dsh-devforge/openai/endpoint',
   fetchModels: '/api/dsh-devforge/openai/fetch-models',
 } as const
 
@@ -29,6 +30,31 @@ export interface OpenAiGatewayEndpointStatus extends OpenAiGatewayEndpointConfig
 }
 
 /** 中转站配置保存请求；API Key 继续走通用受管凭据路由。 */
+/** 单个端点获取模型的结果；失败时保留该端点已有路由。 */
+export interface OpenAiGatewayEndpointFetchResult {
+  endpointId: string
+  providerId: string
+  ok: boolean
+  modelCount: number
+  added: string[]
+  removed: string[]
+  kept: string[]
+  retained: boolean
+  error?: string
+}
+
+/** 批量获取模型结果；端点失败不影响其它端点。 */
+export interface OpenAiGatewayFetchModelsResult {
+  status: OpenAiGatewayStatus
+  results: OpenAiGatewayEndpointFetchResult[]
+  added: string[]
+  removed: string[]
+  kept: string[]
+  total: number
+  succeeded: number
+  failed: number
+}
+
 export interface OpenAiGatewayConfigPatch {
   /** 保留字段：旧版单端点请求继续可用；传 endpoints 时取第一个作为主端点镜像。 */
   baseURL?: string

@@ -95,7 +95,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     let index = endpoints.length + 1
     let id = 'endpoint-' + index
     while (used.has(id)) { index += 1; id = 'endpoint-' + index }
-    const endpoint: EndpointDraft = { id, name: '端点 ' + index, baseURL: '', apiKeyEnv: apiKeyEnv || 'OPENAI_GATEWAY_API_KEY', imageModel: '', keyDraft: '' }
+    const endpoint: EndpointDraft = { id, name: '端点 ' + index, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_' + id.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase() + '_API_KEY', imageModel: '', keyDraft: '' }
     setEndpoints((current) => [...current, endpoint])
     setSelectedId(id)
     setNotice(null)
@@ -143,7 +143,20 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     }
   }
 
-  /** 从所有端点获取模型，以各端点返回为准同步聊天模型路由。 */
+  /** 保存当前端点；凭据和配置只写入当前端点。 */
+  const saveSelected = async (): Promise<void> => {
+    if (selected === undefined || selected.baseURL.trim() === '' || selected.apiKeyEnv.trim() === '' || selected.name.trim() === '') { setNotice({ kind: 'error', text: '请补齐当前端点名称、地址和凭据引用。' }); return }
+    setSaving(true); setNotice(null)
+    try {
+      if (selected.keyDraft.trim() !== '') await api.setCredential(selected.apiKeyEnv.trim(), selected.keyDraft.trim())
+      const next = await api.saveOpenAiGatewayEndpoint({ id: selected.id.trim(), name: selected.name.trim(), baseURL: selected.baseURL.trim(), apiKeyEnv: selected.apiKeyEnv.trim(), ...(selected.imageModel?.trim() ? { imageModel: selected.imageModel.trim() } : {}) })
+      if (!mounted.current) return
+      applyStatus(next); setNotice({ kind: 'success', text: '已保存当前端点，其他端点未改动。' })
+    } catch (error) { if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) }) }
+    finally { if (mounted.current) setSaving(false) }
+  }
+
+  /** 从所有端点获取模型；单个失败时继续并显示端点级结果。 */
   const fetchModels = async (): Promise<void> => {
     if (endpoints.length === 0) { setNotice({ kind: 'error', text: '请先添加至少一个中转端点。' }); return }
     setFetching(true)
@@ -152,12 +165,27 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
       const result = await api.fetchOpenAiGatewayModels()
       if (!mounted.current) return
       applyStatus(result.status)
-      setNotice({ kind: 'success', text: '已获取全部端点模型：新增 ' + result.added.length + '、移除 ' + result.removed.length + '、保留 ' + result.kept.length + '，合计 ' + result.total + '。' })
+      const failed = result.results.filter((item) => !item.ok)
+      setNotice({ kind: failed.length === 0 ? 'success' : 'error', text: '端点获取完成：成功 ' + result.succeeded + '、失败 ' + result.failed + '；新增 ' + result.added.length + '、移除 ' + result.removed.length + '、合计 ' + result.total + '。' + (failed.length > 0 ? '失败端点：' + failed.map((item) => item.error ?? item.endpointId).join('；') : '') })
     } catch (error) {
       if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
     } finally {
       if (mounted.current) setFetching(false)
     }
+  }
+
+  /** 只获取当前端点模型，失败时不影响其它端点。 */
+  const fetchSelectedModels = async (): Promise<void> => {
+    if (selected === undefined) return
+    setFetching(true); setNotice(null)
+    try {
+      const result = await api.fetchOpenAiGatewayModels(selected.id)
+      if (!mounted.current) return
+      applyStatus(result.status)
+      const item = result.results.find((entry) => entry.endpointId === selected.id)
+      setNotice({ kind: item?.ok === true ? 'success' : 'error', text: item?.ok === true ? '已获取当前端点 ' + item.modelCount + ' 个模型。' : (item?.error ?? '当前端点获取失败。') })
+    } catch (error) { if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) }) }
+    finally { if (mounted.current) setFetching(false) }
   }
 
   const modelOptions = useMemo(() => {
@@ -199,7 +227,11 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
           {selected !== undefined && <div className={css['endpointEditor']}>
             <div className={css['endpointHeader']}>
               <div><h4>{selected.name || '端点配置'}</h4><span>provider：{selectedStatus?.providerId ?? (selected === endpoints[0] ? 'openai-gateway' : '待保存')}</span></div>
-              <button type="button" className={css['dangerButton']} onClick={removeSelected}>删除端点</button>
+              <div className={css['inlineActions']}>
+                <button type="button" className={css['ghostButton']} disabled={saving || fetching} onClick={() => { void saveSelected() }}>{saving ? '保存中…' : '保存当前端点'}</button>
+                <button type="button" className={css['ghostButton']} disabled={saving || fetching} onClick={() => { void fetchSelectedModels() }}>{fetching ? '获取中…' : '获取当前模型'}</button>
+                <button type="button" className={css['dangerButton']} onClick={removeSelected}>删除端点</button>
+              </div>
             </div>
             <div className={css['fieldGrid']}>
               <label className={css['compactField']}><span className={css['fieldLabel']}>显示名称</span><input className={css['input']} value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} /></label>

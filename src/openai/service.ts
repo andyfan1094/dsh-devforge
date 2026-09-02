@@ -6,7 +6,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
-import type { OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointStatus, OpenAiGatewayStatus } from './protocol.ts'
+import type { OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 const DEVFORGE_NAMESPACE = settingsNamespace('dsh-devforge')
@@ -243,37 +243,45 @@ export class OpenAiGatewayService {
     return await this.ensureProvider()
   }
 
-  /** 调各端点 GET /v1/models，并分别同步到对应聊天模型路由。 */
-  async fetchModels(signal?: AbortSignal): Promise<{ status: OpenAiGatewayStatus; added: string[]; removed: string[]; kept: string[]; total: number }> {
-    const endpoints = this.endpointConfigs()
+  /** 调各端点 GET /v1/models；单个端点失败时保留原路由并继续处理。 */
+  async fetchModels(signal?: AbortSignal, endpointId?: string): Promise<OpenAiGatewayFetchModelsResult> {
+    const configuredEndpoints = this.endpointConfigs()
+    const endpoints = endpointId === undefined ? configuredEndpoints : configuredEndpoints.filter((endpoint) => endpoint.id === endpointId)
+    if (endpointId !== undefined && endpoints.length === 0) throw new OpenAiServiceError('指定端点不存在。', 404)
     if (endpoints.length === 0) throw new OpenAiServiceError('请先保存至少一个 OpenAI 中转站端点。', 400)
     const updates: ProviderUpdate[] = []
-    const added: string[] = []
-    const removed: string[] = []
-    const kept: string[] = []
-    let total = 0
+    const results: OpenAiGatewayEndpointFetchResult[] = []
+    const added: string[] = []; const removed: string[] = []; const kept: string[] = []; let total = 0
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     for (let index = 0; index < endpoints.length; index += 1) {
-      const endpoint = endpoints[index]
-      let discovered: OpenAiDiscoveredModel[]
-      try { discovered = await this.client(endpoint).fetchModels(signal) } catch (error) {
-        const mapped = this.mapClientError(error)
-        throw new OpenAiServiceError(endpoint.name + '：' + mapped.message, mapped.status)
+      const endpoint = endpoints[index]; const providerId = openAiProviderId(endpoint, index)
+      const existing = readProviderModels(section?.providers?.[providerId])
+      try {
+        const discovered = await this.client(endpoint).fetchModels(signal)
+        if (discovered.length === 0) throw new OpenAiServiceError('返回 0 个模型，为防误清空已保留现有目录。', 502)
+        const beforeIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+        const synced = syncOpenAiModels(existing, discovered)
+        const afterIds = new Set(synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+        const endpointAdded = synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string' && !beforeIds.has(id))
+        const endpointKept = [...beforeIds].filter((id) => afterIds.has(id))
+        added.push(...endpointAdded); removed.push(...synced.removedIds); kept.push(...endpointKept); total += synced.models.length
+        updates.push({ endpoint, index, models: synced.models })
+        results.push({ endpointId: endpoint.id, providerId, ok: true, modelCount: synced.models.length, added: endpointAdded, removed: synced.removedIds, kept: endpointKept, retained: false })
+      } catch (error) {
+        const mapped = error instanceof OpenAiServiceError ? error : this.mapClientError(error)
+        results.push({ endpointId: endpoint.id, providerId, ok: false, modelCount: existing.length, added: [], removed: [], kept: existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'), retained: true, error: endpoint.name + '：' + mapped.message })
       }
-      if (discovered.length === 0) throw new OpenAiServiceError(endpoint.name + '返回 0 个模型，为防误清空已保留现有目录。', 502)
-      const provider = section?.providers?.[openAiProviderId(endpoint, index)]
-      const existing = readProviderModels(provider)
-      const beforeIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-      const synced = syncOpenAiModels(existing, discovered)
-      const afterIds = new Set(synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-      added.push(...synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string' && !beforeIds.has(id)))
-      removed.push(...synced.removedIds)
-      kept.push(...[...beforeIds].filter((id) => afterIds.has(id)))
-      total += synced.models.length
-      updates.push({ endpoint, index, models: synced.models })
     }
     await this.writeProviders(updates, true)
-    return { status: await this.readStatus(), added, removed, kept, total }
+    return { status: await this.readStatus(), results, added, removed, kept, total, succeeded: results.filter((result) => result.ok).length, failed: results.filter((result) => !result.ok).length }
+  }
+
+  /** 只替换一个端点，避免保存时覆盖其它端点配置。 */
+  async saveEndpoint(endpoint: OpenAiGatewayEndpointConfig): Promise<OpenAiGatewayStatus> {
+    const current = this.endpointConfigs()
+    const index = current.findIndex((item) => item.id === endpoint.id)
+    const endpoints = index < 0 ? [...current, endpoint] : current.map((item, itemIndex) => itemIndex === index ? endpoint : item)
+    return await this.saveConfig({ endpoints })
   }
 
   /** 启动时迁移旧 Sub2API OpenAI 配置并建立所有端点路由。 */

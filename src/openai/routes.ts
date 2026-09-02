@@ -109,6 +109,27 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: OPENAI_GATEWAY_API.endpoint,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readBody(req)
+          const value = body.endpoint
+          if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new OpenAiServiceError('endpoint 必须是对象。', 400)
+          const item = value as Record<string, unknown>
+          if (typeof item.id !== 'string' || typeof item.name !== 'string' || typeof item.baseURL !== 'string' || typeof item.apiKeyEnv !== 'string') throw new OpenAiServiceError('端点必须包含 id、name、baseURL 和 apiKeyEnv 字符串。', 400)
+          const endpoint: OpenAiGatewayEndpointConfig = { id: item.id, name: item.name, baseURL: item.baseURL, apiKeyEnv: item.apiKeyEnv }
+          if (item.imageModel !== undefined) {
+            if (typeof item.imageModel !== 'string') throw new OpenAiServiceError('imageModel 必须是字符串。', 400)
+            endpoint.imageModel = item.imageModel
+          }
+          writeJson(res, 200, { ok: true, status: await service.saveEndpoint(endpoint) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
       path: OPENAI_GATEWAY_API.fetchModels,
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
@@ -118,7 +139,9 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
         req.once('aborted', abort)
         res.once('close', abort)
         try {
-          const result = await service.fetchModels(controller.signal)
+          const body = await readBody(req)
+           const endpointId = typeof body.endpointId === 'string' ? body.endpointId : undefined
+           const result = await service.fetchModels(controller.signal, endpointId)
           if (!res.writableEnded) writeJson(res, 200, { ok: true, ...result })
         } catch (error) {
           if (!controller.signal.aborted && !res.writableEnded) writeError(res, error)
