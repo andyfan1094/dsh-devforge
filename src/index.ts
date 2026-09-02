@@ -6,7 +6,8 @@
  *   2. ForgeEngine：一键子代理服务生成（ctx.agents.create + followup）；
  *   3. /api/dsh-devforge 路由族（loopback 围栏）；
  *   4. devforge_jobs / devforge_standards 两个 Agent 工具；
- *   5. systemPrompt 常驻节：向每个 agent 通报规范库与一键生成入口。
+ *   5. systemPrompt 常驻节：向每个 agent 通报规范库与一键生成入口；
+ *   6. 已安装插件功能总览注入（0.12.0）：自动枚举 Loader 用户插件注入功能说明。
  *
  * 浏览器半边（./client）负责侧边栏入口 + 仿 SSH 面板。
  * 生命周期：所有注册都包 ctx.effect，配置热更新时先卸旧再挂新（sync 模式）。
@@ -57,6 +58,7 @@ import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
+import { activatePluginBrief, type PluginBriefConfig } from './plugin-brief.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -127,6 +129,8 @@ export interface Config {
   openai?: OpenAiCapabilityConfig
   /** 项目约束上下文注入子配置。 */
   constraints?: Partial<ConstraintsConfig>
+  /** 已安装插件功能总览注入子配置。 */
+  pluginBrief?: Partial<PluginBriefConfig>
 }
 
 /** 配置默认值。 */
@@ -185,6 +189,9 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('项目约束注入总开关'),
     fullTextPaths: z.array(z.string()).default(CONSTRAINTS_DEFAULT_PATHS).description('开发仓库路径清单：会话工作目录命中任一前缀即从首轮回注约束全文'),
   }).description('项目约束上下文注入配置（三层：常驻摘要保底/仓库信号全文/开发动作升级全文）'),
+  pluginBrief: z.object({
+    enabled: z.boolean().default(true).description('已安装插件功能总览注入开关'),
+  }).description('插件能力总览：自动枚举本机安装的插件并把功能说明注入模型上下文'),
 }).description('dsh-devforge 配置')
 
 /** 系统提示通报顺序（靠后，避免抢核心指令位置）。 */
@@ -263,6 +270,9 @@ export function apply(ctx: Context, config?: Config): void {
         enabled: value.constraints?.enabled ?? true,
         fullTextPaths: value.constraints?.fullTextPaths?.length ? value.constraints.fullTextPaths : CONSTRAINTS_DEFAULT_PATHS,
       },
+      pluginBrief: {
+        enabled: value.pluginBrief?.enabled ?? true,
+      },
     }
   }
 
@@ -331,9 +341,12 @@ export function apply(ctx: Context, config?: Config): void {
     })()
   }
 
+  /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本。 */
+  let pluginBriefSurface: { dispose: () => void; currentText: () => string } = { dispose: () => {}, currentText: () => '' }
+
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
-    ...makeRoutes(engine, standards, restartManager),
+    ...makeRoutes(engine, standards, restartManager, () => ({ enabled: resolve().pluginBrief?.enabled ?? true, text: pluginBriefSurface.currentText() })),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(zhipuService),
@@ -377,6 +390,8 @@ export function apply(ctx: Context, config?: Config): void {
     disposeOpenAiTools?.(); disposeOpenAiTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     disposeConstraints?.(); disposeConstraints = undefined
+    pluginBriefSurface.dispose()
+    pluginBriefSurface = { dispose: () => {}, currentText: () => '' }
     backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
@@ -413,6 +428,13 @@ export function apply(ctx: Context, config?: Config): void {
         return () => service.dispose()
       }, 'dsh-devforge: constraints')
     }
+    // 已安装插件功能总览：自动枚举 Loader 用户插件并把功能说明注入上下文（0.12.0）。
+    safeActivate(ctx, '插件能力总览注入', () => {
+      pluginBriefSurface = activatePluginBrief(ctx, () => {
+        const brief = resolve().pluginBrief
+        return { enabled: brief?.enabled ?? true }
+      })
+    })
     disposeRoutes = ctx.effect(() => {
       const disposers = routes.map((route) => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }

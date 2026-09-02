@@ -185,8 +185,8 @@ interface AgentState {
   offEvent?: () => void
 }
 
-/** 从宿主 SDK 防御式解析 agent 作用域的 systemPrompt 服务。 */
-function resolveSystemPrompt(agentCtx: unknown): { section?(input: { name: string; order: number; text: string | (() => string) }): () => void } | undefined {
+/** 从宿主 SDK 防御式解析 agent 作用域的 systemPrompt 服务（plugin-brief 复用同一实现）。 */
+export function resolveSystemPrompt(agentCtx: unknown): { section?(input: { name: string; order: number; text: string | (() => string) }): () => void } | undefined {
   if (agentCtx === null || typeof agentCtx !== 'object') return undefined
   const holder = agentCtx as { systemPrompt?: unknown; get?: (name: string) => unknown }
   const direct = holder.systemPrompt

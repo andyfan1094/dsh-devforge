@@ -78,7 +78,7 @@ function guardRestart(req: import('node:http').IncomingMessage, res: import('nod
 }
 
 /** 组装路由族。 */
-export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore, restartManager: DshWebRestartManager): WebRoute[] {
+export function makeRoutes(engine: ForgeEngine, standards: import('./standards.ts').StandardsStore, restartManager: DshWebRestartManager, pluginBrief: () => { enabled: boolean; text: string }): WebRoute[] {
   return [
     {
       kind: 'exact',
@@ -87,6 +87,17 @@ export function makeRoutes(engine: ForgeEngine, standards: import('./standards.t
         if (!guard(req, res)) return
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         writeJson(res, 200, { ok: true, version: PLUGIN_VERSION })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-brief',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        // 返回当前实际注入的总览文本，供暂存环境验收「所见即所注」。
+        const brief = pluginBrief()
+        writeJson(res, 200, { ok: true, enabled: brief.enabled, text: brief.text })
       },
     },
     {
