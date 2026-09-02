@@ -45,6 +45,16 @@ export function IconChart({ size }: IconProps): JSX.Element {
   )
 }
 
+export function IconWorkflow({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
+      <path d="M12 20V4" />
+      <path d="M6 20v-6" />
+    </svg>
+  )
+}
+
 /** 远程运维：服务器机架。 */
 export function IconServer({ size }: IconProps): JSX.Element {
   return (

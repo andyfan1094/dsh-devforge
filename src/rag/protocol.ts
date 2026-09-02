@@ -30,8 +30,8 @@ export const RAG_API = {
 /** 向量渠道（对应天工造梦已接的 Provider，凭据复用受管凭据表）。 */
 export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway'
 
-/** 知识库来源类型。 */
-export type RagKbSource = 'manual' | 'project' | 'mirror'
+/** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */
+export type RagKbSource = 'manual' | 'project' | 'mirror' | 'memory'
 
 /** 知识库（store.db docs 域 rag.kb）。 */
 export interface RagKnowledgeBase {
@@ -89,6 +89,8 @@ export interface RagSearchHit {
   text: string
   /** 归一化相关度 0-1。 */
   score: number
+  /** 所属知识库名（检索时冗余装饰，便于出处展示）。 */
+  kbName?: string
 }
 
 /** 全局设置（store.db settings 域 rag.settings 单例）。 */

@@ -13,6 +13,7 @@ import { RagIndexEngine, type RagIndexChunk, type RagIndexHit } from './index-en
 import type { RagDocument, RagKnowledgeBase, RagSearchHit, RagSearchRequest, RagSettings } from './protocol.ts'
 import { RagStore, type RagChunkRecord } from './rag-store.ts'
 import { vectorKey } from './embedder.ts'
+import { LlmReranker, type Reranker, type LlmScoreFn } from './rerank.ts'
 
 /** 向量化器接口（ZhipuEmbedder 实现；单测注入 FakeEmbedder）。model 每次传入，随设置动态切换。 */
 export interface RagEmbedder {
@@ -35,11 +36,21 @@ export class RagService {
   /** 渠道 → 向量化器：设置里切渠道即切凭据与端点（面板可配）。 */
   private readonly embedders: Record<string, RagEmbedder>
   private readonly engines = new Map<string, RagIndexEngine>()
+  /** 智谱精排器（off 模式或未注入时跳过）。 */
+  private reranker?: Reranker
+  /** LLM 打分精排（rerank.mode=llm 时使用）。 */
+  private rerankLlm?: LlmScoreFn
 
   constructor(store: RagStore, embedders: Record<string, RagEmbedder>) {
     this.store = store
     this.embedders = embedders
   }
+
+  /** 注入精排器（接线层调用；渠道凭据每次请求解析）。 */
+  setReranker(reranker: Reranker): void { this.reranker = reranker }
+
+  /** 注入 LLM 打分函数（rerank.mode=llm 兜底）。 */
+  setRerankLlm(score: LlmScoreFn): void { this.rerankLlm = score }
 
   getSettings(): RagSettings {
     return this.store.getRagSettings() ?? DEFAULT_RAG_SETTINGS
@@ -81,8 +92,8 @@ export class RagService {
     return this.store.listDocs(kbId)
   }
 
-  /** 直传文本入库（文件解析由接线层完成后调用；镜像/URL 数据同入口）。 */
-  async ingestText(kbId: string, fileName: string, text: string): Promise<RagDocument> {
+  /** 直传文本入库（文件解析由接线层完成后调用；镜像/项目/记忆数据同入口）。 */
+  async ingestText(kbId: string, fileName: string, text: string, options?: { sourcePath?: string; source?: RagKnowledgeBase['source'] }): Promise<RagDocument> {
     const settings = this.getSettings()
     const model = settings.embedding.model
     const embedder = this.pickEmbedder(settings)
@@ -133,6 +144,7 @@ export class RagService {
       id: docId,
       kbId,
       fileName,
+      ...(options?.sourcePath !== undefined ? { sourcePath: options.sourcePath } : existing?.sourcePath !== undefined ? { sourcePath: existing.sourcePath } : {}),
       contentHash: hash,
       status: 'ready',
       chunkCount: chunks.length,
@@ -170,8 +182,38 @@ export class RagService {
     }
     all.sort((a, b) => b.score - a.score)
     const capped = all.slice(0, topK)
+    const reranked = await this.applyRerank(request.query, capped.map(hit => ({ ...hit })), settings.rerank.topN)
     const threshold = settings.search.threshold
-    return capped.filter(hit => threshold <= 0 || hit.score >= threshold).map(hit => ({ ...hit }))
+    const kbNames = new Map(this.listKbs().map(kb => [kb.id, kb.name]))
+    return reranked.filter(hit => threshold <= 0 || hit.score >= threshold).map(hit => ({ ...hit, kbName: kbNames.get(hit.kbId) ?? '' }))
+  }
+
+  /** 按全局重排设置对命中做精排（失败静默回退原序，绝不阻断检索）。导出供工作流复用。 */
+  async rerankHits(query: string, hits: RagSearchHit[], topN: number): Promise<RagSearchHit[]> {
+    return await this.applyRerank(query, hits, topN)
+  }
+
+  /** 重排实现：zhipu 渠道 / LLM 打分 / off 直通；异常回退原序。 */
+  private async applyRerank(query: string, hits: RagSearchHit[], topN: number): Promise<RagSearchHit[]> {
+    const settings = this.getSettings()
+    if (settings.rerank.mode === 'off' || hits.length <= 1 || topN <= 0) return hits
+    try {
+      let order: number[] | undefined
+      if (settings.rerank.mode === 'zhipu' && this.reranker !== undefined) {
+        order = await this.reranker.rerank(query, hits.map(hit => ({ text: hit.text })), Math.min(topN, hits.length))
+      } else if (settings.rerank.mode === 'llm' && this.rerankLlm !== undefined) {
+        order = await new LlmReranker(this.rerankLlm).rerank(query, hits.map(hit => ({ text: hit.text })), Math.min(topN, hits.length))
+      }
+      if (order === undefined || order.length === 0) return hits
+      return order.map(index => hits[index]!).filter(hit => hit !== undefined)
+    } catch {
+      return hits
+    }
+  }
+
+  /** 读取某文档全部切块（记忆沉淀去重用）。 */
+  listChunks(docId: string) {
+    return this.store.listChunks(docId)
   }
 
   /** 惰性加载某库索引：从 store 读全部 chunk + 向量重建 Orama 实例。 */

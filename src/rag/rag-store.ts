@@ -136,6 +136,27 @@ export class RagStore {
     putSettings(this.db, 'rag.settings', settings)
   }
 
+  // ── 通用域（工作流定义/运行历史等列表型数据）──
+
+  /** 列出某域全部条目（id + 解析后 data，一次查询取回）。 */
+  listDomainDocs(domain: string): Array<{ id: string; data: unknown }> {
+    const rows = this.db.prepare('SELECT id, data FROM docs WHERE domain = ? ORDER BY sort_order').all(domain) as Array<{ id: string; data: string }>
+    return rows.map((row) => {
+      try { return { id: row.id, data: JSON.parse(row.data) as unknown } }
+      catch { return { id: row.id, data: null } }
+    })
+  }
+
+  /** 写入某域一条数据（upsert）。 */
+  putDomainDoc(domain: string, id: string, data: unknown): void {
+    this.upsertDoc(domain, id, data)
+  }
+
+  /** 删除某域一条数据。 */
+  deleteDomainDoc(domain: string, id: string): void {
+    this.db.prepare('DELETE FROM docs WHERE domain = ? AND id = ?').run(domain, id)
+  }
+
   // ── 内部 ──
 
   private listDomain(domain: string): unknown[] {

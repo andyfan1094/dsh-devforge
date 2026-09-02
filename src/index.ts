@@ -28,7 +28,7 @@ import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.t
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
-import { getDb, getSettings } from './store/db.ts'
+import { getDb, getSettings, putSettings } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
 import { makeRemoteRoutes } from './remote/routes.ts'
@@ -41,6 +41,14 @@ import { makeRoutes } from './routes.ts'
 import { RagService } from './rag/service.ts'
 import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
+import { ZhipuReranker } from './rag/rerank.ts'
+import { MemorySedimentService } from './memory/sediment.ts'
+import { MemoryInjectionService } from './memory/inject.ts'
+import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
+import { WorkflowEngine } from './workflow/engine.ts'
+import { makeWorkflowRoutes } from './workflow/routes.ts'
+import { ragRunTool } from './workflow/tools.ts'
+import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { makeRagRoutes } from './rag/routes.ts'
 import { ragSearchTool } from './rag/tools.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
@@ -142,6 +150,8 @@ export interface Config {
   pluginBrief?: Partial<PluginBriefConfig>
   /** 插件更新子配置。 */
   pluginUpdate?: { enabled?: boolean; profile?: string; sources?: Array<{ packageName: string; indexUrl?: string; repo?: string }> }
+  /** 会话记忆层子配置（设置项存 store.db，此处仅总开关兜底）。 */
+  memory?: { enabled?: boolean }
 }
 
 /** 配置默认值。 */
@@ -203,6 +213,9 @@ export const Config = z.object({
   pluginBrief: z.object({
     enabled: z.boolean().default(true).description('已安装插件功能总览注入开关'),
   }).description('插件能力总览：自动枚举本机安装的插件并把功能说明注入模型上下文'),
+  memory: z.object({
+    enabled: z.boolean().default(true).description('会话记忆层（自动沉淀+主动注入）总开关；细项在「记忆工作台」页配置'),
+  }).description('会话记忆层配置'),
   pluginUpdate: z.object({
     enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
     profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
@@ -298,6 +311,7 @@ export function apply(ctx: Context, config?: Config): void {
         profile: value.pluginUpdate?.profile ?? 'web',
         sources: value.pluginUpdate?.sources?.length ? value.pluginUpdate.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
       },
+      memory: { enabled: value.memory?.enabled ?? true },
     }
   }
 
@@ -398,7 +412,63 @@ export function apply(ctx: Context, config?: Config): void {
     ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', path: '/embeddings', model: 'doubao-embedding' }),
     'openai-gateway': new ZhipuEmbedder(ragCredential('OPENAI_GATEWAY_API_KEY', '尚未配置 OpenAI 中转站 API Key（OPENAI_GATEWAY_API_KEY）。'), { baseURLProvider: () => resolve().openai?.baseURL ?? '', path: '/v1/embeddings', model: 'text-embedding-3-small' }),
   }
-  const ragService = new RagService(new RagStore(), ragEmbedders)
+  const ragStore = new RagStore()
+  const ragService = new RagService(ragStore, ragEmbedders)
+  // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）。
+  ragService.setReranker(new ZhipuReranker(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 精排不可用。')))
+
+  /** 默认模型路由文本生成（记忆提炼/重排打分/工作流共用；凭据由宿主 Provider 体系承载）。 */
+  const generateText = async (input: { system: string; user: string; maxTokens?: number; provider?: string; model?: string }): Promise<string> => {
+    const selectionHost = ctx as unknown as { agentDefaultModel?: { currentSelection?: () => { provider: string; model: string } } }
+    const selection = selectionHost.agentDefaultModel?.currentSelection?.()
+    const provider = input.provider ?? selection?.provider ?? ''
+    const model = input.model ?? selection?.model ?? ''
+    if (provider === '' || model === '') throw new Error('无可用模型路由：请先在 DSH 设置中选择默认模型')
+    const assembler = new BlockAssembler()
+    for await (const chunk of ctx.llm.stream({
+      provider,
+      model,
+      messages: [createUserMessage({ content: [{ type: 'text', text: input.user }], source: { kind: 'plugin', plugin: 'dsh-devforge' } })],
+      system: input.system,
+      maxTokens: input.maxTokens ?? 800,
+    })) assembler.push(chunk)
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') {
+      const failure = (finish as { failure?: { message?: string } }).failure
+      throw new Error('模型调用失败：' + String(failure?.message ?? finish.kind))
+    }
+    return assembler.blocks().filter((block) => block.type === 'text').map((block) => (block as { text: string }).text).join('')
+  }
+  ragService.setRerankLlm((system, user) => generateText({ system, user, maxTokens: 500 }))
+
+  // ---- 会话记忆层：沉淀（turn/end）+ 主动注入（agent/pre-step）----
+  const memorySettingsRead = (): MemorySettings => {
+    try {
+      const stored = getSettings(getDb(), 'memory.settings')
+      return normalizeMemorySettings(stored, DEFAULT_MEMORY_SETTINGS)
+    } catch { return DEFAULT_MEMORY_SETTINGS }
+  }
+  const memorySettingsWrite = (next: MemorySettings): void => { putSettings(getDb(), 'memory.settings', next) }
+  const memoryKbId = (): string => {
+    const existing = ragService.listKbs().find((kb) => kb.source === 'memory')
+    if (existing !== undefined) return existing.id
+    return ragService.createKb('会话记忆库', { source: 'memory', description: '会话自动沉淀的记忆条目（turn/end 驱动提炼）' }).id
+  }
+  const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => generateText({ system, user, maxTokens: 700 }), () => {
+    const settings = memorySettingsRead()
+    return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
+  })
+  const injection = new MemoryInjectionService(ragService, () => {
+    const settings = memorySettingsRead()
+    return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
+  })
+
+  // ---- 工作流引擎（rag.workflow / rag.workflow_run 域存储 + 默认模型生成）----
+  const workflowEngine = new WorkflowEngine(ragService, {
+    listDomain: (domain) => ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
+  }, (input) => generateText({ system: input.system, user: input.user, ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}), ...(input.provider !== undefined ? { provider: input.provider } : {}), ...(input.model !== undefined ? { model: input.model } : {}) }))
 
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
@@ -420,8 +490,10 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
+    ...makeMemoryRoutes({ rag: ragService, sediment, getSettings: memorySettingsRead, putSettings: memorySettingsWrite }),
+    ...makeWorkflowRoutes(workflowEngine),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
@@ -632,6 +704,13 @@ export function apply(ctx: Context, config?: Config): void {
       sync()
     },
     onChange: sync,
+  })
+
+  // 会话记忆层：事件监听一次挂载；配置开关在每次事件时动态求值（store.db settings）。
+  safeActivate(ctx, '会话记忆层', () => {
+    sediment.attach(ctx)
+    const offInject = injection.attach(ctx)
+    ctx.effect(() => () => { sediment.dispose(); offInject() }, 'dsh-devforge: memory')
   })
 
   // 首次挂载
