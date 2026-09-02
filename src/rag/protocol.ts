@@ -27,8 +27,8 @@ export const RAG_API = {
   settingsTest: '/api/dsh-devforge/rag/settings/test',
 } as const
 
-/** 向量渠道（对应天工造梦已接的 Provider，凭据复用受管凭据表；ollama=本机免费无限）。 */
-export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama'
+/** 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容 /embeddings 服务）。 */
+export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom'
 
 /** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */
 export type RagKbSource = 'manual' | 'project' | 'mirror' | 'memory'
@@ -95,7 +95,14 @@ export interface RagSearchHit {
 
 /** 全局设置（store.db settings 域 rag.settings 单例）。 */
 export interface RagSettings {
-  embedding: { provider: RagEmbeddingProvider; model: string }
+  embedding: {
+    provider: RagEmbeddingProvider
+    model: string
+    /** custom 渠道：服务地址（填到 /v1 这级，实际调用 {baseURL}/embeddings）。 */
+    baseURL?: string
+    /** custom 渠道：受管凭据引用名（默认 RAG_CUSTOM_EMBEDDING_API_KEY）。 */
+    apiKeyEnv?: string
+  }
   rerank: { mode: 'zhipu' | 'llm' | 'off'; topN: number }
   chunk: { maxSize: number; overlap: number }
   search: { topK: number; vectorWeight: number; threshold: number }

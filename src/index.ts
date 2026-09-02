@@ -49,6 +49,7 @@ import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { RagSettings as RagSettingsPartial } from './rag/protocol.ts'
 import { makeRagRoutes } from './rag/routes.ts'
 import { ragSearchTool } from './rag/tools.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
@@ -413,6 +414,23 @@ export function apply(ctx: Context, config?: Config): void {
     'openai-gateway': new ZhipuEmbedder(ragCredential('OPENAI_GATEWAY_API_KEY', '尚未配置 OpenAI 中转站 API Key（OPENAI_GATEWAY_API_KEY）。'), { baseURLProvider: () => resolve().openai?.baseURL ?? '', path: '/v1/embeddings', model: 'text-embedding-3-small' }),
     // 本地 Ollama：零额度免费无限用（bge-m3 中文 1024 维）；key 占位不影响（Ollama 不校验）。
     ollama: new ZhipuEmbedder(async () => 'ollama-local', { baseURL: 'http://localhost:11434', path: '/v1/embeddings', model: 'bge-m3' }),
+    // 自定义 OpenAI 兼容渠道（硅基流动/智谱开放平台/百炼等）：地址与凭据引用名存 rag.settings，
+    // 每次请求动态解析（面板即改即用）；凭据本体走受管凭据表，绝不落明文。
+    custom: new ZhipuEmbedder(
+      async () => {
+        const stored = (() => { try { return getSettings<RagSettingsPartial>(getDb(), 'rag.settings') } catch { return undefined } })()
+        const env = stored?.embedding?.apiKeyEnv?.trim() || 'RAG_CUSTOM_EMBEDDING_API_KEY'
+        const resolved = await ctx.credentials.resolve(credentialRef(env))
+        const value = resolved?.value.trim()
+        if (value === undefined || value === '') throw new RagEmbeddingError('自定义向量渠道未配置 API Key（受管凭据引用：' + env + '）。可在天工造梦面板或凭据写入接口配置。', 400)
+        return value
+      },
+      {
+        baseURLProvider: () => { try { return (getSettings<RagSettingsPartial>(getDb(), 'rag.settings')?.embedding?.baseURL ?? '').replace(/\/+$/, '') } catch { return '' } },
+        path: '/embeddings',
+        model: 'BAAI/bge-m3',
+      },
+    ),
   }
   const ragStore = new RagStore()
   const ragService = new RagService(ragStore, ragEmbedders)

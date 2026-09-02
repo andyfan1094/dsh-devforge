@@ -234,8 +234,8 @@ export function RagTab() {
   )
 }
 /** 渠道中文标签与各渠道默认向量模型提示。 */
-const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama' }
-const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3' }
+const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama', custom: '自定义(OpenAI兼容)' }
+const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3', custom: 'BAAI/bge-m3' }
 
 /** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，保存前守卫提示。 */
 function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void }): JSX.Element {
@@ -280,6 +280,18 @@ function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (n
             {Object.entries(PROVIDER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </div>
+        {settings.embedding.provider === 'custom' && (
+          <div style={{ flex: '0 0 250px' }}>
+            <span className={css.fieldLabel}>服务地址（到 /v1）</span>
+            <input className={css.input} value={settings.embedding.baseURL ?? ''} placeholder="https://api.siliconflow.cn/v1" onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, baseURL: e.target.value } })} />
+          </div>
+        )}
+        {settings.embedding.provider === 'custom' && (
+          <div style={{ flex: '0 0 220px' }}>
+            <span className={css.fieldLabel}>凭据引用名</span>
+            <input className={css.input} value={settings.embedding.apiKeyEnv ?? ''} placeholder="RAG_CUSTOM_EMBEDDING_API_KEY" onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, apiKeyEnv: e.target.value } })} />
+          </div>
+        )}
         <div style={{ flex: '0 0 190px' }}>
           <span className={css.fieldLabel}>向量模型</span>
           <input className={css.input} value={settings.embedding.model} placeholder={PROVIDER_MODEL_HINT[settings.embedding.provider] ?? '模型名'} onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, model: e.target.value } })} />
