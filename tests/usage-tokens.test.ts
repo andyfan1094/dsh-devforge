@@ -98,4 +98,8 @@ test('buildReport：今日/本周/全部三窗边界正确', () => {
   assert.equal(report.week.inputTokens, 300)
   // 行按总 token 降序。
   assert.deepEqual(report.all.rows.map((row) => row.model), ['old-model', 'week-model', 'today-model'])
+  // 每日序列按日期升序，逐日合计正确（趋势图数据源）。
+  assert.deepEqual(report.daily.map((point) => point.day), [lastWeekKey, thisMondayKey, todayKey])
+  assert.deepEqual(report.daily.map((point) => point.inputTokens), [400, 200, 100])
+  assert.deepEqual(report.daily.map((point) => point.requests), [4, 2, 1])
 })

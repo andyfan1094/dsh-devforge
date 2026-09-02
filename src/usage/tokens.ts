@@ -58,6 +58,14 @@ export interface TokenUsageWindow {
   rows: TokenUsageRow[]
 }
 
+/** 单日 token 用量点（趋势图数据源，day 为本地日期键升序）。 */
+export interface TokenUsageDailyPoint {
+  day: string
+  inputTokens: number
+  outputTokens: number
+  requests: number
+}
+
 /** 三窗 token 用量报告（一次扫描同时给出，前端切换零请求）。 */
 export interface TokenUsageReport {
   updatedAt: number
@@ -68,6 +76,8 @@ export interface TokenUsageReport {
   today: TokenUsageWindow
   week: TokenUsageWindow
   all: TokenUsageWindow
+  /** 按本地日升序的每日用量序列（全量历史，前端自行截取最近 N 天画趋势图）。 */
+  daily: TokenUsageDailyPoint[]
 }
 
 /** 内部聚合键分隔符（单元分隔符，不会出现在 provider/model 名里）。 */
@@ -214,6 +224,7 @@ export function buildReport(scanned: Map<string, FileScanResult>, now: number, s
   const todayMap = new Map<string, UsageAgg>()
   const weekMap = new Map<string, UsageAgg>()
   const allMap = new Map<string, UsageAgg>()
+  const dailyMap = new Map<string, UsageAgg>()
   const addTo = (map: Map<string, UsageAgg>, key: string, agg: UsageAgg): void => {
     const cur = map.get(key) ?? { requests: 0, inputTokens: 0, outputTokens: 0 }
     cur.requests += agg.requests
@@ -225,11 +236,16 @@ export function buildReport(scanned: Map<string, FileScanResult>, now: number, s
     for (const [dayKey, bucket] of result.days) {
       for (const [key, agg] of bucket) {
         addTo(allMap, key, agg)
+        addTo(dailyMap, dayKey, agg)
         if (dayKey === todayKey) addTo(todayMap, key, agg)
         if (dayKey >= weekKey) addTo(weekMap, key, agg)
       }
     }
   }
+  // 每日序列按日期键升序（YYYY-MM-DD 字典序即时间序），供前端画每日趋势图。
+  const daily: TokenUsageDailyPoint[] = [...dailyMap.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([day, agg]) => ({ day, inputTokens: agg.inputTokens, outputTokens: agg.outputTokens, requests: agg.requests }))
   return {
     updatedAt: now,
     fileCount: scanned.size,
@@ -237,6 +253,7 @@ export function buildReport(scanned: Map<string, FileScanResult>, now: number, s
     today: buildWindow(todayMap),
     week: buildWindow(weekMap),
     all: buildWindow(allMap),
+    daily,
   }
 }
 
