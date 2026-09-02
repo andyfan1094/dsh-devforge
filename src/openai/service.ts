@@ -258,15 +258,19 @@ export class OpenAiGatewayService {
   /** 调各端点 GET /v1/models；单个端点失败时保留原路由并继续处理。 */
   async fetchModels(signal?: AbortSignal, endpointId?: string): Promise<OpenAiGatewayFetchModelsResult> {
     const configuredEndpoints = this.endpointConfigs()
-    const endpoints = endpointId === undefined ? configuredEndpoints : configuredEndpoints.filter((endpoint) => endpoint.id === endpointId)
-    if (endpointId !== undefined && endpoints.length === 0) throw new OpenAiServiceError('指定端点不存在。', 404)
-    if (endpoints.length === 0) throw new OpenAiServiceError('请先保存至少一个 OpenAI 中转站端点。', 400)
+    // 指定端点时必须保留其在端点列表中的原始下标：providerId 按下标映射，重排会把模型写错 provider（0.16.7 单端点获取事故）。
+    const targets = configuredEndpoints.map((endpoint, index) => ({ endpoint, index }))
+    const selected = endpointId === undefined ? targets : targets.filter((item) => item.endpoint.id === endpointId)
+    if (endpointId !== undefined && selected.length === 0) throw new OpenAiServiceError('指定端点不存在。', 404)
+    if (selected.length === 0) throw new OpenAiServiceError('请先保存至少一个 OpenAI 中转站端点。', 400)
+    // 单端点获取时不得清理其它 provider：updates 只含当前端点，cleanLegacy 会把其余端点路由整个删除。
+    const cleanLegacy = endpointId === undefined
     const updates: ProviderUpdate[] = []
     const results: OpenAiGatewayEndpointFetchResult[] = []
     const added: string[] = []; const removed: string[] = []; const kept: string[] = []; let total = 0
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
-    for (let index = 0; index < endpoints.length; index += 1) {
-      const endpoint = endpoints[index]; const providerId = openAiProviderId(endpoint, index)
+    for (const { endpoint, index } of selected) {
+      const providerId = openAiProviderId(endpoint, index)
       const existing = readProviderModels(section?.providers?.[providerId])
       try {
         const discovered = await this.client(endpoint).fetchModels(signal)
@@ -286,7 +290,7 @@ export class OpenAiGatewayService {
         results.push({ endpointId: endpoint.id, providerId, ok: false, modelCount: existing.length, added: [], removed: [], kept: existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'), retained: true, error: endpoint.name + '：' + mapped.message })
       }
     }
-    await this.writeProviders(updates, true)
+    await this.writeProviders(updates, cleanLegacy)
     return { status: await this.readStatus(), results, added, removed, kept, total, succeeded: results.filter((result) => result.ok).length, failed: results.filter((result) => !result.ok).length }
   }
 

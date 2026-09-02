@@ -280,6 +280,53 @@ test('模型默认档案：新模型 1M 上下文与五档推理，旧档案迁�
   assert.equal(provider.defaultMaxTokens, 128_000)
 })
 
+test('单端点获取：按原始下标写入正确 provider 且不清理其它端点路由', async () => {
+  const mockPrimary = startMock(() => ({ payload: { data: [{ id: 'primary-model' }] } }))
+  const mockSecond = startMock(() => ({ payload: { data: [{ id: 'second-model' }] } }))
+  const sections: Record<string, Record<string, unknown>> = {
+    'llm-pi-ai': { providers: { 'openai-gateway': { models: [{ id: 'primary-model' }] } } },
+  }
+  const getAt = (root: Record<string, unknown>, path: string[]): { parent: Record<string, unknown>; key: string } => {
+    let parent = root
+    for (const part of path.slice(0, -1)) {
+      const next = parent[part]
+      if (next === null || typeof next !== 'object' || Array.isArray(next)) parent[part] = {}
+      parent = parent[part] as Record<string, unknown>
+    }
+    return { parent, key: path[path.length - 1] ?? '' }
+  }
+  const ctx = {
+    settings: {
+      get: (ns: string) => sections[String(ns)],
+      describe: () => Object.entries(sections).map(([ns, value]) => ({ ns, value, revision: 1 })),
+      mutate: async (ns: string, operations: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) => {
+        const section = sections[String(ns)] ?? (sections[String(ns)] = {})
+        for (const operation of operations) {
+          const { parent, key } = getAt(section, operation.path)
+          if (operation.op === 'set') parent[key] = operation.value
+          else delete parent[key]
+        }
+      },
+    },
+    credentials: { describe: async () => ({ configured: true, writable: true }), resolve: async () => ({ value: 'test-key' }) },
+    logger: { warn: () => {} },
+  }
+  const endpoints = [
+    { id: 'primary', name: '主端点', baseURL: await mockPrimary.url, apiKeyEnv: 'ONE_KEY' },
+    { id: 'second', name: '第二站', baseURL: await mockSecond.url, apiKeyEnv: 'TWO_KEY' },
+  ]
+  const liveConfig: OpenAiCapabilityConfig = { ...config, baseURL: endpoints[0]!.baseURL, apiKeyEnv: 'ONE_KEY', imageModel: '', endpoints }
+  try {
+    const service = new (await import('../src/openai/service.ts')).OpenAiGatewayService(ctx as never, liveConfig)
+    const result = await service.fetchModels(undefined, 'second')
+    assert.equal(result.results.length, 1)
+    assert.equal(result.results[0]?.ok, true)
+    const providers = sections['llm-pi-ai']?.providers as Record<string, Record<string, unknown>>
+    assert.equal((providers['openai-gateway-second']?.models as Array<Record<string, unknown>>)[0]?.id, 'second-model')
+    assert.equal((providers['openai-gateway']?.models as Array<Record<string, unknown>>)[0]?.id, 'primary-model')
+  } finally { mockPrimary.close(); mockSecond.close() }
+})
+
 test('批量获取部分失败：失败端点保留既有 provider 路由不被清理', async () => {
   const mock = startMock(() => ({ payload: { data: [{ id: 'second-model' }] } }))
   const sections: Record<string, Record<string, unknown>> = {
