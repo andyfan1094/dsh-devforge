@@ -4,7 +4,7 @@
  * 数据来自 /api/dsh-devforge/usage/tokens，一次请求同返三窗与每日序列。 */
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import { formatLocalDay } from '../../usage/tokens.ts'
+import { formatLocalDay } from '../../usage/day-format.ts'
 import type { TokenUsageReport, TokenUsageRow } from '../../usage/tokens.ts'
 import css from './panel.module.css'
 

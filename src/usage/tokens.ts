@@ -19,6 +19,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { constants as zstdConstants, zstdDecompressSync } from 'node:zlib'
+import { formatLocalDay } from './day-format.ts'
+
+// 客户端（浏览器 bundle）只允许引用本目录的纯函数模块（如 day-format.ts），
+// 绝不能运行时引用本文件——node:zlib/node:fs 进客户端会被加载器拒绝（0.14.1 实证教训）。
+export { formatLocalDay }
 
 /** 单模型单天的用量聚合。 */
 interface UsageAgg {
@@ -103,14 +108,6 @@ export function extractUsageFromLine(line: string): { dayKey: string; provider: 
   // 事件时间缺省时退回当前时间，保证计量不丢。
   const at = typeof event.time === 'number' && Number.isFinite(event.time) ? event.time : Date.now()
   return { dayKey: formatLocalDay(new Date(at)), provider, model, input, output }
-}
-
-/** 本地时区日期键。 */
-export function formatLocalDay(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return year + '-' + month + '-' + day
 }
 
 /** 扫描 zstd 缓冲内的完整帧范围；文件尾部半帧（torn）不计入帧清单。逻辑源自官方实现。 */
