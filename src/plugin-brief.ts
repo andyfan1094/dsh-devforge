@@ -1,5 +1,5 @@
 /**
- * 已安装插件功能总览注入（0.12.0）。
+ * 已安装插件功能总览注入（0.12.1）。
  *
  * 需求（辉哥定）：天工造梦只把各插件的工具 schema 注入模型上下文，
  * 插件级「这个插件是干什么的」没有通用通道，没手写通报文本的插件对模型是隐形的。
@@ -194,57 +194,98 @@ export interface PluginBriefConfig {
   enabled: boolean
 }
 
+/** 总览注入诊断信息（暂存验收与排障用，只读快照）。 */
+export interface PluginBriefDiagnostics {
+  /** loader 服务是否解析成功。 */
+  loaderResolved: boolean
+  /** 最近一次渲染的 Loader 条目总数（含官方核心）。 */
+  entryCount: number
+  /** 最近一次渲染的用户插件条目数（排除官方核心与临时目录）。 */
+  userCount: number
+  /** 激活过程异常摘要；空串 = 无异常。 */
+  error: string
+}
+
+/** 空 {} 诊断快照（未激活时的占位）。 */
+function emptyDiagnostics(): PluginBriefDiagnostics {
+  return { loaderResolved: false, entryCount: 0, userCount: 0, error: '' }
+}
+
+/** 注入面：注册的节句柄 + 当前文本 + 诊断。 */
+export interface PluginBriefSurface {
+  /** 卸载已注册的节（幂等）。 */
+  dispose: () => void
+  /** 当前实际注入文本（与节渲染同一实现，所见即所注）。 */
+  currentText: () => string
+  /** 只读诊断快照。 */
+  diagnostics: () => PluginBriefDiagnostics
+}
+
 /**
- * 激活总览注入：注册一个全局动态节；dispose 卸载。
- * loader / systemPrompt 服务都防御式解析，缺失时降级为空节不报错。
+ * 激活总览注入：注册一个全局动态节。
+ * loader / systemPrompt 服务都防御式解析（cordis 对未声明/未激活服务的属性访问会直接抛错），
+ * 任一环失败都降级为空节不报错，细节进 diagnostics 供暂存验收路由排障。
  */
 export function activatePluginBrief(
   ctx: unknown,
   getConfig: () => PluginBriefConfig,
-): { dispose: () => void; currentText: () => string } {
+): PluginBriefSurface {
+  const diag = emptyDiagnostics()
   const holder = ctx as {
     logger?: { warn?: (...args: unknown[]) => void }
-    loader?: unknown
+    root?: unknown
     get?: (name: string) => unknown
     systemPrompt?: { section?: (input: { name: string; order: number; text: string | (() => string) }) => () => void }
   } | null
-  if (holder === null || typeof holder !== 'object') return { dispose: () => {}, currentText: () => '' }
-
-  // 读取 loader：属性访问与 ctx.get 都可能因 cordis 的 inject 规则抛错，全部包住。
-  let loader: unknown
-  try {
-    loader = holder.loader
-  } catch {
-    loader = undefined
+  if (holder === null || typeof holder !== 'object') {
+    diag.error = 'ctx 不是对象'
+    return { dispose: () => {}, currentText: () => '', diagnostics: () => ({ ...diag }) }
   }
-  if (loader === undefined || loader === null) {
-    if (typeof holder.get === 'function') {
+
+  // loader 解析链：ctx.loader → ctx.root.loader → ctx.get('loader')；每条都独立防抛。
+  const resolveLoader = (): unknown => {
+    const holders: unknown[] = [holder, holder.root]
+    for (const h of holders) {
+      if (h === null || typeof h !== 'object') continue
+      const record = h as Record<string, unknown>
       try {
-        loader = holder.get('loader')
-      } catch {
-        loader = undefined
+        const direct = record.loader
+        if (direct !== undefined && direct !== null) return direct
+      } catch { /* 属性代理抛错换下一条 */ }
+      if (typeof record.get === 'function') {
+        try {
+          const viaGet = (record.get as (name: string) => unknown).call(h, 'loader')
+          if (viaGet !== undefined && viaGet !== null) return viaGet
+        } catch { /* get 抛错换下一条 */ }
       }
     }
+    return undefined
   }
-  const entries = collectLoaderEntries(loader)
-  if (entries.length === 0) {
-    holder.logger?.warn?.('[dsh-devforge] 插件能力总览：Loader 不可用或无条目，不注入总览节')
+  const loader = resolveLoader()
+  diag.loaderResolved = loader !== undefined && loader !== null
+  if (!diag.loaderResolved) {
+    diag.error = 'loader 服务不可用'
+    holder.logger?.warn?.('[dsh-devforge] 插件能力总览：loader 服务不可用，不注入总览节')
   }
 
   // 包元数据读取器：本插件 lib 位置优先（能摸到 profile 兄弟插件），宿主入口兜底。
   const readInfo = createPackageReader([import.meta.url, process.argv[1] ?? ''])
 
-  const prompt = resolveSystemPrompt(holder)
-  if (!prompt?.section) {
-    holder.logger?.warn?.('[dsh-devforge] 插件能力总览：systemPrompt 服务不可用，跳过注入')
-    return { dispose: () => {}, currentText: () => '' }
-  }
   // 当前注入文本：节渲染与验收路由共用同一实现，保证「所见即所注」。
   const currentText = (): string => {
     if (!getConfig().enabled) return ''
     // 每轮装配重取条目：插件装卸后总览自动跟进；包信息走读取器缓存。
     const current = collectLoaderEntries(loader)
+    diag.entryCount = current.length
+    diag.userCount = current.filter((entry) => !isCoreModule(entry.moduleName)).length
     return renderPluginBrief(current, readInfo)
+  }
+
+  const prompt = resolveSystemPrompt(holder)
+  if (!prompt?.section) {
+    diag.error = 'systemPrompt 服务不可用'
+    holder.logger?.warn?.('[dsh-devforge] 插件能力总览：systemPrompt 服务不可用，跳过注入')
+    return { dispose: () => {}, currentText: () => '', diagnostics: () => ({ ...diag }) }
   }
   let remove: (() => void) | undefined
   try {
@@ -254,11 +295,13 @@ export function activatePluginBrief(
       text: currentText,
     })
   } catch (error) {
-    holder.logger?.warn?.('[dsh-devforge] 插件能力总览节注册失败：%s', error instanceof Error ? error.message : String(error))
-    return { dispose: () => {}, currentText: () => '' }
+    diag.error = error instanceof Error ? error.message : String(error)
+    holder.logger?.warn?.('[dsh-devforge] 插件能力总览节注册失败：%s', diag.error)
+    return { dispose: () => {}, currentText: () => '', diagnostics: () => ({ ...diag }) }
   }
   return {
     currentText,
+    diagnostics: () => ({ ...diag }),
     dispose: () => {
       try {
         remove?.()

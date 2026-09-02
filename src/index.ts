@@ -344,12 +344,20 @@ export function apply(ctx: Context, config?: Config): void {
     })()
   }
 
-  /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本。 */
-  let pluginBriefSurface: { dispose: () => void; currentText: () => string } = { dispose: () => {}, currentText: () => '' }
+  /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本与诊断。 */
+  let pluginBriefSurface: ReturnType<typeof activatePluginBrief> = {
+    dispose: () => {},
+    currentText: () => '',
+    diagnostics: () => ({ loaderResolved: false, entryCount: 0, userCount: 0, error: '' }),
+  }
 
   // ---- 可重挂表面（路由/工具/系统提示）----
   const routes = [
-    ...makeRoutes(engine, standards, restartManager, () => ({ enabled: resolve().pluginBrief?.enabled ?? true, text: pluginBriefSurface.currentText() })),
+    ...makeRoutes(engine, standards, restartManager, () => ({
+      enabled: resolve().pluginBrief?.enabled ?? true,
+      text: pluginBriefSurface.currentText(),
+      diag: pluginBriefSurface.diagnostics(),
+    })),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(zhipuService),
@@ -394,7 +402,11 @@ export function apply(ctx: Context, config?: Config): void {
     disposeBrowser?.(); disposeBrowser = undefined
     disposeConstraints?.(); disposeConstraints = undefined
     pluginBriefSurface.dispose()
-    pluginBriefSurface = { dispose: () => {}, currentText: () => '' }
+    pluginBriefSurface = {
+      dispose: () => {},
+      currentText: () => '',
+      diagnostics: () => ({ loaderResolved: false, entryCount: 0, userCount: 0, error: '' }),
+    }
     backupScheduler.stop()
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
