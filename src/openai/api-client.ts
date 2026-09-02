@@ -90,6 +90,27 @@ export function extractGeneratedImage(payload: unknown): { data?: Uint8Array; ur
   return undefined
 }
 
+/** 直连通道（绕过环境代理）：懒加载一次，导入失败时保持 undefined 走原通道。 */
+type DirectFetch = (url: string, init: Record<string, unknown>) => Promise<Response>
+let directFetchPromise: Promise<DirectFetch | undefined> | undefined
+
+/** 用 undici 自带 fetch + 无代理 Agent 构造直连请求，与全局 fetch 的代理分流互不影响。 */
+function getDirectFetch(): Promise<DirectFetch | undefined> {
+  directFetchPromise ??= (async () => {
+    try {
+      const undici = (await import('undici')) as unknown as {
+        fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>
+        Agent: new (options?: Record<string, unknown>) => unknown
+      }
+      const agent = new undici.Agent({})
+      return (url: string, init: Record<string, unknown>) => undici.fetch(url, { ...init, dispatcher: agent }) as unknown as Promise<Response>
+    } catch {
+      return undefined
+    }
+  })()
+  return directFetchPromise
+}
+
 /** 每次请求重新取 Key，避免热更新后继续使用旧凭据。 */
 export class OpenAiGatewayClient {
   private readonly baseURL: string
@@ -147,16 +168,26 @@ export class OpenAiGatewayClient {
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted === true) controller.abort()
     const timer = setTimeout(abort, timeoutMs)
-    try {
-      const response = await fetch(this.baseURL + path, {
-        ...init,
-        headers: { authorization: 'Bearer ' + apiKey, accept: 'application/json', ...(init.headers ?? {}) },
-        signal: controller.signal,
-      })
+    const send = (dispatch: (target: string) => Promise<Response>): Promise<Response> => dispatch(this.baseURL + path).then((response) => {
       if (response.status === 401 || response.status === 403) throw new OpenAiGatewayError('OpenAI 中转站 API Key 无效。', 401)
       if (response.status === 429) throw new OpenAiGatewayError('OpenAI 中转站请求过于频繁，请稍后重试。', 429)
       if (!response.ok) throw new OpenAiGatewayError('OpenAI 中转站接口暂不可用（HTTP ' + response.status + '）。', response.status >= 400 && response.status < 500 ? response.status : 502)
       return response
+    })
+    const headers = { authorization: 'Bearer ' + apiKey, accept: 'application/json', ...(init.headers ?? {}) }
+    try {
+      try {
+        // 优先直连：环境代理（如 socks5 分流）可能阻断自建中转站（2026-09 sub2api 实证）。
+        const direct = await getDirectFetch()
+        if (direct !== undefined) {
+          return await send((target) => direct(target, { ...init, headers, signal: controller.signal }))
+        }
+      } catch (error) {
+        // HTTP 语义错误（401/429 等）说明端点可达，直接抛出；直连网络错误才回落代理通道。
+        if (error instanceof OpenAiGatewayError) throw error
+        if (controller.signal.aborted) throw error
+      }
+      return await send((target) => fetch(target, { ...init, headers, signal: controller.signal }))
     } catch (error) {
       if (error instanceof OpenAiGatewayError) throw error
       if (controller.signal.aborted) throw new OpenAiGatewayError(signal?.aborted === true ? 'OpenAI 中转站请求已取消。' : 'OpenAI 中转站请求超时。', signal?.aborted === true ? 499 : 504)

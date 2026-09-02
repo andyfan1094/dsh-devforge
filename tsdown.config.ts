@@ -50,6 +50,8 @@ const HOST_EXTERNALS = [
   '@orama/orama',
   'unpdf',
   'mammoth',
+  // OpenAI 中转站直连通道：绕过环境代理的兜底 fetch + Agent，运行时从 profile 依赖树解析。
+  'undici',
 ]
 
 /** 虚拟 id 包装：把 module CSS 挡在 tsdown 自带 css 管线之外。 */

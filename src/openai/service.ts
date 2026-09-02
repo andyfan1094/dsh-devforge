@@ -94,15 +94,22 @@ export interface OpenAiCapabilityConfig {
   endpoints?: OpenAiGatewayEndpointConfig[]
 }
 
-/** 图片生成模型不应暴露推理档位；其余未知模型使用兼容性较高的默认档位。 */
+/** 聊天模型推理档位与方舟五档对齐（含 Max）。 */
+const CHAT_REASONING_EFFORTS = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } as const
+
+/** 旧版默认档位（仅 low/medium/high）的序列化形态；同步时升级为五档。 */
+const LEGACY_REASONING_EFFORTS = '{"low":"low","medium":"medium","high":"high"}'
+
+/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理。 */
 function defaultModelProfile(model: OpenAiDiscoveredModel): Record<string, unknown> {
   const imageOnly = /(?:^|[-_/])(image|dall-e|imagen|flux|ideogram|seedream|sora)(?:[-_/]|$)/i.test(model.id) || /gpt-image/i.test(model.id)
   const multimodal = /^(gpt|o[1-9]|claude|gemini|grok|glm|qwen|kimi|moonshot|minimax|mistral|llama|phi|command|jamba|codex)/i.test(model.id)
   return {
     id: model.id,
     name: model.name ?? model.id,
+    contextWindow: 1_000_000,
     input: imageOnly || multimodal ? ['text', 'image'] : ['text'],
-    reasoningEfforts: imageOnly ? false : { low: 'low', medium: 'medium', high: 'high' },
+    reasoningEfforts: imageOnly ? false : { ...CHAT_REASONING_EFFORTS },
   }
 }
 
@@ -118,7 +125,12 @@ export function syncOpenAiModels(existing: Array<Record<string, unknown>>, disco
     if (seen.has(model.id)) continue
     seen.add(model.id)
     const previous = byId.get(model.id)
-    models.push(previous !== undefined ? { ...previous } : defaultModelProfile(model))
+    if (previous === undefined) { models.push(defaultModelProfile(model)); continue }
+    // 迁移补齐：缺上下文窗口补 1M，旧版三档默认档位升级五档；用户自定义元数据一律不动。
+    const profile: Record<string, unknown> = { ...previous }
+    if (profile.contextWindow === undefined) profile.contextWindow = 1_000_000
+    if (JSON.stringify(profile.reasoningEfforts) === LEGACY_REASONING_EFFORTS) profile.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
+    models.push(profile)
   }
   const removedIds = [...byId.keys()].filter((id) => !seen.has(id))
   return { models, removedIds }
@@ -133,8 +145,8 @@ export function buildOpenAiEndpointProvider(endpoint: OpenAiGatewayEndpointConfi
     api: 'openai-responses',
     baseURL: openAiApiRoot(endpoint.baseURL),
     models,
-    defaultContextWindow: 128_000,
-    defaultMaxTokens: 8_192,
+    defaultContextWindow: 1_000_000,
+    defaultMaxTokens: 128_000,
     defaultInput: ['text'],
     retryPolicy: {
       mode: 'normal',
@@ -269,6 +281,8 @@ export class OpenAiGatewayService {
         results.push({ endpointId: endpoint.id, providerId, ok: true, modelCount: synced.models.length, added: endpointAdded, removed: synced.removedIds, kept: endpointKept, retained: false })
       } catch (error) {
         const mapped = error instanceof OpenAiServiceError ? error : this.mapClientError(error)
+        // 失败端点必须回写既有模型路由：否则 writeProviders 清理逻辑会把该 provider 整个删除（0.16.6 数据丢失教训）。
+        if (existing.length > 0) updates.push({ endpoint, index, models: existing })
         results.push({ endpointId: endpoint.id, providerId, ok: false, modelCount: existing.length, added: [], removed: [], kept: existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'), retained: true, error: endpoint.name + '：' + mapped.message })
       }
     }
