@@ -65,7 +65,7 @@ export function PluginUpdateTab({ api }: { api: DevforgeApi }): JSX.Element {
     <section className={css['tabBody']}>
       <div className={css['toolbar']}>
         <strong>插件更新</strong>
-        <span className={css['sectionHint']}>对比 GitHub Latest Release；升级后需重启 DSH 生效</span>
+        <span className={css['sectionHint']}>对比官网最新版本（modagentai.com，GitHub 兜底）；升级后需重启 DSH 生效</span>
         <span className={css['toolbarSpacer']} />
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => { void refresh() }}>检查更新</button>
       </div>
@@ -73,7 +73,7 @@ export function PluginUpdateTab({ api }: { api: DevforgeApi }): JSX.Element {
       {done !== '' && <div className={css['banner']} data-kind="success">{done}</div>}
       {!enabled && <div className={css['empty']}>插件更新能力已关闭（请在设置中开启）</div>}
       {enabled && loading && items.length === 0 && <div className={css['empty']} data-loading="">正在检查更新…</div>}
-      {enabled && !loading && items.length === 0 && <div className={css['empty']}>更新源登记表为空（可在设置里登记「包名 → GitHub 仓库」）</div>}
+      {enabled && !loading && items.length === 0 && <div className={css['empty']}>更新源登记表为空（可在设置里登记「包名 → 官网清单或 GitHub 仓库」）</div>}
       {enabled && items.length > 0 && (
         <div className={css['metricList']}>
           {items.map((item) => (
