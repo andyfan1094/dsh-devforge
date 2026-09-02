@@ -27,21 +27,23 @@ const KIMI_CODE_REASONING = { off: null, high: 'high' } as const
 
 /**
  * Agent Plan 官方文本模型池。
- * 清单与长度限制来自火山方舟“Agent Plan 个人版 / 套餐概览”；推理档位来自方舟网关实测映射。
+ * 清单来自火山方舟「Agent Plan 个人版 / 套餐概览」，推理档位来自方舟网关实测映射。
+ * 输出上限（maxTokens）按方舟网关实测校准：请求体 max_completion_tokens 硬上限 128000（十进制 128K），
+ * 填二进制 128K（131072）等更大值会被方舟以 400 InvalidParameter 整单拒绝。
  */
 export const ARK_DEFAULT_MODELS = [
-  { id: 'auto', name: 'Auto', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'doubao-seed-evolving', name: 'Doubao-Seed-Evolving', contextWindow: 1_000_000, maxTokens: 262_144, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'doubao-seed-2.1-turbo', name: 'Doubao-Seed-2.1-turbo', contextWindow: 262_144, maxTokens: 262_144, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'doubao-seed-2.0-lite', name: 'Doubao-Seed-2.0-lite', contextWindow: 262_144, maxTokens: 131_072, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'doubao-seed-2.0-mini', name: 'Doubao-Seed-2.0-mini', contextWindow: 262_144, maxTokens: 131_072, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextWindow: 1_000_000, maxTokens: 393_216, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 1_000_000, maxTokens: 393_216, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'kimi-k3', name: 'Kimi-K3', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: KIMI_REASONING },
-  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
-  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'auto', name: 'Auto', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'doubao-seed-evolving', name: 'Doubao-Seed-Evolving', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'doubao-seed-2.1-turbo', name: 'Doubao-Seed-2.1-turbo', contextWindow: 262_144, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'doubao-seed-2.0-lite', name: 'Doubao-Seed-2.0-lite', contextWindow: 262_144, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'doubao-seed-2.0-mini', name: 'Doubao-Seed-2.0-mini', contextWindow: 262_144, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'kimi-k3', name: 'Kimi-K3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: KIMI_REASONING },
+  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
   {
     id: 'kimi-k2.7-code',
     name: 'Kimi-K2.7-Code',
@@ -51,7 +53,7 @@ export const ARK_DEFAULT_MODELS = [
     reasoningEfforts: KIMI_CODE_REASONING,
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false, supportsDeveloperRole: false },
   },
-  { id: 'ark-code-latest', name: 'Ark Code Latest', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'ark-code-latest', name: 'Ark Code Latest', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
 ] as const
 
 /** 把默认模型的新能力字段补进旧记录，同时保留用户显式覆盖。 */
