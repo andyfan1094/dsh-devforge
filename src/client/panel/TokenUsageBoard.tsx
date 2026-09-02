@@ -45,7 +45,8 @@ export function TokenUsageBoard({ api }: TokenUsageBoardProps): JSX.Element {
   const [report, setReport] = useState<TokenUsageReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [range, setRange] = useState<Range>('today')
+  // 默认「全部」窗口：辉哥要求右侧全量展开，一眼看到完整历史用量。
+  const [range, setRange] = useState<Range>('all')
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true)

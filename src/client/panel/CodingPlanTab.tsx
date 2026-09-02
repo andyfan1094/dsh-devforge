@@ -5,7 +5,6 @@ import type { MiniMaxStatus } from '../../minimax/protocol.ts'
 import type { ZhipuStatus } from '../../zhipu/protocol.ts'
 import type { OpenAiGatewayStatus } from '../../openai/protocol.ts'
 import { ArkCodingPlanTab } from './ArkCodingPlanTab.tsx'
-import { CodingPlanAsideUsage } from './CodingPlanAsideUsage.tsx'
 import { TokenUsageBoard } from './TokenUsageBoard.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
@@ -160,8 +159,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           )}
         </dl>
         {providerMeta !== '' && <p className={css['planInfoHint']}>{providerMeta}</p>}
-        {/* 套餐信息下方的常驻「用量速览」：套餐额度卡片，任何服务商页签下都可见。 */}
-        <CodingPlanAsideUsage cards={cards} refreshing={refreshing} now={now} onRefresh={(target) => void refreshUsage(target)} onNavigate={navigateToProvider} />
+        {/* 侧栏不再放用量卡片：套餐额度看右区下方三张卡片，模型 token 计量看右区顶部看板。 */}
       </aside>
 
       <div className={css['codePlanMain']}>
