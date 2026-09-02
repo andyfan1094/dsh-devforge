@@ -1,47 +1,24 @@
-/** Coding Plan 总览控制面板：一屏并排三家套餐用量。 */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DevforgeApi } from '../api.ts'
-import type { ArkUsageDashboard } from '../../ark/protocol.ts'
-import type { MiniMaxDashboard } from '../../minimax/protocol.ts'
-import type { ZhipuDashboard } from '../../zhipu/protocol.ts'
+/** Coding Plan 总览控制面板：一屏并排三家套餐用量。
+ * 数据由 CodingPlanTab 统一加载（本组件只做展示），与侧栏「用量速览」共享同一份卡片状态。 */
 import css from './panel.module.css'
 import { ResetBadge } from './reset-badge.tsx'
 import { resolveOverviewReset } from './reset-countdown.ts'
+import type { ArkUsageDashboard } from '../../ark/protocol.ts'
+import type { MiniMaxDashboard } from '../../minimax/protocol.ts'
+import type { ZhipuDashboard } from '../../zhipu/protocol.ts'
 
 export type OverviewProvider = 'zhipu' | 'minimax' | 'ark'
 
-/** 单家凭据状态快照（供控制面板侧栏消费）。 */
-export interface OverviewProviderState {
-  /** 是否已完成首次加载（false = 读取中）。 */
-  loaded: boolean
-  /** 凭据是否已配置。 */
-  configured: boolean
-}
-
-/** 三家凭据状态汇总。 */
-export interface OverviewSummary {
-  zhipu: OverviewProviderState
-  minimax: OverviewProviderState
-  ark: OverviewProviderState
-}
-
-export interface UsageOverviewTabProps {
-  api: DevforgeApi
-  /** 跳转到对应服务商的使用配置页。 */
-  onNavigate: (provider: OverviewProvider) => void
-  /** 三家凭据状态上报（控制面板侧栏数据源）。 */
-  onSummary?: (summary: OverviewSummary) => void
-}
-
 /** 统一的一行用量窗口。 */
-interface OverviewPeriod {
+export interface OverviewPeriod {
   label: string
   usedPercent: number
   detail: string
   resetAt?: number
 }
 
-interface OverviewCardState {
+/** 单家用量卡片状态：总览页与侧栏速览共用的展示模型。 */
+export interface OverviewCardState {
   phase: 'loading' | 'ready' | 'error'
   configured: boolean
   subscribed?: boolean
@@ -52,17 +29,26 @@ interface OverviewCardState {
   error?: string
 }
 
-const INITIAL_CARD: OverviewCardState = { phase: 'loading', configured: false, badge: '', periods: [], warnings: [] }
+/** 三家卡片状态集合。 */
+export interface OverviewCards {
+  zhipu: OverviewCardState
+  minimax: OverviewCardState
+  ark: OverviewCardState
+}
 
-function formatCountdown(timestamp: number | undefined, now: number): string {
-  if (timestamp === undefined || !Number.isFinite(timestamp)) return '重置时间未知'
-  const remaining = timestamp - now
-  if (remaining <= 0) return '即将重置'
-  const minutes = Math.ceil(remaining / 60_000)
-  if (minutes < 60) return minutes + ' 分钟后重置'
-  const hours = Math.floor(minutes / 60)
-  if (hours < 48) return hours + ' 小时后重置'
-  return Math.floor(hours / 24) + ' 天后重置'
+/** 卡片初始态：加载中、未配置、无窗口数据。 */
+export const INITIAL_CARD: OverviewCardState = { phase: 'loading', configured: false, badge: '', periods: [], warnings: [] }
+
+export interface UsageOverviewTabProps {
+  cards: OverviewCards
+  /** 正在刷新的商家；'all' 表示侧栏发起的整体刷新。 */
+  refreshing: OverviewProvider | 'all' | null
+  /** 父级每分钟心跳的当前时间，驱动重置倒计时文案。 */
+  now: number
+  /** 刷新指定商家用量。 */
+  onRefresh: (provider: OverviewProvider) => void
+  /** 跳转到对应服务商的使用配置页。 */
+  onNavigate: (provider: OverviewProvider) => void
 }
 
 function percentText(usedPercent: number): string {
@@ -78,7 +64,7 @@ function inferOverviewLevel(label: string): 'short-window' | 'weekly' | 'monthly
 }
 
 /** 智谱：limits 直接带 5h/周/月三类窗口。 */
-function zhipuCard(status: { credentialConfigured: boolean } | null, dashboard: ZhipuDashboard): OverviewCardState {
+export function zhipuCard(status: { credentialConfigured: boolean } | null, dashboard: ZhipuDashboard): OverviewCardState {
   const periods = dashboard.limits
     .filter((limit) => limit.kind !== 'unknown')
     .map((limit) => {
@@ -97,7 +83,7 @@ function zhipuCard(status: { credentialConfigured: boolean } | null, dashboard: 
 }
 
 /** MiniMax：官方给的是剩余百分比，换算成已用；每模型 5h/周两行。 */
-function minimaxCard(status: { credentialConfigured: boolean } | null, dashboard: MiniMaxDashboard): OverviewCardState {
+export function minimaxCard(status: { credentialConfigured: boolean } | null, dashboard: MiniMaxDashboard): OverviewCardState {
   const periods: OverviewPeriod[] = []
   for (const model of dashboard.models.filter((entry) => entry.included).slice(0, 3)) {
     if (model.intervalRemainingPercent !== undefined) {
@@ -121,7 +107,7 @@ function minimaxCard(status: { credentialConfigured: boolean } | null, dashboard
 }
 
 /** 方舟：Agent Plan 的 5h/周/月三段；Coding Plan 未订阅时不占位。 */
-function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigured: boolean; usageSecretKeyConfigured: boolean } | null, dashboard: ArkUsageDashboard): OverviewCardState {
+export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigured: boolean; usageSecretKeyConfigured: boolean } | null, dashboard: ArkUsageDashboard): OverviewCardState {
   const usageConfigured = (status?.usageAccessKeyConfigured ?? false) && (status?.usageSecretKeyConfigured ?? false)
   const periods: OverviewPeriod[] = []
   for (const plan of dashboard.plans) {
@@ -143,78 +129,8 @@ function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigur
   }
 }
 
-/** 总览控制面板：三张卡片并行加载，单家失败互不影响。 */
-export function UsageOverviewTab({ api, onNavigate, onSummary }: UsageOverviewTabProps): JSX.Element {
-  const [zhipu, setZhipu] = useState<OverviewCardState>(INITIAL_CARD)
-  const [minimax, setMiniMax] = useState<OverviewCardState>(INITIAL_CARD)
-  const [ark, setArk] = useState<OverviewCardState>(INITIAL_CARD)
-  const [refreshing, setRefreshing] = useState<OverviewProvider | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-  const mounted = useRef(false)
-  const generation = useRef(0)
-
-  // 三家凭据状态汇总上报：卡片状态一变就推给父级（控制面板侧栏的唯一数据源）。
-  useEffect(() => {
-    if (!onSummary) return
-    onSummary({
-      zhipu: { loaded: zhipu.phase !== 'loading', configured: zhipu.configured },
-      minimax: { loaded: minimax.phase !== 'loading', configured: minimax.configured },
-      ark: { loaded: ark.phase !== 'loading', configured: ark.configured },
-    })
-  }, [zhipu, minimax, ark, onSummary])
-
-  const loadZhipu = useCallback(async (): Promise<void> => {
-    try {
-      const [status, dashboard] = await Promise.all([api.getZhipuStatus(), api.getZhipuDashboard('day')])
-      if (mounted.current) setZhipu(zhipuCard(status, dashboard))
-    } catch (cause) {
-      if (mounted.current) setZhipu({ ...INITIAL_CARD, phase: 'error', error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  }, [api])
-  const loadMiniMax = useCallback(async (): Promise<void> => {
-    try {
-      const [status, dashboard] = await Promise.all([api.getMiniMaxStatus(), api.getMiniMaxDashboard()])
-      if (mounted.current) setMiniMax(minimaxCard(status, dashboard))
-    } catch (cause) {
-      if (mounted.current) setMiniMax({ ...INITIAL_CARD, phase: 'error', error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  }, [api])
-  const loadArk = useCallback(async (live: boolean): Promise<void> => {
-    try {
-      const status = await api.getArkStatus()
-      const dashboard = live ? await api.refreshArkUsage() : await api.getArkDashboard()
-      if (mounted.current) setArk(arkCard(status, dashboard))
-    } catch (cause) {
-      if (mounted.current) setArk({ ...INITIAL_CARD, phase: 'error', error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  }, [api])
-
-  const refresh = useCallback(async (provider: OverviewProvider): Promise<void> => {
-    if (refreshing !== null) return
-    generation.current += 1
-    setRefreshing(provider)
-    try {
-      if (provider === 'zhipu') await loadZhipu()
-      else if (provider === 'minimax') await loadMiniMax()
-      else await loadArk(true)
-    } finally {
-      if (mounted.current) setRefreshing(null)
-    }
-  }, [refreshing, loadZhipu, loadMiniMax, loadArk])
-
-  useEffect(() => {
-    mounted.current = true
-    void loadZhipu()
-    void loadMiniMax()
-    void loadArk(false)
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => {
-      mounted.current = false
-      generation.current += 1
-      window.clearInterval(timer)
-    }
-  }, [loadZhipu, loadMiniMax, loadArk])
-
+/** 总览控制面板：三张卡片并排展示，数据与刷新动作都来自父级 CodingPlanTab。 */
+export function UsageOverviewTab({ cards, refreshing, now, onRefresh, onNavigate }: UsageOverviewTabProps): JSX.Element {
   const renderCard = (provider: OverviewProvider, title: string, hint: string, card: OverviewCardState): JSX.Element => (
     <section className={css['overviewCard']} aria-label={title + ' 用量'}>
       <div className={css['overviewCardHeader']}>
@@ -244,7 +160,7 @@ export function UsageOverviewTab({ api, onNavigate, onSummary }: UsageOverviewTa
       ))}
       {card.warnings.map((warning) => <p key={warning} className={css['overviewError']}>{warning}</p>)}
       <div className={css['overviewCardActions']}>
-        <button type="button" className={css['ghostButton']} disabled={refreshing !== null} onClick={() => { void refresh(provider) }}>{refreshing === provider ? '刷新中…' : '刷新'}</button>
+        <button type="button" className={css['ghostButton']} disabled={refreshing !== null} onClick={() => onRefresh(provider)}>{refreshing === provider ? '刷新中…' : '刷新'}</button>
         {!card.configured && <button type="button" className={css['ghostButton']} onClick={() => onNavigate(provider)}>去配置</button>}
       </div>
     </section>
@@ -253,9 +169,9 @@ export function UsageOverviewTab({ api, onNavigate, onSummary }: UsageOverviewTa
   return (
     <div className={css['overviewWorkspace']}>
       <div className={css['overviewGrid']}>
-        {renderCard('zhipu', '智谱 GLM', '尚未配置 API Key，前往使用配置页填写', zhipu)}
-        {renderCard('minimax', 'MiniMax', '尚未配置 API Key，前往使用配置页填写', minimax)}
-        {renderCard('ark', '火山方舟', '需要控制面 AK/SK 查询套餐用量，前往使用配置页填写', ark)}
+        {renderCard('zhipu', '智谱 GLM', '尚未配置 API Key，前往使用配置页填写', cards.zhipu)}
+        {renderCard('minimax', 'MiniMax', '尚未配置 API Key，前往使用配置页填写', cards.minimax)}
+        {renderCard('ark', '火山方舟', '需要控制面 AK/SK 查询套餐用量，前往使用配置页填写', cards.ark)}
       </div>
     </div>
   )
