@@ -7,7 +7,7 @@ import type { OpenAiGatewayStatus } from '../../openai/protocol.ts'
 import { ArkCodingPlanTab } from './ArkCodingPlanTab.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
-import { UsageOverviewTab, type OverviewProvider } from './UsageOverviewTab.tsx'
+import { UsageOverviewTab, type OverviewProvider, type OverviewProviderState, type OverviewSummary } from './UsageOverviewTab.tsx'
 import { ZhipuCodingPlanTab } from './ZhipuCodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -27,6 +27,9 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const [minimaxStatus, setMiniMaxStatus] = useState<MiniMaxStatus | null>(null)
   const [arkStatus, setArkStatus] = useState<ArkStatus | null>(null)
   const [openAiStatus, setOpenAiStatus] = useState<OpenAiGatewayStatus | null>(null)
+  // 控制面板总览上报的三家凭据状态：侧栏在未进子页签时的唯一数据源。
+  const [overviewSummary, setOverviewSummary] = useState<OverviewSummary | null>(null)
+  const onOverviewSummary = useCallback((summary: OverviewSummary): void => setOverviewSummary(summary), [])
 
   const isDashboard = provider === 'dashboard'
   const active = provider === 'zhipu' ? zhipuStatus : provider === 'minimax' ? minimaxStatus : provider === 'ark' ? arkStatus : provider === 'openai' ? openAiStatus : null
@@ -34,14 +37,26 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   const toolsCount = provider === 'zhipu' ? 5 : provider === 'minimax' ? 5 : provider === 'openai' ? 1 : 0
   const statusLabel = active === null ? '正在读取' : active.credentialConfigured ? '已配置' : '待配置'
   const modelsReady = active !== null && active.providerConfigured && active.models.length > 0 && active.models.every((model) => model.configured)
-  const configuredCount = [zhipuStatus, minimaxStatus, arkStatus].filter((status) => status?.credentialConfigured).length
+
+  // 侧栏单家状态：子页签回调优先，未挂载子页签时用总览上报；都没有 = 读取中。
+  const sideInfo = (sub: { credentialConfigured: boolean } | null, key: 'zhipu' | 'minimax' | 'ark'): OverviewProviderState => {
+    if (sub !== null) return { loaded: true, configured: sub.credentialConfigured }
+    const summary = overviewSummary?.[key]
+    if (!summary) return { loaded: false, configured: false }
+    return { loaded: summary.loaded, configured: summary.configured }
+  }
+  const zhipuInfo = sideInfo(zhipuStatus, 'zhipu')
+  const minimaxInfo = sideInfo(minimaxStatus, 'minimax')
+  const arkInfo = sideInfo(arkStatus, 'ark')
+  const configuredCount = [zhipuInfo, minimaxInfo, arkInfo].filter((info) => info.loaded && info.configured).length
+  const allLoaded = zhipuInfo.loaded && minimaxInfo.loaded && arkInfo.loaded
 
   const onZhipuStatus = useCallback((next: ZhipuStatus): void => setZhipuStatus(next), [])
   const onMiniMaxStatus = useCallback((next: MiniMaxStatus): void => setMiniMaxStatus(next), [])
   const onArkStatus = useCallback((next: ArkStatus): void => setArkStatus(next), [])
   const onOpenAiStatus = useCallback((next: OpenAiGatewayStatus): void => setOpenAiStatus(next), [])
   const providerMeta = useMemo(() => {
-    if (isDashboard) return '一屏查看智谱、MiniMax、火山方舟的套餐用量；单家失败互不影响。'
+    if (isDashboard) return ''
     if (provider === 'ark') return active?.credentialConfigured ? 'Agent Plan 单 Key 已配置' : '需要填写 Agent Plan API Key'
     if (provider === 'openai') return active?.credentialConfigured ? 'OpenAI 兼容中转站已配置' : '需要填写中转站地址和 API Key'
     return active?.credentialConfigured ? '官方凭据已配置' : '需要填写 API Key'
@@ -58,10 +73,10 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
           {isDashboard ? (
             <>
               <div><dt>服务商</dt><dd>3 家</dd></div>
-              <div><dt>凭据已配置</dt><dd data-state={configuredCount === 3 ? 'ok' : 'pending'}>{configuredCount}/3</dd></div>
-              <div><dt>智谱 GLM</dt><dd data-state={zhipuStatus?.credentialConfigured ? 'ok' : 'pending'}>{zhipuStatus === null ? '读取中' : zhipuStatus.credentialConfigured ? '已配置' : '待配置'}</dd></div>
-              <div><dt>MiniMax</dt><dd data-state={minimaxStatus?.credentialConfigured ? 'ok' : 'pending'}>{minimaxStatus === null ? '读取中' : minimaxStatus.credentialConfigured ? '已配置' : '待配置'}</dd></div>
-              <div><dt>火山方舟</dt><dd data-state={arkStatus?.credentialConfigured ? 'ok' : 'pending'}>{arkStatus === null ? '读取中' : arkStatus.credentialConfigured ? '已配置' : '待配置'}</dd></div>
+              <div><dt>凭据已配置</dt><dd data-state={allLoaded && configuredCount === 3 ? 'ok' : 'pending'}>{allLoaded ? configuredCount + '/3' : '读取中'}</dd></div>
+              <div><dt>智谱 GLM</dt><dd data-state={zhipuInfo.loaded && zhipuInfo.configured ? 'ok' : 'pending'}>{zhipuInfo.loaded ? (zhipuInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
+              <div><dt>MiniMax</dt><dd data-state={minimaxInfo.loaded && minimaxInfo.configured ? 'ok' : 'pending'}>{minimaxInfo.loaded ? (minimaxInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
+              <div><dt>火山方舟</dt><dd data-state={arkInfo.loaded && arkInfo.configured ? 'ok' : 'pending'}>{arkInfo.loaded ? (arkInfo.configured ? '已配置' : '待配置') : '读取中'}</dd></div>
             </>
           ) : (
             <>
@@ -73,7 +88,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
             </>
           )}
         </dl>
-        <p className={css['planInfoHint']}>{providerMeta}</p>
+        {providerMeta !== '' && <p className={css['planInfoHint']}>{providerMeta}</p>}
       </aside>
 
       <div className={css['codePlanMain']}>
@@ -100,7 +115,7 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
         )}
 
         <div className={css['codePlanContent']}>
-          {isDashboard && <UsageOverviewTab api={api} onNavigate={(target) => { setProvider(target); setSection('config') }} />}
+          {isDashboard && <UsageOverviewTab api={api} onNavigate={(target) => { setProvider(target); setSection('config') }} onSummary={onOverviewSummary} />}
           {provider === 'zhipu' && <ZhipuCodingPlanTab api={api} apiKeyEnv="ZAI_CODING_CN_API_KEY" section={section} embedded onStatusChange={onZhipuStatus} />}
           {provider === 'minimax' && <MiniMaxCodingPlanTab api={api} apiKeyEnv="MINIMAX_CN_API_KEY" section={section} embedded onStatusChange={onMiniMaxStatus} />}
           {provider === 'ark' && <ArkCodingPlanTab api={api} apiKeyEnv="ARK_CODING_PLAN_API_KEY" section={section} embedded onStatusChange={onArkStatus} />}

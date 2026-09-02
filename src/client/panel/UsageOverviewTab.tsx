@@ -10,10 +10,27 @@ import { resolveOverviewReset } from './reset-countdown.ts'
 
 export type OverviewProvider = 'zhipu' | 'minimax' | 'ark'
 
+/** 单家凭据状态快照（供控制面板侧栏消费）。 */
+export interface OverviewProviderState {
+  /** 是否已完成首次加载（false = 读取中）。 */
+  loaded: boolean
+  /** 凭据是否已配置。 */
+  configured: boolean
+}
+
+/** 三家凭据状态汇总。 */
+export interface OverviewSummary {
+  zhipu: OverviewProviderState
+  minimax: OverviewProviderState
+  ark: OverviewProviderState
+}
+
 export interface UsageOverviewTabProps {
   api: DevforgeApi
   /** 跳转到对应服务商的使用配置页。 */
   onNavigate: (provider: OverviewProvider) => void
+  /** 三家凭据状态上报（控制面板侧栏数据源）。 */
+  onSummary?: (summary: OverviewSummary) => void
 }
 
 /** 统一的一行用量窗口。 */
@@ -127,7 +144,7 @@ function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigur
 }
 
 /** 总览控制面板：三张卡片并行加载，单家失败互不影响。 */
-export function UsageOverviewTab({ api, onNavigate }: UsageOverviewTabProps): JSX.Element {
+export function UsageOverviewTab({ api, onNavigate, onSummary }: UsageOverviewTabProps): JSX.Element {
   const [zhipu, setZhipu] = useState<OverviewCardState>(INITIAL_CARD)
   const [minimax, setMiniMax] = useState<OverviewCardState>(INITIAL_CARD)
   const [ark, setArk] = useState<OverviewCardState>(INITIAL_CARD)
@@ -135,6 +152,16 @@ export function UsageOverviewTab({ api, onNavigate }: UsageOverviewTabProps): JS
   const [now, setNow] = useState(() => Date.now())
   const mounted = useRef(false)
   const generation = useRef(0)
+
+  // 三家凭据状态汇总上报：卡片状态一变就推给父级（控制面板侧栏的唯一数据源）。
+  useEffect(() => {
+    if (!onSummary) return
+    onSummary({
+      zhipu: { loaded: zhipu.phase !== 'loading', configured: zhipu.configured },
+      minimax: { loaded: minimax.phase !== 'loading', configured: minimax.configured },
+      ark: { loaded: ark.phase !== 'loading', configured: ark.configured },
+    })
+  }, [zhipu, minimax, ark, onSummary])
 
   const loadZhipu = useCallback(async (): Promise<void> => {
     try {
