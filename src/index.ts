@@ -48,6 +48,8 @@ import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, typ
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
+import { SiliconFlowService } from './siliconflow/service.ts'
+import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSettings as RagSettingsPartial } from './rag/protocol.ts'
 import { makeRagRoutes } from './rag/routes.ts'
@@ -153,6 +155,8 @@ export interface Config {
   pluginUpdate?: { enabled?: boolean; profile?: string; sources?: Array<{ packageName: string; indexUrl?: string; repo?: string }> }
   /** 会话记忆层子配置（设置项存 store.db，此处仅总开关兜底）。 */
   memory?: { enabled?: boolean }
+  /** 硅基流动 Provider 子配置。 */
+  siliconflow?: { enabled?: boolean; apiKeyEnv?: string; timeoutMs?: number }
 }
 
 /** 配置默认值。 */
@@ -217,6 +221,11 @@ export const Config = z.object({
   memory: z.object({
     enabled: z.boolean().default(true).description('会话记忆层（自动沉淀+主动注入）总开关；细项在「记忆工作台」页配置'),
   }).description('会话记忆层配置'),
+  siliconflow: z.object({
+    enabled: z.boolean().default(true).description('硅基流动 Provider（模型目录+余额看板+免费向量）'),
+    apiKeyEnv: z.string().default('SILICONFLOW_API_KEY').description('硅基流动受管凭据引用'),
+    timeoutMs: z.number().min(1000).max(60000).default(15000).description('硅基流动接口超时（毫秒）'),
+  }).description('硅基流动配置'),
   pluginUpdate: z.object({
     enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
     profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
@@ -313,6 +322,11 @@ export function apply(ctx: Context, config?: Config): void {
         sources: value.pluginUpdate?.sources?.length ? value.pluginUpdate.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
       },
       memory: { enabled: value.memory?.enabled ?? true },
+      siliconflow: {
+        enabled: value.siliconflow?.enabled ?? true,
+        apiKeyEnv: value.siliconflow?.apiKeyEnv ?? 'SILICONFLOW_API_KEY',
+        timeoutMs: value.siliconflow?.timeoutMs ?? 15000,
+      },
     }
   }
 
@@ -359,6 +373,7 @@ export function apply(ctx: Context, config?: Config): void {
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
+  const siliconFlowService = new SiliconFlowService(ctx, { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000 })
 
   // ---- 启动自动补齐：llm-pi-ai 就绪后把官方模型与推理档位写入设置；无变化时不产生写入。----
   let autoEnsureToken = 0
@@ -370,6 +385,7 @@ export function apply(ctx: Context, config?: Config): void {
         () => arkService.ensureModels(),
         () => zhipuService.ensureModels(),
         () => minimaxService.ensureModels(),
+        () => siliconFlowService.ensureModels(),
       ]
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (token !== autoEnsureToken) return
@@ -416,6 +432,7 @@ export function apply(ctx: Context, config?: Config): void {
     ollama: new ZhipuEmbedder(async () => 'ollama-local', { baseURL: 'http://localhost:11434', path: '/v1/embeddings', model: 'bge-m3' }),
     // 自定义 OpenAI 兼容渠道（硅基流动/智谱开放平台/百炼等）：地址与凭据引用名存 rag.settings，
     // 每次请求动态解析（面板即改即用）；凭据本体走受管凭据表，绝不落明文。
+    siliconflow: new ZhipuEmbedder(ragCredential('SILICONFLOW_API_KEY', '尚未配置硅基流动 API Key（SILICONFLOW_API_KEY）。'), { baseURL: 'https://api.siliconflow.cn/v1', path: '/embeddings', model: 'BAAI/bge-m3' }),
     custom: new ZhipuEmbedder(
       async () => {
         const stored = (() => { try { return getSettings<RagSettingsPartial>(getDb(), 'rag.settings') } catch { return undefined } })()
@@ -506,6 +523,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeMiniMaxRoutes(minimaxService),
     ...makeArkRoutes(arkService),
     ...makeOpenAiRoutes(openAiService),
+    ...makeSiliconFlowRoutes(siliconFlowService),
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),

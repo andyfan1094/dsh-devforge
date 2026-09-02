@@ -27,8 +27,8 @@ export const RAG_API = {
   settingsTest: '/api/dsh-devforge/rag/settings/test',
 } as const
 
-/** 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容 /embeddings 服务）。 */
-export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom'
+/** 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容服务；siliconflow=硅基流动免费档）。 */
+export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom' | 'siliconflow'
 
 /** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */
 export type RagKbSource = 'manual' | 'project' | 'mirror' | 'memory'
