@@ -52,10 +52,18 @@ export function parseModelIds(payload: unknown): string[] {
 export function mergeSiliconFlowProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, modelIds: string[]): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
   const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  const additions = modelIds.filter((id) => !ids.has(id)).map((id) => ({ id, name: id, input: ['text'], contextWindow: 32_768, maxTokens: 8_192 }))
+  const additions = modelIds.filter((id) => !ids.has(id)).map((id) => ({ id, name: id }))
   return {
     ...(provider ?? {}),
     apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
+    displayName: typeof provider?.displayName === 'string' && provider.displayName !== '' ? provider.displayName : '硅基流动',
+    // llm-pi-ai 校验红线：内置目录没有 siliconflow 路由，必须显式声明线协议与端点，
+    // 否则整条 provider 写入被拒（0.16.3 教训：只写 models 会报 "needs an api"）。
+    api: typeof provider?.api === 'string' && provider.api !== '' ? provider.api : 'openai-completions',
+    baseURL: typeof provider?.baseURL === 'string' && provider.baseURL !== '' ? provider.baseURL : BASE_URL,
+    defaultContextWindow: 128_000,
+    defaultMaxTokens: 8_192,
+    defaultInput: ['text'],
     models: [...existing, ...additions],
   }
 }
