@@ -16,6 +16,7 @@ export const MEMORY_API = {
   migrationStatus: '/api/dsh-devforge/memory/migration-status',
   memoryItem: '/api/dsh-devforge/memory/memories/item',
   memoriesPreview: '/api/dsh-devforge/memory/memories/preview',
+  profile: '/api/dsh-devforge/memory/profile',
   nativeList: '/api/dsh-devforge/memory/native',
   graph: '/api/dsh-devforge/memory/graph',
   index: '/api/dsh-devforge/rag/kb/index',
@@ -152,3 +153,6 @@ export interface MemoryGraph {
   edges: MemoryGraphEdge[]
   generatedAt: number
 }
+
+/** 用户身份卡（常驻注入的用户画像）。实现与默认值在 memory/profile.ts。 */
+export type { MemoryUserProfile } from './profile.ts'

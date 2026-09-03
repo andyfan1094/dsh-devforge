@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import { type MemoryGraph, type MemorySettings, type MemoryStatus, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
+import { type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
@@ -54,6 +54,8 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [profile, setProfile] = useState<MemoryUserProfile | null>(null)
+  const [habitsText, setHabitsText] = useState('')
   const mounted = useRef(true)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -68,7 +70,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         try { previewMap[doc.id] = await api.previewMemoryDoc(doc.id) } catch { /* 回退展示文件名 */ }
       }))
       // 图谱与主存储列表是补充视图：单独失败不拖垮整页，错误以 softError 提示
-      const settled = await Promise.allSettled([api.listNativeMemories(), api.getMemoryGraph()])
+      const settled = await Promise.allSettled([api.listNativeMemories(), api.getMemoryGraph(), api.getUserProfile()])
       if (!mounted.current) return
       setStatus(nextStatus)
       setSettings(nextSettings)
@@ -76,6 +78,10 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
       setPreviews(previewMap)
       setNativeEntries(settled[0].status === 'fulfilled' ? settled[0].value : [])
       setGraph(settled[1].status === 'fulfilled' ? settled[1].value : null)
+      if (settled[2].status === 'fulfilled') {
+        setProfile(settled[2].value)
+        setHabitsText(settled[2].value.habits.join('\n'))
+      }
       setSoftError(settled.filter((item) => item.status === 'rejected').map((item) => (item.reason instanceof Error ? item.reason.message : String(item.reason))).join('；'))
       setNotice(null)
     } catch (error) {
@@ -105,6 +111,17 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     if (!mounted.current) return
     setSettings(saved)
     setNotice({ kind: 'success', text: '记忆设置已保存，立即生效。' })
+  })
+
+  /** 保存用户身份卡：常驻注入的 section 文本动态求值，保存即时生效无需重启。 */
+  const saveProfile = (): Promise<void> => run(async () => {
+    if (profile === null) return
+    const habits = habitsText.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+    const saved = await api.saveUserProfile({ ...profile, habits })
+    if (!mounted.current) return
+    setProfile(saved)
+    setHabitsText(saved.habits.join('\n'))
+    setNotice({ kind: 'success', text: '用户身份卡已保存，常驻注入即时生效。' })
   })
 
   const deleteMemory = (id: string): Promise<void> => run(async () => {
@@ -225,6 +242,17 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         </section>
 
         <div className={css['memoryStack']}>
+          <section className={css['memoryPanel']}>
+            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>用户身份卡</h3><p className={css['sectionHint']}>常驻注入每轮对话（不靠召回，必达）；插件给别人用时，每人填自己的身份与习惯。</p></div><span className={css['badge']} data-kind={profile?.enabled === true && (profile.alias !== '' || profile.identity !== '' || habitsText.trim() !== '') ? 'success' : 'pending'}>{profile?.enabled === false ? '已停用' : '常驻注入'}</span></div>
+            {profile === null ? <div className={css['empty']} data-loading="">正在读取身份卡…</div> : <div className={css['memoryForm']}>
+              <label className={css['toggleRow']}><input type="checkbox" checked={profile.enabled} onChange={(e) => setProfile({ ...profile, enabled: e.target.checked })}/><span><strong>常驻注入</strong><small>每轮对话自动附带身份卡，截断到 {profile.maxChars} 字。</small></span></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>称呼</span><input className={css['input']} value={profile.alias} placeholder="如：辉哥" onChange={(e) => setProfile({ ...profile, alias: e.target.value })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>身份简介</span><input className={css['input']} value={profile.identity} placeholder="是谁、在做什么（一句话）" onChange={(e) => setProfile({ ...profile, identity: e.target.value })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>习惯与偏好（每行一条，最多 20 条）</span><textarea className={css['input']} rows={4} value={habitsText} placeholder={'如：项目文档一律使用中文' + '\n' + '界面排版紧凑信息密度优先'} onChange={(e) => setHabitsText(e.target.value)}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限（300-2000）</span><input className={css['input']} type="number" min={300} max={2000} step={100} value={profile.maxChars} onChange={(e) => setProfile({ ...profile, maxChars: Number(e.target.value) || 800 })}/></label>
+              <div className={css['formFooter']}><span className={css['sectionHint']}>保存在本地 store.db，保存即时生效。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveProfile() }}>保存身份卡</button></div>
+            </div>}
+          </section>
           <section className={css['memoryPanel']}>
             <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>自动记忆策略</h3><p className={css['sectionHint']}>控制会话结束后的提炼，以及每轮开始时的相关记忆注入。</p></div><span className={css['badge']} data-kind={settings?.enabled ? 'success' : 'pending'}>{settings?.enabled ? '运行中' : '已停用'}</span></div>
             {settings === null ? <div className={css['empty']} data-loading="">正在读取设置…</div> : <div className={css['memoryForm']}>

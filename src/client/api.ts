@@ -14,7 +14,7 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
-import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
@@ -587,6 +587,18 @@ export class DevforgeApi {
   async getMemoryGraph(signal?: AbortSignal): Promise<MemoryGraph> {
     const data = await readJson<{ graph: MemoryGraph }>(await fetch(MEMORY_API.graph, { signal }))
     return data.graph
+  }
+
+  /** 读取用户身份卡（常驻注入画像）。 */
+  async getUserProfile(signal?: AbortSignal): Promise<MemoryUserProfile> {
+    const data = await readJson<{ profile: MemoryUserProfile }>(await fetch(MEMORY_API.profile, { signal }))
+    return data.profile
+  }
+
+  /** 保存用户身份卡（常驻注入即时生效，无需重启）。 */
+  async saveUserProfile(profile: MemoryUserProfile, signal?: AbortSignal): Promise<MemoryUserProfile> {
+    const data = await readJson<{ profile: MemoryUserProfile }>(await fetch(MEMORY_API.profile, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(profile), signal }))
+    return data.profile
   }
 
   /** 一键迁移外部记忆（Mnemon/Hindsight → 内置，幂等）。 */

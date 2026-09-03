@@ -45,6 +45,7 @@ import { ZhipuReranker } from './rag/rerank.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { NativeMemoryStore } from './memory/native.ts'
+import { UserProfileInjectionService, DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './memory/profile.ts'
 import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
@@ -519,6 +520,14 @@ export function apply(ctx: Context, config?: Config): void {
     } catch { return DEFAULT_MEMORY_SETTINGS }
   }
   const memorySettingsWrite = (next: MemorySettings): void => { putSettings(getDb(), 'memory.settings', next) }
+  // 用户身份卡（settings 域 memory.profile）：常驻注入的动态数据源，面板保存即时生效。
+  const memoryProfileRead = (): MemoryUserProfile => {
+    try {
+      const stored = getSettings(getDb(), 'memory.profile')
+      return normalizeUserProfile(stored, DEFAULT_USER_PROFILE)
+    } catch { return DEFAULT_USER_PROFILE }
+  }
+  const memoryProfileWrite = (next: MemoryUserProfile): void => { putSettings(getDb(), 'memory.profile', next) }
   const memoryKbId = (): string => {
     const existing = ragService.listKbs().find((kb) => kb.source === 'memory')
     if (existing !== undefined) return existing.id
@@ -562,7 +571,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, injection, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, native: nativeMemory }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory }),
     ...makeWorkflowRoutes(workflowEngine),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine)]
@@ -579,6 +588,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeOpenAiTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
   let disposeConstraints: (() => void) | undefined
+  let disposeUserProfile: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
@@ -598,6 +608,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeOpenAiTools?.(); disposeOpenAiTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     disposeConstraints?.(); disposeConstraints = undefined
+    disposeUserProfile?.(); disposeUserProfile = undefined
     pluginBriefSurface.dispose()
     pluginBriefSurface = {
       dispose: () => {},
@@ -640,6 +651,13 @@ export function apply(ctx: Context, config?: Config): void {
         return () => service.dispose()
       }, 'dsh-devforge: constraints')
     }
+    // 用户身份卡常驻注入（0.17.10）：身份/称呼/习惯挂每轮系统提示，先于项目约束（order 50 < 80）；
+    // section 文本动态求值，面板保存身份卡即时生效，无需重启。
+    disposeUserProfile = ctx.effect(() => {
+      const service = new UserProfileInjectionService()
+      safeActivate(ctx, '用户身份卡注入', () => service.start(ctx, memoryProfileRead))
+      return () => service.dispose()
+    }, 'dsh-devforge: user-profile')
     // 已安装插件功能总览：自动枚举 Loader 用户插件并把功能说明注入上下文（0.12.0）。
     safeActivate(ctx, '插件能力总览注入', () => {
       pluginBriefSurface = activatePluginBrief(ctx, () => {

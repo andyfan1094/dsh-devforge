@@ -15,10 +15,12 @@ import { buildMemoryGraph } from './graph.ts'
 import type { MemorySedimentService } from './sediment.ts'
 import type { MemoryInjectionService } from './inject.ts'
 import { NativeMemoryStore, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
+import { DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './profile.ts'
 import type { MemorySettings } from './protocol.ts'
 export type { MemorySettings }
 
 const MEMORY_SETTINGS_KEY = 'memory.settings'
+const MEMORY_PROFILE_KEY = 'memory.profile'
 const MEMORY_KB_NAME = '会话记忆库'
 
 export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
@@ -74,6 +76,9 @@ export interface MemoryRouteDeps {
   injection: MemoryInjectionService
   getSettings: () => MemorySettings
   putSettings: (next: MemorySettings) => void
+  /** 用户身份卡读写（settings 域 memory.profile；常驻注入的动态数据源）。 */
+  getProfile: () => MemoryUserProfile
+  putProfile: (next: MemoryUserProfile) => void
   native: NativeMemoryStore
 }
 
@@ -85,8 +90,23 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native, injection } = deps
+  const { rag, sediment, native, injection, getProfile, putProfile } = deps
   return [
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/profile',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        try {
+          if (req.method === 'GET') { writeJson(res, 200, { ok: true, profile: getProfile() }); return }
+          if (req.method !== 'PUT') { writeJson(res, 405, { ok: false, error: 'GET/PUT only' }); return }
+          const body = await readJsonBody(req)
+          if (body === null) { writeJson(res, 400, { ok: false, error: '请求体必须是合法 JSON 对象' }); return }
+          // 规整后落盘；section 文本是动态函数，保存即时生效无需重启
+          putProfile(normalizeUserProfile(body, getProfile()))
+          writeJson(res, 200, { ok: true, profile: getProfile() })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/native',
       handler: async (req, res) => {
