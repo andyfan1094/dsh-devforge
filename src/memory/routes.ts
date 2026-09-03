@@ -13,6 +13,7 @@ import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror
 import { collectHindsightItems, collectMnemonItems } from './migrate.ts'
 import { buildMemoryGraph } from './graph.ts'
 import type { MemorySedimentService } from './sediment.ts'
+import type { MemoryStatsStore } from './stats.ts'
 import type { MemoryInjectionService } from './inject.ts'
 import { NativeMemoryStore, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
 import { DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './profile.ts'
@@ -72,6 +73,7 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
 export interface MemoryRouteDeps {
   rag: RagService
   sediment: MemorySedimentService
+  stats: MemoryStatsStore
   /** 注入服务：状态接口回读真实注入次数（此前硬编码 0 是统计 bug）。 */
   injection: MemoryInjectionService
   getSettings: () => MemorySettings
@@ -90,7 +92,7 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native, injection, getProfile, putProfile } = deps
+  const { rag, sediment, native, injection, stats, getProfile, putProfile } = deps
   return [
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/profile',
@@ -209,9 +211,14 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               autoInject: settings.autoInject,
               memoryKbId: memoryKb?.id ?? '',
               memoryCount: memoryKb === undefined ? 0 : rag.listDocs(memoryKb.id).length,
-              sedimentCount: sediment.sedimentCount,
-              injectCount: injection.injectCount,
-              lastSedimentAt: sediment.lastSedimentAt,
+              sedimentCount: stats.read().sedimentTotal,
+              sedimentRunCount: sediment.sedimentCount,
+              injectCount: stats.read().injectTotal,
+              injectRunCount: injection.injectCount,
+              lastSedimentAt: stats.read().lastSedimentAt,
+              lastInjectAt: stats.read().lastInjectAt,
+              lastInjectPreview: stats.read().lastInjectPreview,
+              injectNoHit: stats.read().injectNoHit,
               mirror: {
                 mnemonRootExists: existsSync(mnemonRoot),
                 hindsightConfigured: hindsight !== undefined,

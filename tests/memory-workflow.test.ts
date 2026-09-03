@@ -12,6 +12,8 @@ import { collectPageRefs, listMnemonMarkdowns, mnemonDataRoot, readHindsightConf
 import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src/rag/rerank.ts'
 import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText } from '../src/memory/sediment.ts'
 import { messageText, MemoryInjectionService, renderMemoryContext } from '../src/memory/inject.ts'
+import { MemoryStatsStore } from '../src/memory/stats.ts'
+import { closeDb } from '../src/store/db.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
 import type { RagDocument, RagSearchHit } from '../src/rag/protocol.ts'
 import type { RagService } from '../src/rag/service.ts'
@@ -217,6 +219,39 @@ describe('记忆主动注入', () => {
     assert.ok(text !== undefined)
     assert.ok(text.includes('f.md'))
     assert.ok(!text.includes('内容1'))
+  })
+})
+
+describe('记忆持久化统计（0.17.14 可观测修复）', () => {
+  test('MemoryStatsStore：存量库基线引导 + 跨实例持久化累计', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-stats-'))
+    const dbPath = join(dir, 'store.db')
+    try {
+      const docs = [
+        { id: 'a', kbId: 'kb1', fileName: 'a.md', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 },
+        { id: 'b', kbId: 'kb1', fileName: 'b.md', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 },
+      ] as RagDocument[]
+      const rag = fakeRag({ listDocs: () => docs })
+      const store1 = new MemoryStatsStore(rag, () => 'kb1', dbPath)
+      const first = store1.read()
+      assert.equal(first.sedimentTotal, 2, '首次读取以存量 memory 库文档数做基线，不与沉淀库总量自相矛盾')
+      store1.update((prev) => ({ ...prev, sedimentTotal: prev.sedimentTotal + 3, injectTotal: prev.injectTotal + 1, lastInjectAt: 123, lastInjectPreview: '内置长期记忆 · 关键事实' }))
+      // 新实例读同一库：累计值持久化生效。
+      const store2 = new MemoryStatsStore(rag, () => 'kb1', dbPath)
+      const second = store2.read()
+      assert.equal(second.sedimentTotal, 5)
+      assert.equal(second.injectTotal, 1)
+      assert.equal(second.lastInjectAt, 123)
+      assert.ok(second.lastInjectPreview.includes('关键事实'))
+    } finally { closeDb(dbPath); rmSync(dir, { recursive: true, force: true }) }
+  })
+  test('decideDetailed：未启用与无命中分别给出 reason，与注入统计口径对齐', async () => {
+    const disabled = new MemoryInjectionService(fakeRag(), () => ({ ...SETTINGS, enabled: false }))
+    assert.equal((await disabled.decideDetailed([{ content: [{ type: 'text', text: '服务器地址' }] }])).reason, 'disabled')
+    const noHit = new MemoryInjectionService(fakeRag({ search: async () => [] }), () => SETTINGS)
+    const decision = await noHit.decideDetailed([{ content: [{ type: 'text', text: '服务器地址' }] }])
+    assert.equal(decision.text, undefined)
+    assert.equal(decision.reason, 'no-hit')
   })
 })
 

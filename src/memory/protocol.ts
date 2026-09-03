@@ -47,9 +47,21 @@ export interface MemoryStatus {
   autoInject: boolean
   memoryKbId: string
   memoryCount: number
+  /** 累计沉淀条数（持久化，跨重启累计；首版启用时以存量 memory 库文档数做基线）。 */
   sedimentCount: number
+  /** 本次进程运行期沉淀条数（增量口径，与累计值并排展示）。 */
+  sedimentRunCount: number
+  /** 累计主动注入次数（持久化；历史不可回填，从 0.17.14 起计）。 */
   injectCount: number
+  /** 本次进程运行期注入次数（增量口径）。 */
+  injectRunCount: number
   lastSedimentAt: number
+  /** 最近一次注入时间戳（0 表示尚未注入过）。 */
+  lastInjectAt: number
+  /** 最近一次注入内容预览（前 120 字）。 */
+  lastInjectPreview: string
+  /** 累计"触发了但检索无命中"的注入跳过次数。 */
+  injectNoHit: number
   mirror: { mnemonRootExists: boolean; hindsightConfigured: boolean; hindsightServerMode: string; hindsightBank: string }
 }
 

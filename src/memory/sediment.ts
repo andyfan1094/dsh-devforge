@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import type { RagService } from '../rag/service.ts'
 import type { MemorySettings } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
+import type { MemoryStatsStore } from './stats.ts'
 
 /** 记忆提炼用的文本生成适配器（接线层用 ctx.llm.stream 实现；测试注入 fake）。 */
 export type MemoryGenerateFn = (system: string, user: string) => Promise<string>
@@ -69,13 +70,15 @@ export class MemorySedimentService {
   private readonly generate: MemoryGenerateFn
   private readonly config: () => MemorySettings
   private readonly native?: NativeMemoryStore
+  private readonly stats?: MemoryStatsStore
 
-  constructor(rag: RagService, getKbId: () => string, generate: MemoryGenerateFn, config: () => MemorySettings, native?: NativeMemoryStore) {
+  constructor(rag: RagService, getKbId: () => string, generate: MemoryGenerateFn, config: () => MemorySettings, native?: NativeMemoryStore, stats?: MemoryStatsStore) {
     this.rag = rag
     this.getKbId = getKbId
     this.generate = generate
     this.config = config
     this.native = native
+    this.stats = stats
   }
 
   /** 挂到宿主上下文（防御式解析 on）；dispose 解除全部监听与待处理定时器。 */
@@ -172,7 +175,12 @@ export class MemorySedimentService {
       } catch { /* 单条失败继续 */ }
     }
     this.processedTurns.set(sessionId, turn)
-    if (stored > 0) { this.sedimentCount += stored; this.lastSedimentAt = Date.now() }
+    if (stored > 0) {
+      this.sedimentCount += stored
+      this.lastSedimentAt = Date.now()
+      // 持久化累计口径：跨重启与沉淀库总量保持一致，卡片不再自相矛盾。
+      this.stats?.update((prev) => ({ ...prev, sedimentTotal: prev.sedimentTotal + stored, lastSedimentAt: this.lastSedimentAt }))
+    }
     return stored
   }
 

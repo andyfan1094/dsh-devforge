@@ -11,6 +11,7 @@ import type { RagSearchHit } from '../rag/protocol.ts'
 import type { RagService } from '../rag/service.ts'
 import type { MemorySettings, NativeMemoryEntry } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
+import type { MemoryStatsStore } from './stats.ts'
 
 /** 从 user 消息内容块提取纯文本（防御式，未知形状返回空串）。 */
 export function messageText(message: unknown): string {
@@ -45,6 +46,9 @@ export function renderNativeContext(entries: NativeMemoryEntry[], maxChars: numb
   return text.length > maxChars ? text.slice(0, maxChars) : text
 }
 
+/** 注入决策明细：text 为空时 reason 说明跳过原因，供可观测统计区分"未启用/无命中"。 */
+export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit' }
+
 /** 记忆主动注入服务。 */
 export class MemoryInjectionService {
   injectCount = 0
@@ -52,11 +56,13 @@ export class MemoryInjectionService {
   private readonly rag: RagService
   private readonly config: () => MemorySettings
   private readonly native?: NativeMemoryStore
+  private readonly stats?: MemoryStatsStore
 
-  constructor(rag: RagService, config: () => MemorySettings, native?: NativeMemoryStore) {
+  constructor(rag: RagService, config: () => MemorySettings, native?: NativeMemoryStore, stats?: MemoryStatsStore) {
     this.rag = rag
     this.config = config
     this.native = native
+    this.stats = stats
   }
 
   /** 记忆检索范围：memory + mirror 来源知识库（不含手动库，避免噪声）。 */
@@ -64,24 +70,29 @@ export class MemoryInjectionService {
     return this.rag.listKbs().filter((kb) => kb.source === 'memory' || kb.source === 'mirror').map((kb) => kb.id)
   }
 
-  /** 对一次 pre-step 做注入决策（导出便于单测；正常由 attach 内部调用）。 */
-  async decide(messages: readonly unknown[]): Promise<string | undefined> {
+  /** 对一次 pre-step 做注入决策，带跳过原因（导出便于单测与可观测统计）。 */
+  async decideDetailed(messages: readonly unknown[]): Promise<InjectDecision> {
     const settings = this.config()
-    if (!settings.enabled || !settings.autoInject) return undefined
+    if (!settings.enabled || !settings.autoInject) return { reason: 'disabled' }
     const query = messages.map((message) => messageText(message)).join(' ').trim().slice(-600)
-    if (query === '') return undefined
+    if (query === '') return { reason: 'no-hit' }
     const kbIds = this.memoryKbIds()
-    if (kbIds.length === 0) return undefined
+    if (kbIds.length === 0) return { reason: 'no-hit' }
     const hits = await this.rag.search({ query, kbIds, topK: settings.topK, vectorWeight: 0.5 })
     const good = hits.filter((hit) => hit.score >= Math.max(settings.threshold, 0.01))
     // 内置长期记忆与 RAG 检索并联：两边都取，拼合后统一限长；全部为空才不注入。
     let nativeEntries: NativeMemoryEntry[] = []
     try { nativeEntries = this.native?.search(query, { limit: settings.topK }) ?? [] } catch { /* 内置检索失败不影响 RAG 注入 */ }
-    if (good.length === 0 && nativeEntries.length === 0) return undefined
+    if (good.length === 0 && nativeEntries.length === 0) return { reason: 'no-hit' }
     const ragText = renderMemoryContext(good, settings.maxChars)
     const nativeText = renderNativeContext(nativeEntries, Math.max(0, settings.maxChars - ragText.length))
     const combined = [ragText, nativeText].filter((part) => part !== '').join('\n---\n')
-    return combined === '' ? undefined : combined
+    return combined === '' ? { reason: 'no-hit' } : { text: combined }
+  }
+
+  /** 旧签名兼容：只取注入文本。 */
+  async decide(messages: readonly unknown[]): Promise<string | undefined> {
+    return (await this.decideDetailed(messages)).text
   }
 
   /** 挂到宿主上下文；返回卸载函数。 */
@@ -92,9 +103,17 @@ export class MemoryInjectionService {
         const decision = await next()
         try {
           if (payload.step !== 1 || payload.signal?.aborted === true) return decision
-          const text = await this.decide(Array.isArray(payload.messages) ? payload.messages : [])
-          if (text === undefined || text === '') return decision
+          const detail = await this.decideDetailed(Array.isArray(payload.messages) ? payload.messages : [])
+          if (detail.reason === 'disabled') return decision
+          if (detail.text === undefined || detail.text === '') {
+            // 触发了但无命中：计入持久化跳过统计，与"功能未启用"可区分。
+            this.stats?.update((prev) => ({ ...prev, injectNoHit: prev.injectNoHit + 1 }))
+            return decision
+          }
+          const text = detail.text
           this.injectCount += 1
+          // 持久化注入可观测：累计次数 + 最近时间 + 内容预览，面板可一眼确认功能活着。
+          this.stats?.update((prev) => ({ ...prev, injectTotal: prev.injectTotal + 1, lastInjectAt: Date.now(), lastInjectPreview: text.slice(0, 120) }))
           return {
             ...decision,
             messages: [...(decision.messages ?? []), createUserMessage({

@@ -224,8 +224,17 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
       <div className={css['memoryStats']}>
         <div className={css['memoryStat']}><span>会话沉淀库</span><strong>{status?.memoryCount ?? '—'}</strong><small>自动提炼 · RAG 全文可召回</small></div>
         <div className={css['memoryStat']}><span>内置长期记忆</span><strong>{nativeEntries.length || (status === null ? '—' : 0)}</strong><small>主存储 · 手动/迁移/沉淀</small></div>
-        <div className={css['memoryStat']}><span>自动沉淀</span><strong>{status?.sedimentCount ?? '—'}</strong><small>{settings?.autoSediment ? '已开启' : '已关闭'}</small></div>
-        <div className={css['memoryStat']}><span>主动注入</span><strong>{status?.injectCount ?? '—'} 次</strong><small>{settings?.autoInject ? '已开启' : '已关闭'} · {sourceReady ? '数据源就绪' : '待初始化'}</small></div>
+        {/* 沉淀/注入主数均为持久化累计口径（跨重启，与沉淀库总量一致）；本次运行增量与最近时间入副行，口径不再自相矛盾。 */}
+        <div className={css['memoryStat']} title={status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) : '本版启用后尚未沉淀'}>
+          <span>自动沉淀</span>
+          <strong>{status?.sedimentCount ?? '—'} 条</strong>
+          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}</small>
+        </div>
+        <div className={css['memoryStat']} title={status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : (status !== null && status.lastInjectAt > 0 ? '' : '尚未注入过；每轮对话第一步检索命中才注入')}>
+          <span>主动注入</span>
+          <strong>{status?.injectCount ?? '—'} 次</strong>
+          <small>{settings?.autoInject ? '已开启' : '已关闭'} · 本次运行 +{status?.injectRunCount ?? 0}{status !== null && status.lastInjectAt > 0 ? ' · 最近 ' + fmtTime(status.lastInjectAt) : ''}{status !== null && status.injectNoHit > 0 ? ' · 无命中 ' + status.injectNoHit : ''}{!sourceReady ? ' · 数据源待初始化' : ''}</small>
+        </div>
       </div>
 
       {/* 单一两列网格：左列图谱→主存储（点图谱条目即过滤下方列表，联动相邻）；右列操作与库表面板。
