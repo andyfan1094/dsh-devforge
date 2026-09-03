@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto'
 import type { RagService } from '../rag/service.ts'
 import type { MemorySettings } from './protocol.ts'
+import type { NativeMemoryStore } from './native.ts'
 
 /** 记忆提炼用的文本生成适配器（接线层用 ctx.llm.stream 实现；测试注入 fake）。 */
 export type MemoryGenerateFn = (system: string, user: string) => Promise<string>
@@ -67,12 +68,14 @@ export class MemorySedimentService {
   private readonly getKbId: () => string
   private readonly generate: MemoryGenerateFn
   private readonly config: () => MemorySettings
+  private readonly native?: NativeMemoryStore
 
-  constructor(rag: RagService, getKbId: () => string, generate: MemoryGenerateFn, config: () => MemorySettings) {
+  constructor(rag: RagService, getKbId: () => string, generate: MemoryGenerateFn, config: () => MemorySettings, native?: NativeMemoryStore) {
     this.rag = rag
     this.getKbId = getKbId
     this.generate = generate
     this.config = config
+    this.native = native
   }
 
   /** 挂到宿主上下文（防御式解析 on）；dispose 解除全部监听与待处理定时器。 */
@@ -160,6 +163,8 @@ export class MemorySedimentService {
       const fileName = 'mem-' + Date.now() + '-' + stored + '.md'
       const text = '重要性: ' + importance + '\n来源会话: ' + sessionId + '\n沉淀时间: ' + new Date().toISOString() + '\n\n' + content
       try {
+        // 内置 memory.entry 是长期记忆主存储，RAG 文档保留为语义检索索引。
+        this.native?.migrate([{ content, category: 'general', source: 'session', sourceId: sessionId, importance: importance === 'critical' ? 5 : importance === 'low' ? 2 : 3, migrationKey: 'session:' + sessionId + ':' + turn + ':' + key }])
         await this.rag.ingestText(kbId, fileName, text, { source: 'memory' })
         keys.add(key)
         this.existingKeys = undefined // 下次重建

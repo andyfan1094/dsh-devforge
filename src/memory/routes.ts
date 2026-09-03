@@ -10,7 +10,9 @@ import { isLoopbackRequest } from '../loopback.ts'
 import type { RagService } from '../rag/service.ts'
 import { ProjectIndexer } from '../rag/project-indexer.ts'
 import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror, syncMnemonMirror } from '../rag/mirror.ts'
+import { collectHindsightItems, collectMnemonItems } from './migrate.ts'
 import type { MemorySedimentService } from './sediment.ts'
+import { NativeMemoryStore, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
 import type { MemorySettings } from './protocol.ts'
 export type { MemorySettings }
 
@@ -68,6 +70,7 @@ export interface MemoryRouteDeps {
   sediment: MemorySedimentService
   getSettings: () => MemorySettings
   putSettings: (next: MemorySettings) => void
+  native: NativeMemoryStore
 }
 
 /** 确保来源知识库存在（按名称查，缺则建）。 */
@@ -78,8 +81,73 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment } = deps
+  const { rag, sediment, native } = deps
   return [
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/search',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { const url = new URL(req.url ?? '', 'http://localhost'); const query = url.searchParams.get('q') ?? ''; const limit = Number(url.searchParams.get('limit') ?? 20); writeJson(res, 200, { ok: true, entries: native.search(query, { limit }) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/save',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { const body = await readJsonBody(req); if (body === null) { writeJson(res, 400, { ok: false, error: '请求体必须是合法 JSON 对象' }); return }; writeJson(res, 200, { ok: true, entry: native.create(body as unknown as NativeMemoryInput) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/update',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'PUT') { writeJson(res, 405, { ok: false, error: 'PUT only' }); return }
+        try { const body = await readJsonBody(req); const id = typeof body?.id === 'string' ? body.id : ''; if (body === null || id === '') { writeJson(res, 400, { ok: false, error: 'id 必填且请求体合法' }); return }; const patch = { ...body }; delete patch.id; writeJson(res, 200, { ok: true, entry: native.update(id, patch as NativeMemoryPatch) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/delete',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'DELETE') { writeJson(res, 405, { ok: false, error: 'DELETE only' }); return }
+        try { const body = await readJsonBody(req); const id = typeof body?.id === 'string' ? body.id : ''; if (body === null || id === '') { writeJson(res, 400, { ok: false, error: 'id 必填且请求体合法' }); return }; if (!native.delete(id)) { writeJson(res, 404, { ok: false, error: '记忆不存在' }); return }; writeJson(res, 200, { ok: true }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/migrate',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { const body = await readJsonBody(req); const items = body?.items; if (body === null || !Array.isArray(items)) { writeJson(res, 400, { ok: false, error: 'items 必须是数组' }); return }; writeJson(res, 200, { ok: true, result: native.migrate(items as NativeMemoryMigrationItem[]) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/migrate/external',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const kind = typeof body?.kind === 'string' ? body.kind : ''
+          if (kind !== 'mnemon' && kind !== 'hindsight') { writeJson(res, 400, { ok: false, error: 'kind 必须是 mnemon 或 hindsight' }); return }
+          // 采集只读外部数据 → 幂等迁移进内置 memory.entry（重复执行只更新）。
+          const items = kind === 'mnemon' ? collectMnemonItems(mnemonDataRoot()) : await collectHindsightItems()
+          const result = native.migrate(items)
+          writeJson(res, 200, { ok: true, result, status: native.migrationStatus() })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/migration-status',
+      handler: async (req, res) => { if (!guard(req, res)) return; if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }; writeJson(res, 200, { ok: true, status: native.migrationStatus() }) },
+    },
     {
       kind: 'exact',
       path: '/api/dsh-devforge/memory/status',

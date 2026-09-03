@@ -7,6 +7,13 @@ export const MEMORY_API = {
   status: '/api/dsh-devforge/memory/status',
   settings: '/api/dsh-devforge/memory/settings',
   memories: '/api/dsh-devforge/memory/memories',
+  search: '/api/dsh-devforge/memory/search',
+  save: '/api/dsh-devforge/memory/save',
+  update: '/api/dsh-devforge/memory/update',
+  remove: '/api/dsh-devforge/memory/delete',
+  migrate: '/api/dsh-devforge/memory/migrate',
+  migrateExternal: '/api/dsh-devforge/memory/migrate/external',
+  migrationStatus: '/api/dsh-devforge/memory/migration-status',
   memoryItem: '/api/dsh-devforge/memory/memories/item',
   index: '/api/dsh-devforge/rag/kb/index',
   mirrorSync: '/api/dsh-devforge/rag/mirror/sync',
@@ -51,6 +58,58 @@ export interface MirrorSyncResult {
   removed: number
   skipped: number
   errors: string[]
+}
+
+/** 内置记忆分类。 */
+export type NativeMemoryCategory = 'preference' | 'decision' | 'fact' | 'insight' | 'context' | 'general'
+
+/** 内置记忆条目（store.db docs 域 memory.entry，主存储不依赖外部插件）。 */
+export interface NativeMemoryEntry {
+  id: string
+  content: string
+  category: NativeMemoryCategory
+  tags: string[]
+  source: string
+  sourceId?: string
+  importance: number
+  createdAt: number
+  updatedAt: number
+  /** 外部迁移幂等键；同一来源重复导入只更新。 */
+  migrationKey?: string
+}
+
+/** 内置记忆写入输入。 */
+export interface NativeMemoryInput {
+  content: string
+  category?: NativeMemoryCategory
+  tags?: string[]
+  source?: string
+  sourceId?: string
+  importance?: number
+  migrationKey?: string
+}
+
+/** 内置记忆更新补丁。 */
+export interface NativeMemoryPatch {
+  content?: string
+  category?: NativeMemoryCategory
+  tags?: string[]
+  source?: string
+  sourceId?: string
+  importance?: number
+}
+
+/** 批量迁移输入项。 */
+export interface NativeMemoryMigrationItem extends NativeMemoryInput {
+  id?: string
+}
+
+/** 批量迁移结果统计。 */
+export interface NativeMemoryMigrationResult {
+  scanned: number
+  added: number
+  updated: number
+  skipped: number
 }
 
 /** 项目索引响应。 */

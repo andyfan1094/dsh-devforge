@@ -44,6 +44,7 @@ import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
 import { ZhipuReranker } from './rag/rerank.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
+import { NativeMemoryStore } from './memory/native.ts'
 import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
@@ -472,6 +473,7 @@ export function apply(ctx: Context, config?: Config): void {
   }
   const ragStore = new RagStore()
   const ragService = new RagService(ragStore, ragEmbedders)
+  const nativeMemory = new NativeMemoryStore(ragStore)
   // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）。
   ragService.setReranker(new ZhipuReranker(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 精排不可用。')))
 
@@ -515,11 +517,11 @@ export function apply(ctx: Context, config?: Config): void {
   const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => generateText({ system, user, maxTokens: 700 }), () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
-  })
+  }, nativeMemory)
   const injection = new MemoryInjectionService(ragService, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
-  })
+  }, nativeMemory)
 
   // ---- 工作流引擎（rag.workflow / rag.workflow_run 域存储 + 默认模型生成）----
   const workflowEngine = new WorkflowEngine(ragService, {
@@ -549,7 +551,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, getSettings: memorySettingsRead, putSettings: memorySettingsWrite }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, native: nativeMemory }),
     ...makeWorkflowRoutes(workflowEngine),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine)]

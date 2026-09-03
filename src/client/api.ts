@@ -14,6 +14,8 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
+import { MEMORY_API, type MemorySettings, type MemoryStatus, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
@@ -502,6 +504,76 @@ export class DevforgeApi {
   async refreshArkUsage(signal?: AbortSignal): Promise<ArkUsageDashboard> {
     const data = await readJson<{ dashboard: ArkUsageDashboard }>(await fetch(ARK_API.refreshUsage, { method: 'POST', signal }))
     return data.dashboard
+  }
+
+  /** 读取记忆工作台状态。 */
+  async getMemoryStatus(signal?: AbortSignal): Promise<MemoryStatus> {
+    const data = await readJson<{ status: MemoryStatus }>(await fetch(MEMORY_API.status, { signal }))
+    return data.status
+  }
+
+  /** 读取记忆工作台设置。 */
+  async getMemorySettings(signal?: AbortSignal): Promise<MemorySettings> {
+    const data = await readJson<{ settings: MemorySettings }>(await fetch(MEMORY_API.settings, { signal }))
+    return data.settings
+  }
+
+  /** 读取会话记忆条目。 */
+  async listMemories(signal?: AbortSignal): Promise<RagDocument[]> {
+    const data = await readJson<{ docs: RagDocument[] }>(await fetch(MEMORY_API.memories, { signal }))
+    return data.docs
+  }
+
+  /** 保存记忆工作台设置。 */
+  async saveMemorySettings(settings: MemorySettings, signal?: AbortSignal): Promise<MemorySettings> {
+    const data = await readJson<{ settings?: MemorySettings }>(await fetch(MEMORY_API.settings, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings), signal }))
+    return data.settings ?? settings
+  }
+
+  /** 删除会话记忆条目。 */
+  async deleteMemory(id: string, signal?: AbortSignal): Promise<void> {
+    await readJson(await fetch(MEMORY_API.memoryItem + '?id=' + encodeURIComponent(id), { method: 'DELETE', signal }))
+  }
+
+  /** 增量索引项目。 */
+  async indexMemoryProject(path: string, signal?: AbortSignal): Promise<ProjectIndexResult> {
+    const data = await readJson<{ report: ProjectIndexResult }>(await fetch(MEMORY_API.index, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }), signal }))
+    return data.report
+  }
+
+  /** 同步 Mnemon/Hindsight 只读镜像。 */
+  async syncMemoryMirror(kind: 'mnemon' | 'hindsight', signal?: AbortSignal): Promise<MirrorSyncResult> {
+    const data = await readJson<{ report: MirrorSyncResult }>(await fetch(MEMORY_API.mirrorSync, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind }), signal }))
+    return data.report
+  }
+
+  /** 关键词检索内置长期记忆。 */
+  async searchNativeMemories(query: string, limit = 20, signal?: AbortSignal): Promise<NativeMemoryEntry[]> {
+    const data = await readJson<{ entries: NativeMemoryEntry[] }>(await fetch(MEMORY_API.search + '?q=' + encodeURIComponent(query) + '&limit=' + limit, { signal }))
+    return data.entries
+  }
+
+  /** 手动新增一条内置长期记忆。 */
+  async saveNativeMemory(input: { content: string; category?: string; tags?: string[]; source?: string }, signal?: AbortSignal): Promise<NativeMemoryEntry> {
+    const data = await readJson<{ entry: NativeMemoryEntry }>(await fetch(MEMORY_API.save, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
+    return data.entry
+  }
+
+  /** 删除一条内置长期记忆。 */
+  async deleteNativeMemory(id: string, signal?: AbortSignal): Promise<void> {
+    await readJson(await fetch(MEMORY_API.remove, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }), signal }))
+  }
+
+  /** 一键迁移外部记忆（Mnemon/Hindsight → 内置，幂等）。 */
+  async migrateExternalMemory(kind: 'mnemon' | 'hindsight', signal?: AbortSignal): Promise<NativeMemoryMigrationResult> {
+    const data = await readJson<{ result: NativeMemoryMigrationResult }>(await fetch(MEMORY_API.migrateExternal, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind }), signal }))
+    return data.result
+  }
+
+  /** 读取内置记忆迁移状态。 */
+  async getMemoryMigrationStatus(signal?: AbortSignal): Promise<{ count: number; migrated: number; lastUpdatedAt: number }> {
+    const data = await readJson<{ status: { count: number; migrated: number; lastUpdatedAt: number } }>(await fetch(MEMORY_API.migrationStatus, { signal }))
+    return data.status
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */

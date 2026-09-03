@@ -205,7 +205,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
 
         {tab === 'codeplan' && <CodingPlanTab api={api} />}
         {tab === 'rag' && <RagTab />}
-        {tab === 'memory' && <MemoryTab />}
+        {tab === 'memory' && <MemoryTab api={api} />}
         {tab === 'workflow' && <WorkflowTab />}
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}

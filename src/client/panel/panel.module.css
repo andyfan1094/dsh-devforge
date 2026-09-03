@@ -612,6 +612,42 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .openAiWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }
 .sectionHeader { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
 .sectionHeader .sectionTitle { margin: 0; }
+
+/* 记忆工作台：统计、策略、条目和迁移入口的紧凑信息布局。 */
+.memoryWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }
+.memoryHeader, .panelHeading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.memoryHeader { align-items: flex-start; }
+.workspaceTitle { margin: 0 0 4px; font-size: 18px; }
+.memoryStats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--dv-grid-gap); }
+.memoryStat { display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 10px 12px; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
+.memoryStat span, .memoryStat small { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
+.memoryStat strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.memoryGrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
+.memoryPanel { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 12px; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
+.memoryPanel .sectionTitle { margin: 0; color: var(--dsw-alias-label-primary, #1f2329); }
+.memoryForm { display: flex; flex-direction: column; gap: 9px; }
+.toggleRow { display: flex; min-width: 0; align-items: flex-start; gap: 8px; font-size: 12px; }
+.toggleRow input { flex: none; margin-top: 2px; accent-color: var(--dsw-alias-state-business-primary, #2563eb); }
+.toggleRow span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.toggleRow small, .roadmapItem small { color: var(--dsw-alias-label-secondary, #667085); line-height: 1.45; }
+.compactFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.memoryStack { display: flex; min-width: 0; flex-direction: column; gap: var(--dv-grid-gap); }
+.roadmapList { display: flex; flex-direction: column; gap: 7px; }
+.roadmapItem { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 6px; }
+.roadmapItem > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.roadmapItem strong { font-size: 12px; }
+.roadmapIcon { display: inline-flex; width: 22px; height: 22px; flex: none; align-items: center; justify-content: center; color: var(--dsw-alias-state-business-primary, #2563eb); font-size: 17px; }
+.inlineForm { display: flex; align-items: center; gap: 8px; }
+.inlineForm .input { flex: 1; min-width: 0; }
+.inlineActions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.memoryTable { display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.memoryTableHead, .memoryTableRow { display: grid; grid-template-columns: minmax(0, 1fr) 55px 58px; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); font-size: 12px; }
+.memoryTableHead { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
+.memoryDocTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operationReport { margin: 0; padding: 7px 8px; color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 6px; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+@media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 620px) { .memoryStats, .compactFields { grid-template-columns: minmax(0, 1fr); } .memoryHeader, .panelHeading { align-items: flex-start; flex-direction: column; } .inlineForm { align-items: stretch; flex-direction: column; } }
+
 .endpointLayout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; min-width: 0; }
 .endpointList { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 4px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
 .endpointItem { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: 3px; padding: 9px 10px; color: var(--dsw-alias-label-primary, #1f2329); text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: inherit; }
