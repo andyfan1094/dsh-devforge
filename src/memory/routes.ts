@@ -248,6 +248,21 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: '/api/dsh-devforge/memory/memories/preview',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        try {
+          const id = new URL(req.url ?? '', 'http://localhost').searchParams.get('id') ?? ''
+          if (req.method !== 'GET' || id === '') { writeJson(res, id === '' ? 400 : 405, { ok: false, error: id === '' ? 'id 必填' : 'GET only' }); return }
+          // 预览取首块前 160 字压空白：让沉淀条目列表显示可读内容而非时间戳文件名
+          const chunks = rag.listChunks(id)
+          const text = (chunks[0]?.text ?? '').replace(/\s+/gu, ' ').trim().slice(0, 160)
+          writeJson(res, 200, { ok: true, text })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact',
       path: '/api/dsh-devforge/rag/kb/index',
       handler: async (req, res) => {
         if (!guard(req, res)) return

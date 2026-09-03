@@ -15,6 +15,7 @@ export const MEMORY_API = {
   migrateExternal: '/api/dsh-devforge/memory/migrate/external',
   migrationStatus: '/api/dsh-devforge/memory/migration-status',
   memoryItem: '/api/dsh-devforge/memory/memories/item',
+  memoriesPreview: '/api/dsh-devforge/memory/memories/preview',
   nativeList: '/api/dsh-devforge/memory/native',
   graph: '/api/dsh-devforge/memory/graph',
   index: '/api/dsh-devforge/rag/kb/index',

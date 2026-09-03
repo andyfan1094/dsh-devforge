@@ -531,6 +531,12 @@ export class DevforgeApi {
     return data.docs
   }
 
+  /** 读取沉淀条目内容预览（首块前 160 字；失败由调用方回退文件名）。 */
+  async previewMemoryDoc(id: string, signal?: AbortSignal): Promise<string> {
+    const data = await readJson<{ text: string }>(await fetch(MEMORY_API.memoriesPreview + '?id=' + encodeURIComponent(id), { signal }))
+    return data.text
+  }
+
   /** 保存记忆工作台设置。 */
   async saveMemorySettings(settings: MemorySettings, signal?: AbortSignal): Promise<MemorySettings> {
     const data = await readJson<{ settings?: MemorySettings }>(await fetch(MEMORY_API.settings, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings), signal }))

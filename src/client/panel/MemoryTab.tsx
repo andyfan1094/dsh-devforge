@@ -38,6 +38,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [status, setStatus] = useState<MemoryStatus | null>(null)
   const [settings, setSettings] = useState<MemorySettings | null>(null)
   const [docs, setDocs] = useState<RagDocument[]>([])
+  const [previews, setPreviews] = useState<Record<string, string>>({})
   const [nativeEntries, setNativeEntries] = useState<NativeMemoryEntry[]>([])
   const [graph, setGraph] = useState<MemoryGraph | null>(null)
   const [activeTag, setActiveTag] = useState('')
@@ -60,12 +61,19 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     try {
       const [nextStatus, nextSettings] = await Promise.all([api.getMemoryStatus(), api.getMemorySettings()])
       const nextDocs = nextStatus.memoryKbId === '' ? [] : await api.listMemories()
+      // 预览最近 30 条的首块内容：沉淀条目文件名是时间戳，必须给可读内容（单条失败回退文件名）
+      const recentIds = nextDocs.slice().reverse().slice(0, 30)
+      const previewMap: Record<string, string> = {}
+      await Promise.all(recentIds.map(async (doc) => {
+        try { previewMap[doc.id] = await api.previewMemoryDoc(doc.id) } catch { /* 回退展示文件名 */ }
+      }))
       // 图谱与主存储列表是补充视图：单独失败不拖垮整页，错误以 softError 提示
       const settled = await Promise.allSettled([api.listNativeMemories(), api.getMemoryGraph()])
       if (!mounted.current) return
       setStatus(nextStatus)
       setSettings(nextSettings)
       setDocs(nextDocs)
+      setPreviews(previewMap)
       setNativeEntries(settled[0].status === 'fulfilled' ? settled[0].value : [])
       setGraph(settled[1].status === 'fulfilled' ? settled[1].value : null)
       setSoftError(settled.filter((item) => item.status === 'rejected').map((item) => (item.reason instanceof Error ? item.reason.message : String(item.reason))).join('；'))
@@ -258,7 +266,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
 
         <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>会话记忆条目（沉淀原文库）</h3><p className={css['sectionHint']}>最近 30 条 · 自动提炼的会话记忆，随 RAG 检索参与每轮注入。</p></div><span className={css['badge']}>{docs.length} 条</span></div>
-            {recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={memoryTitle(doc)}>{memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div>)}</div>}
+            {recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => { const preview = (previews[doc.id] ?? '').trim(); return <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={preview !== '' ? preview : memoryTitle(doc)}>{preview !== '' ? preview : memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div> })}</div>}
           </section>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>项目知识索引</h3><p className={css['sectionHint']}>尊重 .gitignore，增量更新到 RAG 知识库。</p></div></div><div className={css['inlineForm']}><input className={css['input']} value={projectPath} placeholder="/Users/andyfan/Documents/ds/项目" onChange={(e) => setProjectPath(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void indexProject() }}>开始索引</button></div></section>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部记忆迁移（幂等）</h3><p className={css['sectionHint']}>迁移进内置主存储：Mnemon 分条入库、Hindsight 整页入库；重复执行只更新不重复。</p></div>{migrationStatus !== null && <span className={css['badge']}>已迁移 {migrationStatus.migrated}/{migrationStatus.count}</span>}</div>
