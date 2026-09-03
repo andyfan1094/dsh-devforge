@@ -97,9 +97,17 @@ function anthropicBaseURL(value: string): string {
   return normalizeOpenAiBaseURL(value).replace(/\/v1$/i, '')
 }
 
-/** Anthropic 端点的默认上下文窗口与输出上限（Claude 官方 200K / 32K；推理档位对齐五档，底层走 thinking budget）。 */
+/** Anthropic 端点未知型号的保底容量（200K / 32K）。 */
 const ANTHROPIC_CONTEXT_WINDOW = 200_000
 const ANTHROPIC_MAX_TOKENS = 32_000
+
+/** 按 Claude 官方规格给 Anthropic 端点模型定容量：Opus 4.6+/Fable/Sonnet 5 为 1M 上下文与 128K 输出，Sonnet 4.5+ 为 1M 与 64K，其余 Claude（含 Haiku）为 200K 与 64K。 */
+function anthropicModelCapacity(id: string): { contextWindow: number; maxTokens: number } {
+  if (/claude-(opus-4-[6-9]|opus-[5-9]|fable|sonnet-5)/i.test(id)) return { contextWindow: 1_000_000, maxTokens: 128_000 }
+  if (/claude-sonnet-4-[5-9]/i.test(id)) return { contextWindow: 1_000_000, maxTokens: 64_000 }
+  if (/claude/i.test(id)) return { contextWindow: 200_000, maxTokens: 64_000 }
+  return { contextWindow: ANTHROPIC_CONTEXT_WINDOW, maxTokens: ANTHROPIC_MAX_TOKENS }
+}
 
 /** OpenAI 中转能力配置；仅保存凭据引用，不保存 Key 明文。 */
 export interface OpenAiCapabilityConfig {
@@ -118,27 +126,31 @@ const CHAT_REASONING_EFFORTS = { low: 'low', medium: 'medium', high: 'high', xhi
 /** 旧版默认档位（仅 low/medium/high）的序列化形态；同步时升级为五档。 */
 const LEGACY_REASONING_EFFORTS = '{"low":"low","medium":"medium","high":"high"}'
 
-/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理；Anthropic 端点用 200K 窗口、32K 输出和五档推理（pi-ai 按档位换算 thinking budget）。 */
+/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理；Anthropic 端点按官方规格分型号定容量并暴露五档推理（pi-ai 按档位换算 thinking budget）。 */
 function defaultModelProfile(model: OpenAiDiscoveredModel, api?: OpenAiEndpointApi): Record<string, unknown> {
   const imageOnly = /(?:^|[-_/])(image|dall-e|imagen|flux|ideogram|seedream|sora)(?:[-_/]|$)/i.test(model.id) || /gpt-image/i.test(model.id)
   const multimodal = /^(gpt|o[1-9]|claude|gemini|grok|glm|qwen|kimi|moonshot|minimax|mistral|llama|phi|command|jamba|codex)/i.test(model.id)
   const anthropic = api === 'anthropic-messages'
+  const capacity = anthropicModelCapacity(model.id)
   return {
     id: model.id,
     name: model.name ?? model.id,
-    contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
-    ...(anthropic ? { maxTokens: ANTHROPIC_MAX_TOKENS } : {}),
+    contextWindow: anthropic ? capacity.contextWindow : 1_000_000,
+    ...(anthropic ? { maxTokens: capacity.maxTokens } : {}),
     input: imageOnly || multimodal ? ['text', 'image'] : ['text'],
     reasoningEfforts: imageOnly ? false : { ...CHAT_REASONING_EFFORTS },
   }
 }
 
-/** 按协议补齐/升级已有模型档案：缺省容量按协议补默认值，旧版三档档位升级五档，Anthropic 旧默认「不暴露档位」升级五档推理；用户自定义元数据一律不动。 */
+/** 按协议补齐/升级已有模型档案：Anthropic 容量缺省或仍是旧默认值（200K/32K）时按官方规格重算，旧版三档档位升级五档，Anthropic 旧默认「不暴露档位」升级五档推理；用户自定义元数据一律不动。 */
 export function migrateOpenAiModelProfile(profile: Record<string, unknown>, api?: OpenAiEndpointApi): Record<string, unknown> {
   const next = { ...profile }
   const anthropic = api === 'anthropic-messages'
-  if (next.contextWindow === undefined) next.contextWindow = anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000
-  if (anthropic && next.maxTokens === undefined) next.maxTokens = ANTHROPIC_MAX_TOKENS
+  const id = typeof next.id === 'string' ? next.id : ''
+  const capacity = anthropicModelCapacity(id)
+  if (anthropic && (next.contextWindow === undefined || next.contextWindow === ANTHROPIC_CONTEXT_WINDOW)) next.contextWindow = capacity.contextWindow
+  if (anthropic && (next.maxTokens === undefined || next.maxTokens === ANTHROPIC_MAX_TOKENS)) next.maxTokens = capacity.maxTokens
+  if (!anthropic && next.contextWindow === undefined) next.contextWindow = 1_000_000
   if (JSON.stringify(next.reasoningEfforts) === LEGACY_REASONING_EFFORTS) next.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
   if (anthropic && next.reasoningEfforts === false) next.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
   return next
