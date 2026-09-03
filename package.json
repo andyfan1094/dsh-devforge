@@ -49,6 +49,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "mammoth": "^1.12.2",
+    "schemastery": "^3.18.0",
     "ssh2": "^1.17.0",
     "undici": "^7.13.0",
     "unpdf": "^1.8.1",
@@ -78,7 +79,6 @@
     "lightningcss": "^1.29.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "schemastery": "^3.18.0",
     "tsdown": "0.22.2",
     "typescript": "~5.7.2"
   },
