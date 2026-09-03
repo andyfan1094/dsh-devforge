@@ -11,7 +11,9 @@ import type { RagService } from '../rag/service.ts'
 import { ProjectIndexer } from '../rag/project-indexer.ts'
 import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror, syncMnemonMirror } from '../rag/mirror.ts'
 import { collectHindsightItems, collectMnemonItems } from './migrate.ts'
+import { buildMemoryGraph } from './graph.ts'
 import type { MemorySedimentService } from './sediment.ts'
+import type { MemoryInjectionService } from './inject.ts'
 import { NativeMemoryStore, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
 import type { MemorySettings } from './protocol.ts'
 export type { MemorySettings }
@@ -68,6 +70,8 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
 export interface MemoryRouteDeps {
   rag: RagService
   sediment: MemorySedimentService
+  /** 注入服务：状态接口回读真实注入次数（此前硬编码 0 是统计 bug）。 */
+  injection: MemoryInjectionService
   getSettings: () => MemorySettings
   putSettings: (next: MemorySettings) => void
   native: NativeMemoryStore
@@ -81,8 +85,26 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native } = deps
+  const { rag, sediment, native, injection } = deps
   return [
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/native',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { writeJson(res, 200, { ok: true, entries: native.list({ limit: 200 }) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/graph',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { writeJson(res, 200, { ok: true, graph: buildMemoryGraph(native.list({ limit: 200 })) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/search',
       handler: async (req, res) => {
@@ -168,7 +190,7 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               memoryKbId: memoryKb?.id ?? '',
               memoryCount: memoryKb === undefined ? 0 : rag.listDocs(memoryKb.id).length,
               sedimentCount: sediment.sedimentCount,
-              injectCount: 0,
+              injectCount: injection.injectCount,
               lastSedimentAt: sediment.lastSedimentAt,
               mirror: {
                 mnemonRootExists: existsSync(mnemonRoot),

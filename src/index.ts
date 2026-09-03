@@ -562,7 +562,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, native: nativeMemory }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, native: nativeMemory }),
     ...makeWorkflowRoutes(workflowEngine),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine)]

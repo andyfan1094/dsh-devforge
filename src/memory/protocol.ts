@@ -15,6 +15,8 @@ export const MEMORY_API = {
   migrateExternal: '/api/dsh-devforge/memory/migrate/external',
   migrationStatus: '/api/dsh-devforge/memory/migration-status',
   memoryItem: '/api/dsh-devforge/memory/memories/item',
+  nativeList: '/api/dsh-devforge/memory/native',
+  graph: '/api/dsh-devforge/memory/graph',
   index: '/api/dsh-devforge/rag/kb/index',
   mirrorSync: '/api/dsh-devforge/rag/mirror/sync',
   mirrorStatus: '/api/dsh-devforge/rag/mirror/status',
@@ -121,4 +123,31 @@ export interface ProjectIndexResult {
   removed: number
   skipped: number
   errors: string[]
+}
+
+/** 知识图谱节点类型：entry=记忆条目，tag=标签/关键词，category=分类枢纽。 */
+export type MemoryGraphNodeKind = 'entry' | 'tag' | 'category'
+
+/** 知识图谱节点（weight 为连接度，前端用来定半径）。 */
+export interface MemoryGraphNode {
+  id: string
+  kind: MemoryGraphNodeKind
+  label: string
+  weight: number
+  /** kind=entry 时回指完整条目 id，供点击查看详情。 */
+  entryId?: string
+}
+
+/** 知识图谱边（weight 为共现强度）。 */
+export interface MemoryGraphEdge {
+  source: string
+  target: string
+  weight: number
+}
+
+/** 知识图谱（由内置长期记忆条目派生，只读、每次请求现算）。 */
+export interface MemoryGraph {
+  nodes: MemoryGraphNode[]
+  edges: MemoryGraphEdge[]
+  generatedAt: number
 }

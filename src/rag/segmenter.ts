@@ -31,3 +31,24 @@ export function tokenizeForIndex(text: string): string[] {
   }
   return [...tokens]
 }
+
+/**
+ * 分词并统计词频（知识图谱关键词用）：与 tokenizeForIndex 完全同一两层策略，
+ * 区别仅在保留出现次数不去重——图谱按词频挑 Top 关键词，必须有频次信息。
+ */
+export function tokenizeWithFrequency(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  const bump = (token: string): void => {
+    const t = token.trim().toLowerCase()
+    if (t !== '') counts.set(t, (counts.get(t) ?? 0) + 1)
+  }
+  for (const { segment, isWordLike } of zhSegmenter.segment(text)) {
+    if (isWordLike === true) bump(segment)
+  }
+  for (const run of text.match(CJK_RUN) ?? []) {
+    for (let i = 0; i + 1 < run.length; i++) {
+      bump(run.slice(i, i + 2))
+    }
+  }
+  return counts
+}

@@ -14,7 +14,7 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
-import { MEMORY_API, type MemorySettings, type MemoryStatus, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
@@ -569,6 +569,18 @@ export class DevforgeApi {
   /** 删除一条内置长期记忆。 */
   async deleteNativeMemory(id: string, signal?: AbortSignal): Promise<void> {
     await readJson(await fetch(MEMORY_API.remove, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }), signal }))
+  }
+
+  /** 全量列出内置长期记忆（主存储，最多 200 条）。 */
+  async listNativeMemories(signal?: AbortSignal): Promise<NativeMemoryEntry[]> {
+    const data = await readJson<{ entries: NativeMemoryEntry[] }>(await fetch(MEMORY_API.nativeList, { signal }))
+    return data.entries
+  }
+
+  /** 读取内置记忆知识图谱（服务端现算，只读）。 */
+  async getMemoryGraph(signal?: AbortSignal): Promise<MemoryGraph> {
+    const data = await readJson<{ graph: MemoryGraph }>(await fetch(MEMORY_API.graph, { signal }))
+    return data.graph
   }
 
   /** 一键迁移外部记忆（Mnemon/Hindsight → 内置，幂等）。 */

@@ -28,17 +28,18 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .panelTitleIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; color: var(--dsw-alias-state-business-primary, #2563eb); background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 12%, transparent); }
 .backButton { display: inline-flex; align-items: center; gap: 4px; }
 
-/* 主菜单栏：胶囊分段控件（segmented control）风格，图标 + 文字，active 浮起 */
-.tabBar { display: flex; gap: 4px; flex: none; overflow-x: auto; padding: 4px; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 10px; scrollbar-width: thin; }
-.tab { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
-.tab svg { flex: none; opacity: .85; }
+/* 主菜单栏：胶囊分段控件（segmented control）风格，图标 + 文字，active 浮起。
+   密度：紧凑档（辉哥要求一排能放更多页签）——12px 字号 + 14px 图标 + 4px/9px 内边距。 */
+.tabBar { display: flex; gap: 2px; flex: none; overflow-x: auto; padding: 3px; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 9px; scrollbar-width: thin; }
+.tab { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; font: inherit; font-size: 12px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
+.tab svg { width: 14px; height: 14px; flex: none; opacity: .85; }
 .tab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 55%, transparent); }
 .tab:active { transform: scale(.97); }
 .tab[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); font-weight: 600; background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px rgba(15, 23, 42, .12), 0 0 0 1px var(--dsw-alias-border-l1, #e5e7eb); }
 .tab[data-active] svg { opacity: 1; }
 /* 页签红点：绝对定位挂在「插件更新」按钮右上角，出现/消失零布局位移；
    外圈用底色描边，保证在深浅主题与 active 白底胶囊上都醒目。 */
-.tabDot { position: absolute; top: 3px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--dsw-alias-state-error-primary, #dc2626); box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, #fff); pointer-events: none; }
+.tabDot { position: absolute; top: 2px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-state-error-primary, #dc2626); box-shadow: 0 0 0 1.5px var(--dsw-alias-bg-base, #fff); pointer-events: none; }
 /* 推广链接：吸引眼球的动画广告位（光泽扫过 + 呼吸发光 + ⚡闪烁 + hover 弹跳），
    链接本身不显示只显示文案；prefers-reduced-motion 用户自动关闭动画。 */
 .promoLink {
@@ -648,6 +649,38 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .memoryTableHead { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
 .memoryDocTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .operationReport { margin: 0; padding: 7px 8px; color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 6px; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* 知识图谱视图：SVG 力导向图，节点/边全部走主题 token，明暗主题联动。 */
+.graphWrap { overflow: hidden; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
+.graphSvg { display: block; width: 100%; height: auto; }
+.graphEdge { stroke: var(--dsw-alias-separator-primary, #edf0f2); transition: opacity .15s ease; }
+.graphEdge[data-active] { stroke: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 55%, transparent); }
+.graphEdge[data-dim], .graphNodeGroup[data-dim] { opacity: .12; }
+.graphNodeGroup { cursor: pointer; }
+.graphNode[data-kind='entry'] { fill: var(--dsw-alias-state-business-primary, #2563eb); }
+.graphNode[data-kind='tag'] { fill: #7c3aed; }
+.graphNode[data-kind='category'] { fill: #ea580c; }
+.graphNode[data-focus] { stroke: var(--dsw-alias-bg-base, #fff); stroke-width: 2px; }
+.graphLabel { fill: var(--dsw-alias-label-secondary, #667085); font-size: 10px; pointer-events: none; user-select: none; }
+.graphLabel[data-strong] { fill: var(--dsw-alias-label-primary, #1f2329); font-weight: 600; }
+.graphLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
+.graphLegend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; }
+.graphDetail { display: flex; flex-direction: column; gap: 5px; padding: 9px 10px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 8px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+
+/* 内置长期记忆（主存储）列表：紧凑双行行条目 + 可点关键词 chips。 */
+.nativeList { display: flex; max-height: 430px; flex-direction: column; overflow: auto; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.nativeRow { display: flex; flex-direction: column; gap: 4px; padding: 7px 2px; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); font-size: 12px; }
+.nativeRow[data-selected] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 6%, transparent); }
+.nativeRowMain { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.nativeContent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.nativeContent:hover { color: var(--dsw-alias-state-business-primary, #2563eb); }
+.nativeTime { flex: none; color: var(--dsw-alias-label-tertiary, #98a2b3); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.memoryChips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.memoryChip { padding: 1px 7px; color: #6d28d9; background: color-mix(in srgb, #7c3aed 10%, transparent); border: none; border-radius: 999px; font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap; }
+.memoryChip[data-active] { color: #fff; background: #7c3aed; }
+.categoryBadge { padding: 1px 6px; color: #b45309; background: color-mix(in srgb, #ea580c 12%, transparent); border-radius: 5px; font-size: 10.5px; white-space: nowrap; }
+/* 会话沉淀表 4 列变体：内容 / 切块 / 时间 / 操作。 */
+.memoryTable[data-cols='4'] .memoryTableHead, .memoryTable[data-cols='4'] .memoryTableRow { grid-template-columns: minmax(0, 1fr) 40px 74px 48px; }
 @media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 620px) { .memoryStats, .compactFields { grid-template-columns: minmax(0, 1fr); } .memoryHeader, .panelHeading { align-items: flex-start; flex-direction: column; } .inlineForm { align-items: stretch; flex-direction: column; } }
 
