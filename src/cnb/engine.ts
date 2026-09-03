@@ -55,7 +55,7 @@ export class CnbEngine {
   }
   private async pull(repoPath: string, input: GitAction): Promise<GitResult> {
     const account = this.store.findOptionalAccount(input.account)
-    const args = ['pull', '--ff-only']; if (input.remote?.trim()) args.push(input.remote.trim()); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
+    const args = ['pull', '--ff-only']; args.push(input.remote?.trim() || 'origin'); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
     const result = await this.git.run(args, repoPath, account, input.timeoutMs); result.action = 'pull'; return this.withStatus(result, repoPath)
   }
   private async push(repoPath: string, input: GitAction): Promise<GitResult> {
@@ -63,7 +63,7 @@ export class CnbEngine {
     if (input.force && !settings.allowForcePush) throw new Error('强制推送默认关闭：请先打开 Allow force push')
     // push 必须认证：没有可用账号直接报可读错误。
     const account: StoredAccount = this.store.findAccount(input.account)
-    const args = ['push']; if (input.force) args.push('--force-with-lease'); if (input.remote?.trim()) args.push(input.remote.trim()); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
+    const args = ['push']; if (input.force) args.push('--force-with-lease'); args.push(input.remote?.trim() || 'origin'); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
     const result = await this.git.run(args, repoPath, account, input.timeoutMs); result.action = 'push'; return this.withStatus(result, repoPath)
   }
   private async commit(repoPath: string, input: GitAction): Promise<GitResult> {

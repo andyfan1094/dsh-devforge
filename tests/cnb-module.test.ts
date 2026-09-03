@@ -140,6 +140,26 @@ test('GitRunner：stdout/command 中的令牌与 Basic 凭据均被脱敏', asyn
   } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
 })
 
+test('CnbEngine：push/pull 缺省 remote 时默认 origin，branch 不会顶替 remote 位', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cnb-push-args-'))
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', 'repo'], { cwd: dir })
+    const store = new CnbStore(join(dir, 'dsh-cnb.json'))
+    store.upsertAccount({ alias: 'a', token: 'tok-sup3rsecret' })
+    store.updateSettings({ allowPush: true, allowForcePush: true })
+    const engine = new CnbEngine(store)
+    const repoPath = join(dir, 'repo')
+    // 回归：只传 branch 不传 remote 时，命令必须是 git push origin main。
+    // 修复前拼成 git push main，分支名被 git 当作远端报 "does not appear to be a git repository"。
+    const pushResult = await engine.action({ action: 'push', repoPath, branch: 'main' })
+    assert.match(pushResult.command, / push origin main$/)
+    const forceResult = await engine.action({ action: 'push', repoPath, branch: 'main', force: true })
+    assert.match(forceResult.command, / push --force-with-lease origin main$/)
+    const pullResult = await engine.action({ action: 'pull', repoPath, branch: 'main' })
+    assert.match(pullResult.command, / pull --ff-only origin main$/)
+  } finally { closeDb(join(dir, 'dsh-cnb.json')); await rm(dir, { recursive: true, force: true }) }
+})
+
 test('CnbEngine：push 默认关闭、commit 必须有说明、clone 目标已存在报错', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cnb-engine-'))
   try {

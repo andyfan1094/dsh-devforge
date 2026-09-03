@@ -38,13 +38,13 @@ export class GithubEngine {
     const result = await this.git.run(args, dirname(destination), account, input.timeoutMs); result.action = 'clone'; result.repoPath = destination; return result
   }
   private async pull(repoPath: string, input: GitAction, account: StoredAccount): Promise<GitResult> {
-    const args = ['pull', '--ff-only']; if (input.remote?.trim()) args.push(input.remote.trim()); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
+    const args = ['pull', '--ff-only']; args.push(input.remote?.trim() || 'origin'); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
     const result = await this.git.run(args, repoPath, account, input.timeoutMs); result.action = 'pull'; return this.withStatus(result, repoPath)
   }
   private async push(repoPath: string, input: GitAction, account: StoredAccount): Promise<GitResult> {
     const settings = this.store.settings(); if (!settings.allowPush) throw new Error('push is disabled in GitHub settings; enable Allow push in the panel first')
     if (input.force && !settings.allowForcePush) throw new Error('force push is disabled in GitHub settings')
-    const args = ['push']; if (input.force) args.push('--force-with-lease'); if (input.remote?.trim()) args.push(input.remote.trim()); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
+    const args = ['push']; if (input.force) args.push('--force-with-lease'); args.push(input.remote?.trim() || 'origin'); const branch = input.branch?.trim() || this.store.settings().defaultBranch; if (branch) args.push(branch)
     const result = await this.git.run(args, repoPath, account, input.timeoutMs); result.action = 'push'; return this.withStatus(result, repoPath)
   }
   private async commit(repoPath: string, input: GitAction, account: StoredAccount): Promise<GitResult> {
