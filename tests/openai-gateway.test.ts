@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { OpenAiGatewayClient, OpenAiGatewayError, extractGeneratedImage, normalizeOpenAiBaseURL, openAiApiRoot, parseOpenAiModelList } from '../src/openai/api-client.ts'
-import { buildOpenAiEndpointProvider, buildOpenAiProvider, normalizeOpenAiEndpoints, OpenAiServiceError, openAiProviderId, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
+import { buildOpenAiEndpointProvider, buildOpenAiProvider, migrateOpenAiModelProfile, normalizeOpenAiEndpoints, OpenAiServiceError, openAiProviderId, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -407,15 +407,32 @@ test('Anthropic 端点 provider：anthropic-messages 协议、裸主机 baseURL�
   assert.equal(responses.defaultMaxTokens, 128_000)
 })
 
-test('Anthropic 端点模型同步：新档案 200K 且不暴露推理档位，旧三档迁移为不暴露', () => {
+test('Anthropic 端点模型同步：新档案 200K/32K 且暴露五档推理，旧三档与旧默认不暴露档位均升级五档', () => {
   const fresh = syncOpenAiModels([], [{ id: 'claude-opus-5', name: 'Claude Opus 5' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(fresh.contextWindow, 200_000)
-  assert.equal(fresh.reasoningEfforts, false)
+  assert.equal(fresh.maxTokens, 32_000)
+  assert.deepEqual(fresh.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
   assert.deepEqual(fresh.input, ['text', 'image'])
   const migrated = syncOpenAiModels([{ id: 'm1', reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }], [{ id: 'm1' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(migrated.contextWindow, 200_000)
-  assert.equal(migrated.reasoningEfforts, false)
+  assert.deepEqual(migrated.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
+  const legacyOff = syncOpenAiModels([{ id: 'm3', contextWindow: 200_000, reasoningEfforts: false }], [{ id: 'm3' }], 'anthropic-messages').models[0] as Record<string, unknown>
+  assert.equal(legacyOff.maxTokens, 32_000)
+  assert.deepEqual(legacyOff.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
   const custom = syncOpenAiModels([{ id: 'm2', contextWindow: 1_000_000, reasoningEfforts: { max: 'max' } }], [{ id: 'm2' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(custom.contextWindow, 1_000_000)
   assert.deepEqual(custom.reasoningEfforts, { max: 'max' })
+})
+
+test('模型档案迁移：Anthropic 补输出上限并升级档位，OpenAI 端点不动不暴露档位的模型', () => {
+  const anthropic = migrateOpenAiModelProfile({ id: 'claude-opus-5', contextWindow: 200_000, reasoningEfforts: false }, 'anthropic-messages')
+  assert.equal(anthropic.maxTokens, 32_000)
+  assert.deepEqual(anthropic.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
+  const anthropicFresh = migrateOpenAiModelProfile({ id: 'claude-sonnet-5' }, 'anthropic-messages')
+  assert.equal(anthropicFresh.contextWindow, 200_000)
+  assert.equal(anthropicFresh.maxTokens, 32_000)
+  const responses = migrateOpenAiModelProfile({ id: 'm4', reasoningEfforts: false }, 'openai-responses')
+  assert.equal(responses.contextWindow, 1_000_000)
+  assert.equal(responses.maxTokens, undefined)
+  assert.equal(responses.reasoningEfforts, false)
 })

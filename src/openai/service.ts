@@ -97,7 +97,7 @@ function anthropicBaseURL(value: string): string {
   return normalizeOpenAiBaseURL(value).replace(/\/v1$/i, '')
 }
 
-/** Anthropic 端点的默认上下文窗口与输出上限（Claude 官方 200K / 32K，且不暴露推理档位）。 */
+/** Anthropic 端点的默认上下文窗口与输出上限（Claude 官方 200K / 32K；推理档位对齐五档，底层走 thinking budget）。 */
 const ANTHROPIC_CONTEXT_WINDOW = 200_000
 const ANTHROPIC_MAX_TOKENS = 32_000
 
@@ -118,7 +118,7 @@ const CHAT_REASONING_EFFORTS = { low: 'low', medium: 'medium', high: 'high', xhi
 /** 旧版默认档位（仅 low/medium/high）的序列化形态；同步时升级为五档。 */
 const LEGACY_REASONING_EFFORTS = '{"low":"low","medium":"medium","high":"high"}'
 
-/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理；Anthropic 端点用 200K 且不暴露推理档位。 */
+/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理；Anthropic 端点用 200K 窗口、32K 输出和五档推理（pi-ai 按档位换算 thinking budget）。 */
 function defaultModelProfile(model: OpenAiDiscoveredModel, api?: OpenAiEndpointApi): Record<string, unknown> {
   const imageOnly = /(?:^|[-_/])(image|dall-e|imagen|flux|ideogram|seedream|sora)(?:[-_/]|$)/i.test(model.id) || /gpt-image/i.test(model.id)
   const multimodal = /^(gpt|o[1-9]|claude|gemini|grok|glm|qwen|kimi|moonshot|minimax|mistral|llama|phi|command|jamba|codex)/i.test(model.id)
@@ -127,9 +127,21 @@ function defaultModelProfile(model: OpenAiDiscoveredModel, api?: OpenAiEndpointA
     id: model.id,
     name: model.name ?? model.id,
     contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
+    ...(anthropic ? { maxTokens: ANTHROPIC_MAX_TOKENS } : {}),
     input: imageOnly || multimodal ? ['text', 'image'] : ['text'],
-    reasoningEfforts: imageOnly || anthropic ? false : { ...CHAT_REASONING_EFFORTS },
+    reasoningEfforts: imageOnly ? false : { ...CHAT_REASONING_EFFORTS },
   }
+}
+
+/** 按协议补齐/升级已有模型档案：缺省容量按协议补默认值，旧版三档档位升级五档，Anthropic 旧默认「不暴露档位」升级五档推理；用户自定义元数据一律不动。 */
+export function migrateOpenAiModelProfile(profile: Record<string, unknown>, api?: OpenAiEndpointApi): Record<string, unknown> {
+  const next = { ...profile }
+  const anthropic = api === 'anthropic-messages'
+  if (next.contextWindow === undefined) next.contextWindow = anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000
+  if (anthropic && next.maxTokens === undefined) next.maxTokens = ANTHROPIC_MAX_TOKENS
+  if (JSON.stringify(next.reasoningEfforts) === LEGACY_REASONING_EFFORTS) next.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
+  if (anthropic && next.reasoningEfforts === false) next.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
+  return next
 }
 
 /** 同步一个端点的模型目录，保留已有模型元数据并移除已下线模型。 */
@@ -145,11 +157,7 @@ export function syncOpenAiModels(existing: Array<Record<string, unknown>>, disco
     seen.add(model.id)
     const previous = byId.get(model.id)
     if (previous === undefined) { models.push(defaultModelProfile(model, api)); continue }
-    // 迁移补齐：缺上下文窗口按协议补默认值，旧版三档默认档位升级五档（Anthropic 端点改为不暴露档位）；用户自定义元数据一律不动。
-    const profile: Record<string, unknown> = { ...previous }
-    if (profile.contextWindow === undefined) profile.contextWindow = api === 'anthropic-messages' ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000
-    if (JSON.stringify(profile.reasoningEfforts) === LEGACY_REASONING_EFFORTS) profile.reasoningEfforts = api === 'anthropic-messages' ? false : { ...CHAT_REASONING_EFFORTS }
-    models.push(profile)
+    models.push(migrateOpenAiModelProfile(previous, api))
   }
   const removedIds = [...byId.keys()].filter((id) => !seen.has(id))
   return { models, removedIds }
@@ -334,7 +342,9 @@ export class OpenAiGatewayService {
     const updates: ProviderUpdate[] = endpoints.map((endpoint, index) => {
       const existing = providers[openAiProviderId(endpoint, index)]
       const currentModels = readProviderModels(existing)
-      return { endpoint, index, models: currentModels.length > 0 ? currentModels : index === 0 ? legacyModels : [] }
+      // 启动即迁移存量模型档案（Anthropic 补输出上限并升级五档推理），升级插件后无需重新拉取模型。
+      const models = (currentModels.length > 0 ? currentModels : index === 0 ? legacyModels : []).map((model) => migrateOpenAiModelProfile(model, endpoint.api))
+      return { endpoint, index, models }
     })
     const managedPresent = Object.keys(providers).some((id) => id === OPENAI_PROVIDER_ID || id.startsWith(ENDPOINT_PROVIDER_PREFIX) || (LEGACY_PROVIDER_IDS as readonly string[]).includes(id))
     if (updates.some((item) => item.models.length > 0) || managedPresent) await this.writeProviders(updates, true)
