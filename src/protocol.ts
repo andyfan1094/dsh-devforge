@@ -33,6 +33,8 @@ export const DEVFORGE_API = {
   pluginUpdateCheck: '/api/dsh-devforge/plugin-update/check',
   /** 插件更新：一键升级指定包。 */
   pluginUpdateApply: '/api/dsh-devforge/plugin-update/apply',
+  /** 插件更新：DSH 本体检查（官方 GitHub Tags，含预发布版本比较）。 */
+  pluginUpdateHarness: '/api/dsh-devforge/plugin-update/harness',
   /** 模型 token 计量：本机会话库聚合的三窗用量报告。 */
   tokenUsage: '/api/dsh-devforge/usage/tokens',
 } as const

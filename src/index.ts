@@ -77,6 +77,7 @@ import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
+import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -421,6 +422,15 @@ export function apply(ctx: Context, config?: Config): void {
     readInstalled: createDefaultInstalledReader(),
   })
 
+  /**
+   * DSH 本体检查：本机真实安装版本 vs 官方 GitHub Tags（含预发布版本比较）。
+   * 只返回检查结果与升级命令引导，绝不代为升级运行中的宿主本体。
+   */
+  const harnessEntryPath = process.argv[1] ?? ''
+  const harnessCheck = (): Promise<HarnessUpdateCheckItem> => {
+    return checkHarnessUpdate({ readInstalled: createDefaultHarnessVersionReader(harnessEntryPath), entryPath: harnessEntryPath })
+  }
+
   /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本与诊断。 */
   let pluginBriefSurface: ReturnType<typeof activatePluginBrief> = {
     dispose: () => {},
@@ -539,6 +549,7 @@ export function apply(ctx: Context, config?: Config): void {
     }), {
       check: () => pluginUpdateService.check(),
       apply: (packageName: string) => pluginUpdateService.apply(packageName),
+      harnessCheck: () => harnessCheck(),
     }),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。

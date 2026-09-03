@@ -9,6 +9,7 @@
 
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from './plugin-update.ts'
+import type { HarnessUpdateCheckItem } from './harness-update.ts'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
@@ -85,7 +86,12 @@ export function makeRoutes(
   standards: import('./standards.ts').StandardsStore,
   restartManager: DshWebRestartManager,
   pluginBrief: () => { enabled: boolean; text: string; diag: { loaderResolved: boolean; entryCount: number; userCount: number; error: string } },
-  pluginUpdate: { check: () => Promise<{ enabled: boolean; items: UpdateCheckItem[] }>; apply: (packageName: string) => Promise<PluginUpdateApplyResult> },
+  pluginUpdate: {
+    check: () => Promise<{ enabled: boolean; items: UpdateCheckItem[] }>
+    apply: (packageName: string) => Promise<PluginUpdateApplyResult>
+    /** DSH 本体检查（官方 GitHub Tags，含预发布版本比较与升级命令引导）。 */
+    harnessCheck: () => Promise<HarnessUpdateCheckItem>
+  },
 ): WebRoute[] {
   return [
     {
@@ -132,6 +138,20 @@ export function makeRoutes(
           writeJson(res, 200, { ok: true, result })
         } catch (error) {
           writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-update/harness',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          const harness = await pluginUpdate.harnessCheck()
+          writeJson(res, 200, { ok: true, harness })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }
       },
     },

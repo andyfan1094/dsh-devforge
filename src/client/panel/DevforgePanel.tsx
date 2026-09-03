@@ -8,7 +8,7 @@ import type { StandardDetail, StandardSummary } from '../../protocol.ts'
 import type { PanelController } from './controller.ts'
 import type { SkinRuntimeApi } from '../theme/skin-runtime.ts'
 import { BrowserTab } from './BrowserTab.tsx'
-import { PluginUpdateTab } from './PluginUpdateTab.tsx'
+import { PluginUpdateTab, type UpdateCheckState } from './PluginUpdateTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { ProjectsTab } from './ProjectsTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
@@ -49,6 +49,8 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
   const [density, setDensity] = useState<'compact' | 'cozy'>(() => (localStorage.getItem('dsh-devforge-density') === 'cozy' ? 'cozy' : 'compact'))
   /** 插件版本号，标题旁展示。 */
   const [version, setVersion] = useState('')
+  /** 插件 + DSH 本体更新检查状态：面板打开即检查，聚合驱动「插件更新」页签红点。 */
+  const [updateState, setUpdateState] = useState<UpdateCheckState>({ loading: false, enabled: true, items: [], harness: null, error: '' })
 
   /**
    * 拉取规范数据。首次慢请求期间维持 loaded=false，不能把未返回的数组误解释为空库；
@@ -79,6 +81,39 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
     if (!panelOpen) return
     void refresh()
   }, [panelOpen, refresh])
+
+  /**
+   * 并发检查插件登记源与 DSH 本体；任一路失败只落状态不阻塞另一路。
+   * 检查期间 loading=true，红点熄灭，避免慢请求或失败误亮。
+   */
+  const refreshUpdates = useCallback(async (): Promise<void> => {
+    setUpdateState((prev) => ({ ...prev, loading: true, error: '' }))
+    const [pluginRes, harnessRes] = await Promise.allSettled([api.checkPluginUpdates(), api.checkHarnessUpdate()])
+    const next: UpdateCheckState = { loading: false, enabled: true, items: [], harness: null, error: '' }
+    if (pluginRes.status === 'fulfilled') {
+      next.enabled = pluginRes.value.enabled
+      next.items = pluginRes.value.items
+    } else {
+      next.error = pluginRes.reason instanceof Error ? pluginRes.reason.message : String(pluginRes.reason)
+    }
+    if (harnessRes.status === 'fulfilled') {
+      next.harness = harnessRes.value
+    } else {
+      // 本体接口异常时给占位 error 项：红点不亮，但页面能看到失败原因。
+      const message = harnessRes.reason instanceof Error ? harnessRes.reason.message : String(harnessRes.reason)
+      next.harness = { installed: '', latest: '', latestTag: '', repo: 'deepseek-ai/deepseek-harness', tagUrl: 'https://github.com/deepseek-ai/deepseek-harness/tags', status: 'error', reason: message, upgrade: null }
+    }
+    setUpdateState(next)
+  }, [api])
+
+  // 面板打开即自动检查更新（含 DSH 本体）；页签内「检查更新」按钮复用同一回调。
+  useEffect(() => {
+    if (!panelOpen) return
+    void refreshUpdates()
+  }, [panelOpen, refreshUpdates])
+
+  /** 红点聚合：插件或 DSH 本体任一确认可更新才亮；加载中与检查失败一律不亮。 */
+  const updateDot = !updateState.loading && (updateState.items.some((item) => item.status === 'update-available') || updateState.harness?.status === 'update-available')
   /** 查看规范正文；单项读取失败在面板内呈现，不能抛到宿主 GUI。 */
   const viewStandard = async (id: string): Promise<void> => {
     try {
@@ -165,7 +200,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
         <button type="button" role="tab" aria-selected={tab === 'projects'} data-active={tab === 'projects' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('projects') }}><IconProject />项目</button>
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
-        <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新</button>
+        <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
         <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>
         <span className={css['toolbarSpacer']} />
         <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云服务器购买 · 点击直达（新标签打开）">⚡ 雨云服务器购买</a>
@@ -217,7 +252,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
 
         {tab === 'feishu' && <FeishuTab api={api} />}
 
-        {tab === 'pluginupdate' && <PluginUpdateTab api={api} />}
+        {tab === 'pluginupdate' && <PluginUpdateTab api={api} state={updateState} onRefresh={() => { void refreshUpdates() }} />}
 
         {tab === 'skin' && skin !== undefined && <SkinTab skin={skin} />}
 

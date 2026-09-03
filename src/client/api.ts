@@ -19,6 +19,7 @@ import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
+import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
 /** API 错误（带 HTTP 状态）。 */
 export class DevforgeApiError extends Error {
@@ -224,6 +225,12 @@ export class DevforgeApi {
       body: JSON.stringify({ packageName }),
     }))
     return data.result
+  }
+
+  /** 插件更新：检查 DSH 本体（本机真实版本 vs 官方 GitHub Tags）。 */
+  async checkHarnessUpdate(): Promise<HarnessUpdateCheckItem> {
+    const data = await readJson<{ harness: HarnessUpdateCheckItem }>(await fetch(DEVFORGE_API.pluginUpdateHarness))
+    return data.harness
   }
 
   /** 读取本地浏览器脱敏状态（不拉起浏览器进程）。 */

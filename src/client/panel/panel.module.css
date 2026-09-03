@@ -30,12 +30,15 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 /* 主菜单栏：胶囊分段控件（segmented control）风格，图标 + 文字，active 浮起 */
 .tabBar { display: flex; gap: 4px; flex: none; overflow-x: auto; padding: 4px; background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 10px; scrollbar-width: thin; }
-.tab { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
+.tab { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease, transform .1s ease; }
 .tab svg { flex: none; opacity: .85; }
 .tab:hover { color: var(--dsw-alias-label-primary, #1f2329); background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 55%, transparent); }
 .tab:active { transform: scale(.97); }
 .tab[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); font-weight: 600; background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px rgba(15, 23, 42, .12), 0 0 0 1px var(--dsw-alias-border-l1, #e5e7eb); }
 .tab[data-active] svg { opacity: 1; }
+/* 页签红点：绝对定位挂在「插件更新」按钮右上角，出现/消失零布局位移；
+   外圈用底色描边，保证在深浅主题与 active 白底胶囊上都醒目。 */
+.tabDot { position: absolute; top: 3px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--dsw-alias-state-error-primary, #dc2626); box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, #fff); pointer-events: none; }
 /* 推广链接：吸引眼球的动画广告位（光泽扫过 + 呼吸发光 + ⚡闪烁 + hover 弹跳），
    链接本身不显示只显示文案；prefers-reduced-motion 用户自动关闭动画。 */
 .promoLink {
