@@ -6,7 +6,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
-import type { OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayStatus } from './protocol.ts'
+import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 const DEVFORGE_NAMESPACE = settingsNamespace('dsh-devforge')
@@ -56,11 +56,13 @@ export function normalizeOpenAiEndpoints(config: OpenAiCapabilityConfig): OpenAi
     }
     ids.add(idKey)
     const apiKeyEnv = normalizeApiKeyEnv(item.apiKeyEnv)
+    const api = normalizeEndpointApi(item.api)
     result.push({
       id,
       name: item.name.trim() || '端点 ' + (index + 1),
       baseURL,
       apiKeyEnv,
+      ...(api !== undefined ? { api } : {}),
       ...(typeof item.imageModel === 'string' && item.imageModel.trim() !== '' ? { imageModel: item.imageModel.trim() } : {}),
     })
   }
@@ -83,6 +85,22 @@ function normalizeApiKeyEnv(value: string): string {
   return result
 }
 
+/** 校验端点聊天协议；缺省返回 undefined 表示沿用 openai-responses。 */
+function normalizeEndpointApi(value: unknown): OpenAiEndpointApi | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  if (value === 'openai-responses' || value === 'anthropic-messages') return value
+  throw new OpenAiServiceError('端点聊天协议只支持 openai-responses 或 anthropic-messages。', 400)
+}
+
+/** Anthropic provider 的 baseURL：裸主机根路径，剥掉误填的 /v1 尾缀避免 SDK 拼出 /v1/v1/messages。 */
+function anthropicBaseURL(value: string): string {
+  return normalizeOpenAiBaseURL(value).replace(/\/v1$/i, '')
+}
+
+/** Anthropic 端点的默认上下文窗口与输出上限（Claude 官方 200K / 32K，且不暴露推理档位）。 */
+const ANTHROPIC_CONTEXT_WINDOW = 200_000
+const ANTHROPIC_MAX_TOKENS = 32_000
+
 /** OpenAI 中转能力配置；仅保存凭据引用，不保存 Key 明文。 */
 export interface OpenAiCapabilityConfig {
   enabled: boolean
@@ -100,21 +118,22 @@ const CHAT_REASONING_EFFORTS = { low: 'low', medium: 'medium', high: 'high', xhi
 /** 旧版默认档位（仅 low/medium/high）的序列化形态；同步时升级为五档。 */
 const LEGACY_REASONING_EFFORTS = '{"low":"low","medium":"medium","high":"high"}'
 
-/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理。 */
-function defaultModelProfile(model: OpenAiDiscoveredModel): Record<string, unknown> {
+/** 图片生成模型不应暴露推理档位；其余未知模型默认 1M 上下文和五档推理；Anthropic 端点用 200K 且不暴露推理档位。 */
+function defaultModelProfile(model: OpenAiDiscoveredModel, api?: OpenAiEndpointApi): Record<string, unknown> {
   const imageOnly = /(?:^|[-_/])(image|dall-e|imagen|flux|ideogram|seedream|sora)(?:[-_/]|$)/i.test(model.id) || /gpt-image/i.test(model.id)
   const multimodal = /^(gpt|o[1-9]|claude|gemini|grok|glm|qwen|kimi|moonshot|minimax|mistral|llama|phi|command|jamba|codex)/i.test(model.id)
+  const anthropic = api === 'anthropic-messages'
   return {
     id: model.id,
     name: model.name ?? model.id,
-    contextWindow: 1_000_000,
+    contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
     input: imageOnly || multimodal ? ['text', 'image'] : ['text'],
-    reasoningEfforts: imageOnly ? false : { ...CHAT_REASONING_EFFORTS },
+    reasoningEfforts: imageOnly || anthropic ? false : { ...CHAT_REASONING_EFFORTS },
   }
 }
 
 /** 同步一个端点的模型目录，保留已有模型元数据并移除已下线模型。 */
-export function syncOpenAiModels(existing: Array<Record<string, unknown>>, discovered: OpenAiDiscoveredModel[]): { models: Array<Record<string, unknown>>; removedIds: string[] } {
+export function syncOpenAiModels(existing: Array<Record<string, unknown>>, discovered: OpenAiDiscoveredModel[], api?: OpenAiEndpointApi): { models: Array<Record<string, unknown>>; removedIds: string[] } {
   const byId = new Map<string, Record<string, unknown>>()
   for (const model of existing) {
     if (typeof model.id === 'string' && model.id !== '') byId.set(model.id, model)
@@ -125,28 +144,29 @@ export function syncOpenAiModels(existing: Array<Record<string, unknown>>, disco
     if (seen.has(model.id)) continue
     seen.add(model.id)
     const previous = byId.get(model.id)
-    if (previous === undefined) { models.push(defaultModelProfile(model)); continue }
-    // 迁移补齐：缺上下文窗口补 1M，旧版三档默认档位升级五档；用户自定义元数据一律不动。
+    if (previous === undefined) { models.push(defaultModelProfile(model, api)); continue }
+    // 迁移补齐：缺上下文窗口按协议补默认值，旧版三档默认档位升级五档（Anthropic 端点改为不暴露档位）；用户自定义元数据一律不动。
     const profile: Record<string, unknown> = { ...previous }
-    if (profile.contextWindow === undefined) profile.contextWindow = 1_000_000
-    if (JSON.stringify(profile.reasoningEfforts) === LEGACY_REASONING_EFFORTS) profile.reasoningEfforts = { ...CHAT_REASONING_EFFORTS }
+    if (profile.contextWindow === undefined) profile.contextWindow = api === 'anthropic-messages' ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000
+    if (JSON.stringify(profile.reasoningEfforts) === LEGACY_REASONING_EFFORTS) profile.reasoningEfforts = api === 'anthropic-messages' ? false : { ...CHAT_REASONING_EFFORTS }
     models.push(profile)
   }
   const removedIds = [...byId.keys()].filter((id) => !seen.has(id))
   return { models, removedIds }
 }
 
-/** 构造一个 OpenAI Responses provider。 */
+/** 构造端点 provider：openai-responses 走 /v1 根，anthropic-messages 走裸主机（SDK 自行拼接 /v1/messages）。 */
 export function buildOpenAiEndpointProvider(endpoint: OpenAiGatewayEndpointConfig, models: Array<Record<string, unknown>>, existing?: Record<string, unknown>, displayName = 'OpenAI 中转'): Record<string, unknown> {
+  const anthropic = endpoint.api === 'anthropic-messages'
   return {
     ...(existing ?? {}),
     apiKeyEnv: endpoint.apiKeyEnv,
     displayName,
-    api: 'openai-responses',
-    baseURL: openAiApiRoot(endpoint.baseURL),
+    api: anthropic ? 'anthropic-messages' : 'openai-responses',
+    baseURL: anthropic ? anthropicBaseURL(endpoint.baseURL) : openAiApiRoot(endpoint.baseURL),
     models,
-    defaultContextWindow: 1_000_000,
-    defaultMaxTokens: 128_000,
+    defaultContextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
+    defaultMaxTokens: anthropic ? ANTHROPIC_MAX_TOKENS : 128_000,
     defaultInput: ['text'],
     retryPolicy: {
       mode: 'normal',
@@ -223,6 +243,7 @@ export class OpenAiGatewayService {
       providerConfigured: primaryProvider !== undefined,
       apiKeyEnv: primaryApiKeyEnv,
       baseURL: primary?.baseURL ?? this.config.baseURL,
+      ...(primary?.api !== undefined ? { api: primary.api } : {}),
       ...(imageModel.trim() !== '' ? { imageModel: imageModel.trim() } : {}),
       models: presentModels(primaryModels),
       endpoints: endpointStatuses,
@@ -276,7 +297,7 @@ export class OpenAiGatewayService {
         const discovered = await this.client(endpoint).fetchModels(signal)
         if (discovered.length === 0) throw new OpenAiServiceError('返回 0 个模型，为防误清空已保留现有目录。', 502)
         const beforeIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-        const synced = syncOpenAiModels(existing, discovered)
+        const synced = syncOpenAiModels(existing, discovered, endpoint.api)
         const afterIds = new Set(synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
         const endpointAdded = synced.models.map((model) => model.id).filter((id): id is string => typeof id === 'string' && !beforeIds.has(id))
         const endpointKept = [...beforeIds].filter((id) => afterIds.has(id))

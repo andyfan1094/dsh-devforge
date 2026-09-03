@@ -19,15 +19,16 @@ function toDraft(endpoint: OpenAiGatewayEndpointConfig, index: number, previous?
     name: endpoint.name || '端点 ' + (index + 1),
     baseURL: endpoint.baseURL,
     apiKeyEnv: endpoint.apiKeyEnv,
+    ...(endpoint.api !== undefined ? { api: endpoint.api } : {}),
     ...(endpoint.imageModel !== undefined ? { imageModel: endpoint.imageModel } : {}),
     keyDraft: previous?.keyDraft ?? '',
   }
 }
 
 function statusEndpoints(next: OpenAiGatewayStatus, fallbackApiKeyEnv: string): OpenAiGatewayEndpointConfig[] {
-  if (next.endpoints.length > 0) return next.endpoints.map((endpoint) => ({ id: endpoint.id, name: endpoint.name, baseURL: endpoint.baseURL, apiKeyEnv: endpoint.apiKeyEnv, ...(endpoint.imageModel !== undefined ? { imageModel: endpoint.imageModel } : {}) }))
+  if (next.endpoints.length > 0) return next.endpoints.map((endpoint) => ({ id: endpoint.id, name: endpoint.name, baseURL: endpoint.baseURL, apiKeyEnv: endpoint.apiKeyEnv, ...(endpoint.api !== undefined ? { api: endpoint.api } : {}), ...(endpoint.imageModel !== undefined ? { imageModel: endpoint.imageModel } : {}) }))
   if (next.baseURL.trim() === '') return [{ id: 'default', name: '主端点', baseURL: '', apiKeyEnv: next.apiKeyEnv || fallbackApiKeyEnv }]
-  return [{ id: 'default', name: '主端点', baseURL: next.baseURL, apiKeyEnv: next.apiKeyEnv || fallbackApiKeyEnv, ...(next.imageModel !== undefined ? { imageModel: next.imageModel } : {}) }]
+  return [{ id: 'default', name: '主端点', baseURL: next.baseURL, apiKeyEnv: next.apiKeyEnv || fallbackApiKeyEnv, ...(next.api !== undefined ? { api: next.api } : {}), ...(next.imageModel !== undefined ? { imageModel: next.imageModel } : {}) }]
 }
 
 /** OpenAI 中转站配置页：支持多端点、独立凭据、模型发现与端点级生图模型。 */
@@ -128,7 +129,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
       const patch: OpenAiGatewayConfigPatch = {
         endpoints: endpoints.map((endpoint) => {
           const imageModel = endpoint.imageModel?.trim() ?? ''
-          return { id: endpoint.id, name: endpoint.name.trim(), baseURL: endpoint.baseURL.trim(), apiKeyEnv: endpoint.apiKeyEnv.trim(), ...(imageModel !== '' ? { imageModel } : {}) }
+          return { id: endpoint.id, name: endpoint.name.trim(), baseURL: endpoint.baseURL.trim(), apiKeyEnv: endpoint.apiKeyEnv.trim(), ...(endpoint.api !== undefined ? { api: endpoint.api } : {}), ...(imageModel !== '' ? { imageModel } : {}) }
         }),
       }
       const next = await api.saveOpenAiGatewayConfig(patch)
@@ -149,7 +150,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     setSaving(true); setNotice(null)
     try {
       if (selected.keyDraft.trim() !== '') await api.setCredential(selected.apiKeyEnv.trim(), selected.keyDraft.trim())
-      const next = await api.saveOpenAiGatewayEndpoint({ id: selected.id.trim(), name: selected.name.trim(), baseURL: selected.baseURL.trim(), apiKeyEnv: selected.apiKeyEnv.trim(), ...(selected.imageModel?.trim() ? { imageModel: selected.imageModel.trim() } : {}) })
+      const next = await api.saveOpenAiGatewayEndpoint({ id: selected.id.trim(), name: selected.name.trim(), baseURL: selected.baseURL.trim(), apiKeyEnv: selected.apiKeyEnv.trim(), ...(selected.api !== undefined ? { api: selected.api } : {}), ...(selected.imageModel?.trim() ? { imageModel: selected.imageModel.trim() } : {}) })
       if (!mounted.current) return
       applyStatus(next); setNotice({ kind: 'success', text: '已保存当前端点，其他端点未改动。' })
     } catch (error) { if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) }) }
@@ -238,6 +239,10 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
               <label className={css['compactField']}><span className={css['fieldLabel']}>稳定 ID</span><input className={css['input']} value={selected.id} onChange={(event) => updateSelected({ id: event.target.value })} spellCheck={false} /></label>
               <label className={css['compactField']}><span className={css['fieldLabel']}>中转地址</span><input className={css['input']} type="url" placeholder="https://gateway.example.com 或 …/v1" value={selected.baseURL} onChange={(event) => updateSelected({ baseURL: event.target.value })} spellCheck={false} /></label>
               <label className={css['compactField']}><span className={css['fieldLabel']}>受管凭据引用</span><input className={css['input']} value={selected.apiKeyEnv} onChange={(event) => updateSelected({ apiKeyEnv: event.target.value })} spellCheck={false} /></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>聊天协议</span><select className={css['input']} value={selected.api ?? 'openai-responses'} onChange={(event) => updateSelected({ api: event.target.value as OpenAiGatewayEndpointConfig['api'] })}>
+                <option value="openai-responses">OpenAI Responses（默认）</option>
+                <option value="anthropic-messages">Anthropic Messages（Claude /v1/messages）</option>
+              </select></label>
             </div>
             <div className={css['keyInputRow']}>
               <input className={css['keyInput']} type="password" autoComplete="new-password" placeholder={selectedStatus?.credentialConfigured ? 'API Key 已配置 · 输入新 Key 可覆盖' : '粘贴该端点 API Key'} value={selected.keyDraft} onChange={(event) => updateSelected({ keyDraft: event.target.value })} spellCheck={false} />

@@ -8,6 +8,9 @@ export const OPENAI_GATEWAY_API = {
   fetchModels: '/api/dsh-devforge/openai/fetch-models',
 } as const
 
+/** 端点聊天协议：OpenAI Responses（默认，走 /v1 聊天路由）或 Anthropic Messages（Claude 原生 /v1/messages）。 */
+export type OpenAiEndpointApi = 'openai-responses' | 'anthropic-messages'
+
 /** 一个 OpenAI 兼容中转端点（Key 只保存引用名，不保存明文）。 */
 export interface OpenAiGatewayEndpointConfig {
   /** 稳定标识，用于关联 llm-pi-ai provider。 */
@@ -18,6 +21,8 @@ export interface OpenAiGatewayEndpointConfig {
   baseURL: string
   /** 受管凭据引用名。 */
   apiKeyEnv: string
+  /** 聊天协议；缺省 openai-responses，向后兼容旧配置。 */
+  api?: OpenAiEndpointApi
   /** 该端点使用的生图模型，可选。 */
   imageModel?: string
 }
@@ -72,6 +77,8 @@ export interface OpenAiGatewayStatus {
   providerConfigured: boolean
   apiKeyEnv: string
   baseURL: string
+  /** 主端点聊天协议镜像；旧客户端可忽略。 */
+  api?: OpenAiEndpointApi
   imageModel?: string
   models: Array<{ id: string; name?: string; configured: boolean }>
   /** 多端点状态；旧客户端可忽略该字段。 */

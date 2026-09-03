@@ -46,7 +46,7 @@ export function openAiApiRoot(value: string): string {
   return /\/v1$/i.test(normalized) ? normalized : normalized + '/v1'
 }
 
-/** 规整 OpenAI GET /v1/models 响应，忽略空 id 与重复项。 */
+/** 规整 OpenAI GET /v1/models 响应，忽略空 id 与重复项；兼容 Anthropic 风格的 display_name 字段。 */
 export function parseOpenAiModelList(payload: unknown): OpenAiDiscoveredModel[] {
   if (payload === null || typeof payload !== 'object') return []
   const rows = Array.isArray((payload as { data?: unknown }).data) ? (payload as { data: unknown[] }).data : []
@@ -54,11 +54,12 @@ export function parseOpenAiModelList(payload: unknown): OpenAiDiscoveredModel[] 
   const result: OpenAiDiscoveredModel[] = []
   for (const entry of rows) {
     if (entry === null || typeof entry !== 'object') continue
-    const row = entry as { id?: unknown; name?: unknown }
+    const row = entry as { id?: unknown; name?: unknown; display_name?: unknown }
     const id = typeof row.id === 'string' ? row.id.trim() : ''
     if (id === '' || seen.has(id)) continue
     seen.add(id)
-    const name = typeof row.name === 'string' && row.name.trim() !== '' ? row.name.trim() : undefined
+    const name = typeof row.name === 'string' && row.name.trim() !== '' ? row.name.trim()
+      : typeof row.display_name === 'string' && row.display_name.trim() !== '' ? row.display_name.trim() : undefined
     result.push({ id, ...(name !== undefined ? { name } : {}) })
   }
   return result

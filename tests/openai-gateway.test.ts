@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { OpenAiGatewayClient, OpenAiGatewayError, extractGeneratedImage, normalizeOpenAiBaseURL, openAiApiRoot, parseOpenAiModelList } from '../src/openai/api-client.ts'
-import { buildOpenAiProvider, normalizeOpenAiEndpoints, openAiProviderId, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
+import { buildOpenAiEndpointProvider, buildOpenAiProvider, normalizeOpenAiEndpoints, OpenAiServiceError, openAiProviderId, syncOpenAiModels, type OpenAiCapabilityConfig } from '../src/openai/service.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -374,4 +374,48 @@ test('批量获取部分失败：失败端点保留既有 provider 路由不被�
     assert.equal((providers['openai-gateway']?.models as Array<Record<string, unknown>>)[0]?.id, 'keep-me')
     assert.equal((providers['openai-gateway-second']?.models as Array<Record<string, unknown>>)[0]?.id, 'second-model')
   } finally { mock.close() }
+})
+
+test('模型目录解析：兼容 Anthropic 风格 display_name 字段', () => {
+  const models = parseOpenAiModelList({ data: [{ id: 'claude-opus-5', type: 'model', display_name: 'Claude Opus 5' }, { id: 'claude-sonnet-5', display_name: ' ' }, { id: 'claude-haiku-4-5-20251001' }] })
+  assert.deepEqual(models, [{ id: 'claude-opus-5', name: 'Claude Opus 5' }, { id: 'claude-sonnet-5' }, { id: 'claude-haiku-4-5-20251001' }])
+})
+
+test('端点协议字段：合法值保留、缺省不写、非法值拒绝', () => {
+  const endpoints = normalizeOpenAiEndpoints({ ...config, endpoints: [
+    { id: 'main', name: '主站', baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY' },
+    { id: 'claude', name: 'Claude 端点', baseURL: 'https://two.example.com/v1', apiKeyEnv: 'TWO_KEY', api: 'anthropic-messages' },
+    { id: 'explicit', name: '显式默认', baseURL: 'https://three.example.com', apiKeyEnv: 'THREE_KEY', api: 'openai-responses' },
+  ] })
+  assert.equal(endpoints[0]?.api, undefined)
+  assert.equal(endpoints[1]?.api, 'anthropic-messages')
+  assert.equal(endpoints[2]?.api, 'openai-responses')
+  assert.throws(() => normalizeOpenAiEndpoints({ ...config, endpoints: [{ id: 'bad', name: '坏协议', baseURL: 'https://four.example.com', apiKeyEnv: 'FOUR_KEY', api: 'chat-completions' as never }] }), OpenAiServiceError)
+})
+
+test('Anthropic 端点 provider：anthropic-messages 协议、裸主机 baseURL、200K 窗口与 32K 输出', () => {
+  const provider = buildOpenAiEndpointProvider({ id: 'claude', name: 'Claude 端点', baseURL: 'https://gw.example.com/v1', apiKeyEnv: 'CLAUDE_KEY', api: 'anthropic-messages' }, [{ id: 'claude-opus-5' }])
+  assert.equal(provider.api, 'anthropic-messages')
+  assert.equal(provider.baseURL, 'https://gw.example.com')
+  assert.equal(provider.apiKeyEnv, 'CLAUDE_KEY')
+  assert.equal(provider.defaultContextWindow, 200_000)
+  assert.equal(provider.defaultMaxTokens, 32_000)
+  const responses = buildOpenAiEndpointProvider({ id: 'main', name: '主站', baseURL: 'https://gw.example.com', apiKeyEnv: 'MAIN_KEY' }, [])
+  assert.equal(responses.api, 'openai-responses')
+  assert.equal(responses.baseURL, 'https://gw.example.com/v1')
+  assert.equal(responses.defaultContextWindow, 1_000_000)
+  assert.equal(responses.defaultMaxTokens, 128_000)
+})
+
+test('Anthropic 端点模型同步：新档案 200K 且不暴露推理档位，旧三档迁移为不暴露', () => {
+  const fresh = syncOpenAiModels([], [{ id: 'claude-opus-5', name: 'Claude Opus 5' }], 'anthropic-messages').models[0] as Record<string, unknown>
+  assert.equal(fresh.contextWindow, 200_000)
+  assert.equal(fresh.reasoningEfforts, false)
+  assert.deepEqual(fresh.input, ['text', 'image'])
+  const migrated = syncOpenAiModels([{ id: 'm1', reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }], [{ id: 'm1' }], 'anthropic-messages').models[0] as Record<string, unknown>
+  assert.equal(migrated.contextWindow, 200_000)
+  assert.equal(migrated.reasoningEfforts, false)
+  const custom = syncOpenAiModels([{ id: 'm2', contextWindow: 1_000_000, reasoningEfforts: { max: 'max' } }], [{ id: 'm2' }], 'anthropic-messages').models[0] as Record<string, unknown>
+  assert.equal(custom.contextWindow, 1_000_000)
+  assert.deepEqual(custom.reasoningEfforts, { max: 'max' })
 })

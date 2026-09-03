@@ -90,6 +90,10 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
               const value = item as Record<string, unknown>
               if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.baseURL !== 'string' || typeof value.apiKeyEnv !== 'string') throw new OpenAiServiceError('端点必须包含 id、name、baseURL 和 apiKeyEnv 字符串。', 400)
               const endpoint: OpenAiGatewayEndpointConfig = { id: value.id, name: value.name, baseURL: value.baseURL, apiKeyEnv: value.apiKeyEnv }
+              if (value.api !== undefined) {
+                if (value.api !== 'openai-responses' && value.api !== 'anthropic-messages') throw new OpenAiServiceError('端点聊天协议只支持 openai-responses 或 anthropic-messages。', 400)
+                endpoint.api = value.api
+              }
               if (value.imageModel !== undefined) {
                 if (typeof value.imageModel !== 'string') throw new OpenAiServiceError('imageModel 必须是字符串。', 400)
                 endpoint.imageModel = value.imageModel
@@ -120,6 +124,10 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
           const item = value as Record<string, unknown>
           if (typeof item.id !== 'string' || typeof item.name !== 'string' || typeof item.baseURL !== 'string' || typeof item.apiKeyEnv !== 'string') throw new OpenAiServiceError('端点必须包含 id、name、baseURL 和 apiKeyEnv 字符串。', 400)
           const endpoint: OpenAiGatewayEndpointConfig = { id: item.id, name: item.name, baseURL: item.baseURL, apiKeyEnv: item.apiKeyEnv }
+          if (item.api !== undefined) {
+            if (item.api !== 'openai-responses' && item.api !== 'anthropic-messages') throw new OpenAiServiceError('端点聊天协议只支持 openai-responses 或 anthropic-messages。', 400)
+            endpoint.api = item.api
+          }
           if (item.imageModel !== undefined) {
             if (typeof item.imageModel !== 'string') throw new OpenAiServiceError('imageModel 必须是字符串。', 400)
             endpoint.imageModel = item.imageModel
