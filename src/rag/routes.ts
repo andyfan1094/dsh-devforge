@@ -210,6 +210,21 @@ export function makeRagRoutes(service: RagService, embedders: Record<string, Rag
     },
     {
       kind: 'exact',
+      path: '/api/dsh-devforge/rag/reembed',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        try {
+          if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+          const body = await readJsonBody(req)
+          // 缺省重嵌全部库；可传 kbIds 只重嵌指定库
+          const kbIds = Array.isArray(body?.kbIds) ? body.kbIds.filter((id): id is string => typeof id === 'string') : undefined
+          const reports = await service.reembedAll(kbIds)
+          writeJson(res, 200, { ok: true, reports })
+        } catch (error) { fail(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
       path: '/api/dsh-devforge/rag/settings',
       handler: async (req, res) => {
         if (!guard(req, res)) return
@@ -221,8 +236,15 @@ export function makeRagRoutes(service: RagService, embedders: Record<string, Rag
             // 宽松合并：缺省字段保留现值，保证面板部分保存不炸
             const current = service.getSettings()
             const next = { ...current, ...body } as typeof current
+            // 切换守卫：向量渠道/模型变化意味着旧向量空间失配，响应携带重嵌提示
+            const embeddingChanged = current.embedding.provider !== next.embedding.provider || current.embedding.model !== next.embedding.model
             service.putSettings(next)
-            writeJson(res, 200, { ok: true, settings: service.getSettings() })
+            writeJson(res, 200, {
+              ok: true,
+              settings: service.getSettings(),
+              embeddingChanged,
+              ...(embeddingChanged ? { chunkCount: service.countChunks() } : {}),
+            })
             return
           }
           writeJson(res, 405, { ok: false, error: 'GET/PUT only' })

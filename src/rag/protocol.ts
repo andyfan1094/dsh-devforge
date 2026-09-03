@@ -25,6 +25,8 @@ export const RAG_API = {
   settings: '/api/dsh-devforge/rag/settings',
   /** 向量渠道连通性测试（不入库，实时调用）。 */
   settingsTest: '/api/dsh-devforge/rag/settings/test',
+  /** 全库重嵌（切换向量模型后重建向量空间，绕过文档幂等）。 */
+  reembed: '/api/dsh-devforge/rag/reembed',
 } as const
 
 /** 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容服务；siliconflow=硅基流动免费档）。 */
@@ -107,4 +109,19 @@ export interface RagSettings {
   chunk: { maxSize: number; overlap: number }
   search: { topK: number; vectorWeight: number; threshold: number }
   advanced: { concurrency: number; cacheEnabled: boolean; timeoutMs: number }
+}
+
+/** 单库重嵌报告（reembed 路由与面板提示共用）。 */
+export interface RagReembedReport {
+  kbId: string
+  /** 参与重嵌的就绪文档数。 */
+  docs: number
+  /** 参与重嵌的切块总数。 */
+  chunks: number
+  /** 实际新调嵌入的切块数（未命中缓存）。 */
+  embedded: number
+  /** 直接复用向量缓存的切块数（同文本同模型不重复计费）。 */
+  cached: number
+  /** 失败明细（已脱敏，单块失败不中断整库）。 */
+  errors: string[]
 }

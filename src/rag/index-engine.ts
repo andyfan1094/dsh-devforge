@@ -65,6 +65,11 @@ export class RagIndexEngine {
     this.vectorDim = vectorDim
   }
 
+  /** 本实例索引的向量维度（检索前比对查询向量，维度不符需降级，防 Orama 抛错）。 */
+  get dim(): number {
+    return this.vectorDim
+  }
+
   /** 初始化（幂等）：建库并挂中文 tokenizer。 */
   async init(): Promise<void> {
     if (this.db !== null) return

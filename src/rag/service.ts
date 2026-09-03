@@ -10,7 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chunkDocument, type TextChunk } from './chunker.ts'
 import { RagIndexEngine, type RagIndexChunk, type RagIndexHit } from './index-engine.ts'
-import type { RagDocument, RagKnowledgeBase, RagSearchHit, RagSearchRequest, RagSettings } from './protocol.ts'
+import type { RagDocument, RagKnowledgeBase, RagReembedReport, RagSearchHit, RagSearchRequest, RagSettings } from './protocol.ts'
 import { RagStore, type RagChunkRecord } from './rag-store.ts'
 import { vectorKey } from './embedder.ts'
 import { LlmReranker, type Reranker, type LlmScoreFn } from './rerank.ts'
@@ -177,7 +177,11 @@ export class RagService {
     for (const kbId of kbIds) {
       const engine = await this.ensureEngine(kbId)
       if (engine.size === 0) continue // 空库跳过（维度无从判定，也无需检索）
-      const hits = await engine.searchHybrid(request.query, queryVector, { topK, vectorWeight })
+      // 维度守卫：库内向量与当前查询向量维度不符（切换过向量模型且未重嵌）时，
+      // 该库降级纯关键词检索——绝不因 Orama 维度校验炸掉整个多库检索。
+      const hits = engine.dim === queryVector.length
+        ? await engine.searchHybrid(request.query, queryVector, { topK, vectorWeight })
+        : await engine.searchFulltext(request.query, { topK })
       all.push(...hits)
     }
     all.sort((a, b) => b.score - a.score)
@@ -214,6 +218,62 @@ export class RagService {
   /** 读取某文档全部切块（记忆沉淀去重用）。 */
   listChunks(docId: string) {
     return this.store.listChunks(docId)
+  }
+
+  /** 统计某库（缺省全部库）就绪文档的切块总数（设置守卫的重嵌提示用）。 */
+  countChunks(kbId?: string): number {
+    const docs = this.store.listDocs(kbId).filter(doc => doc.status === 'ready')
+    let total = 0
+    for (const doc of docs) total += this.store.listChunks(doc.id).length
+    return total
+  }
+
+  /**
+   * 全库重嵌：切换向量模型后用当前设置重建向量空间（文档幂等挡不住的场景由这里兜底）。
+   *
+   * - 无需原文：逐块以「新模型 + 原文」的缓存键取向量，未命中的批量嵌入后覆写 vecHash；
+   * - 同文本同模型永不重复计费（缓存命中计入 cached）；
+   * - 单文档嵌入失败保留旧 vecHash（可回退），错误脱敏后计入报告，不中断整库；
+   * - 旧模型的向量保留在缓存库（切回旧模型零成本），孤儿向量由跨端重建语义自然消化。
+   */
+  async reembedAll(kbIds?: string[]): Promise<RagReembedReport[]> {
+    const settings = this.getSettings()
+    const model = settings.embedding.model
+    const embedder = this.pickEmbedder(settings)
+    const targets = kbIds !== undefined && kbIds.length > 0 ? kbIds : this.listKbs().map(kb => kb.id)
+    const reports: RagReembedReport[] = []
+    for (const kbId of targets) {
+      const readyDocs = this.store.listDocs(kbId).filter(doc => doc.status === 'ready')
+      const report: RagReembedReport = { kbId, docs: readyDocs.length, chunks: 0, embedded: 0, cached: 0, errors: [] }
+      for (const doc of readyDocs) {
+        const records = this.store.listChunks(doc.id)
+        report.chunks += records.length
+        // 先按新模型缓存键分流：命中的直接算完成，未命中的凑一批调嵌入
+        const pending: Array<{ record: RagChunkRecord; key: string }> = []
+        for (const record of records) {
+          const key = vectorKey(model, record.text)
+          if (this.store.getVector(key) !== null) { report.cached += 1; continue }
+          pending.push({ record, key })
+        }
+        if (pending.length > 0) {
+          try {
+            const vectors = await embedder.embed(pending.map(item => item.record.text), model)
+            for (let i = 0; i < pending.length; i++) this.store.putVector(pending[i]!.key, vectors[i]!)
+            report.embedded += pending.length
+          } catch (error) {
+            // 本文档向量不完整时绝不覆写 vecHash：保持旧指向，检索侧维度守卫可继续降级
+            const message = error instanceof Error ? error.message : String(error)
+            report.errors.push(doc.fileName + '：' + message.slice(0, 160))
+            continue
+          }
+        }
+        for (const record of records) record.vecHash = vectorKey(model, record.text)
+        this.store.putChunks(doc.id, records)
+      }
+      this.engines.delete(kbId) // 索引失效，下次检索按新向量重建
+      reports.push(report)
+    }
+    return reports
   }
 
   /** 惰性加载某库索引：从 store 读全部 chunk + 向量重建 Orama 实例。 */

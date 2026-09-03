@@ -4,7 +4,7 @@
  * → 底部一行式设置。样式复用 panel.module.css 主题类（深浅色自动适配），
  * 信息密度优先且守住块间距底线（辉哥排版偏好）。
  */
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
 import { RAG_API, type RagDocument, type RagKnowledgeBase, type RagSearchHit, type RagSettings } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 
@@ -135,8 +135,27 @@ export function RagTab() {
 
   const saveSettings = () => run(async () => {
     if (settings === null) return
-    await api(RAG_API.settings, { method: 'PUT', body: JSON.stringify(settings) })
-    setMessage('✅ 设置已保存（向量模型变更后旧库需重新入库）')
+    // 切换守卫：向量渠道/模型变化时由宿主返回受影响切块数，确认后立即全库重嵌
+    const data = await api<{ embeddingChanged?: boolean; chunkCount?: number }>(RAG_API.settings, { method: 'PUT', body: JSON.stringify(settings) })
+    if (data.embeddingChanged === true && (data.chunkCount ?? 0) > 0) {
+      const ok = window.confirm('向量模型已变更：' + data.chunkCount + ' 个切块需重嵌后才能向量检索（期间相关库降级纯关键词）。立即重嵌？')
+      if (!ok) { setMessage('⚠️ 已保存设置但未重嵌——检索将降级关键词，可稍后点「重嵌全部」'); return }
+      const report = await api<{ reports: Array<{ chunks: number; embedded: number; cached: number; errors: string[] }> }>(RAG_API.reembed, { method: 'POST', body: JSON.stringify({}) })
+      const total = report.reports.reduce((sum, item) => sum + item.chunks, 0)
+      const failed = report.reports.reduce((sum, item) => sum + item.errors.length, 0)
+      setMessage(failed > 0 ? '⚠️ 重嵌完成但有失败：共 ' + total + ' 块，' + failed + ' 个文档失败（详见宿主日志）' : '✅ 重嵌完成：共 ' + total + ' 块已切换到新向量模型')
+    } else {
+      setMessage('✅ 设置已保存')
+    }
+  })
+
+  /** 手动全库重嵌（未重嵌就关掉确认框的补救入口）。 */
+  const reembedAll = () => run(async () => {
+    const report = await api<{ reports: Array<{ chunks: number; embedded: number; cached: number; errors: string[] }> }>(RAG_API.reembed, { method: 'POST', body: JSON.stringify({}) })
+    const total = report.reports.reduce((sum, item) => sum + item.chunks, 0)
+    const failed = report.reports.reduce((sum, item) => sum + item.errors.length, 0)
+    if (total === 0) { setMessage('没有需要重嵌的文档'); return }
+    setMessage(failed > 0 ? '⚠️ 重嵌完成但有失败：共 ' + total + ' 块，' + failed + ' 个文档失败' : '✅ 重嵌完成：共 ' + total + ' 块已对齐当前向量模型')
   })
 
   return (
@@ -229,7 +248,7 @@ export function RagTab() {
         </div>
       </div>
 
-      {settings !== null && <SettingsRow settings={settings} busy={busy} onChange={setSettings} onSave={saveSettings} />}
+      {settings !== null && <SettingsRow settings={settings} busy={busy} onChange={setSettings} onSave={saveSettings} onReembed={reembedAll} />}
     </div>
   )
 }
@@ -237,22 +256,15 @@ export function RagTab() {
 const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama', custom: '自定义(OpenAI兼容)', siliconflow: '硅基流动' }
 const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3', custom: 'BAAI/bge-m3', siliconflow: 'BAAI/bge-m3' }
 
-/** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，保存前守卫提示。 */
-function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void }): JSX.Element {
+/** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，重嵌守卫由宿主保存响应驱动。 */
+function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void; onReembed: () => void }): JSX.Element {
   const { settings, busy, onChange } = props
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState('')
-  /** 初始快照：判断渠道/模型是否发生变化（变化 → 旧向量不兼容，需重新入库）。 */
-  const initialRef = useRef(settings.embedding.provider + '|' + settings.embedding.model)
 
   const save = (): void => {
-    const key = settings.embedding.provider + '|' + settings.embedding.model
-    if (key !== initialRef.current) {
-      const confirmed = window.confirm('向量模型已切换，旧向量与新空间不兼容：已入库文档需要删除后重新入库（或等待后续版本的自动重嵌）。确认保存？')
-      if (!confirmed) return
-    }
+    // 维度守卫在宿主：保存响应返回 embeddingChanged + 受影响切块数，由 saveSettings 弹确认并重嵌
     props.onSave(settings)
-    initialRef.current = key
   }
 
   const testConnection = async (): Promise<void> => {
@@ -297,6 +309,7 @@ function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (n
           <input className={css.input} value={settings.embedding.model} placeholder={PROVIDER_MODEL_HINT[settings.embedding.provider] ?? '模型名'} onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, model: e.target.value } })} />
         </div>
         <button type="button" className={css.ghostButton} disabled={busy || testing} onClick={testConnection}>{testing ? '测试中…' : '测试连接'}</button>
+        <button type="button" className={css.ghostButton} disabled={busy} onClick={props.onReembed}>重嵌全部</button>
         <div style={{ flex: '0 0 118px' }}>
           <span className={css.fieldLabel}>重排</span>
           <select className={css.input} value={settings.rerank.mode} onChange={(e) => onChange({ ...settings, rerank: { ...settings.rerank, mode: e.target.value as RagSettings['rerank']['mode'] } })}>
