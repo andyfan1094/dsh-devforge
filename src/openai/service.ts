@@ -188,6 +188,8 @@ export function buildOpenAiEndpointProvider(endpoint: OpenAiGatewayEndpointConfi
     defaultContextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
     defaultMaxTokens: anthropic ? ANTHROPIC_MAX_TOKENS : 128_000,
     defaultInput: ['text'],
+    // Anthropic OAuth 订阅通道对无缓存命中的大请求首字节可达 1~4 分钟，空闲超时放宽到 10 分钟避免 300s 误判超时后循环重试。
+    ...(anthropic ? { streamIdleTimeoutMs: 600_000 } : {}),
     retryPolicy: {
       mode: 'normal',
       maxRetries: 5,
