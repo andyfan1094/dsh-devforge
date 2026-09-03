@@ -302,9 +302,10 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
               <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('mnemon') }}>迁移 Mnemon 记忆</button>
               <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('hindsight') }}>迁移 Hindsight 知识</button>
             </div>
-            <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部只读镜像</h3><p className={css['sectionHint']}>当前仍保留只读同步，迁移完成前不删除外部数据。</p></div></div><div className={css['inlineActions']}><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('mnemon') }}>同步 Mnemon</button><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('hindsight') }}>同步 Hindsight</button></div></section>
             {report !== '' && <p className={css['operationReport']}>{report}</p>}
           </section>
+          {/* 卡片一律平级，禁止嵌套：只读镜像是独立能力，不再塞进迁移卡片内部造成双层边框。 */}
+          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部只读镜像</h3><p className={css['sectionHint']}>当前仍保留只读同步，迁移完成前不删除外部数据。</p></div></div><div className={css['inlineActions']}><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('mnemon') }}>同步 Mnemon</button><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('hindsight') }}>同步 Hindsight</button></div></section>
         </div>
       </div>
     </section>
