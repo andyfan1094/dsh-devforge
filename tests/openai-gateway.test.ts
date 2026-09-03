@@ -407,18 +407,21 @@ test('Anthropic 端点 provider：anthropic-messages 协议、裸主机 baseURL�
   assert.equal(responses.defaultMaxTokens, 128_000)
 })
 
-test('Anthropic 端点模型同步：按官方规格分型号定容量，旧三档与旧默认不暴露档位均升级五档', () => {
+test('Anthropic 端点模型同步：按官方规格分型号定容量，adaptive 型号补 forceAdaptiveThinking，旧档位形态升级五档', () => {
   const fresh = syncOpenAiModels([], [{ id: 'claude-opus-5', name: 'Claude Opus 5' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(fresh.contextWindow, 1_000_000)
   assert.equal(fresh.maxTokens, 128_000)
+  assert.equal((fresh.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking, true)
   assert.deepEqual(fresh.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
   assert.deepEqual(fresh.input, ['text', 'image'])
   const sonnet = syncOpenAiModels([], [{ id: 'claude-sonnet-4-5-20250929' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(sonnet.contextWindow, 1_000_000)
   assert.equal(sonnet.maxTokens, 64_000)
+  assert.equal(sonnet.compat, undefined)
   const opus45 = syncOpenAiModels([], [{ id: 'claude-opus-4-5-20251101' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(opus45.contextWindow, 200_000)
   assert.equal(opus45.maxTokens, 64_000)
+  assert.equal(opus45.compat, undefined)
   const migrated = syncOpenAiModels([{ id: 'm1', reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }], [{ id: 'm1' }], 'anthropic-messages').models[0] as Record<string, unknown>
   assert.equal(migrated.contextWindow, 200_000)
   assert.deepEqual(migrated.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
@@ -430,10 +433,11 @@ test('Anthropic 端点模型同步：按官方规格分型号定容量，旧三�
   assert.deepEqual(custom.reasoningEfforts, { max: 'max' })
 })
 
-test('模型档案迁移：Anthropic 旧默认容量按官方规格升级，OpenAI 端点不动不暴露档位的模型', () => {
+test('模型档案迁移：Anthropic 旧默认容量按官方规格升级并补 adaptive 开关，OpenAI 端点不动不暴露档位的模型', () => {
   const anthropic = migrateOpenAiModelProfile({ id: 'claude-opus-5', contextWindow: 200_000, reasoningEfforts: false }, 'anthropic-messages')
   assert.equal(anthropic.contextWindow, 1_000_000)
   assert.equal(anthropic.maxTokens, 128_000)
+  assert.equal((anthropic.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking, true)
   assert.deepEqual(anthropic.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
   const anthropicFresh = migrateOpenAiModelProfile({ id: 'claude-sonnet-5' }, 'anthropic-messages')
   assert.equal(anthropicFresh.contextWindow, 1_000_000)
@@ -441,6 +445,9 @@ test('模型档案迁移：Anthropic 旧默认容量按官方规格升级，Open
   const customWindow = migrateOpenAiModelProfile({ id: 'claude-fable-5-1', contextWindow: 300_000, maxTokens: 10_000 }, 'anthropic-messages')
   assert.equal(customWindow.contextWindow, 300_000)
   assert.equal(customWindow.maxTokens, 10_000)
+  assert.equal((customWindow.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking, true)
+  const userCompat = migrateOpenAiModelProfile({ id: 'claude-opus-5', compat: { forceAdaptiveThinking: false } }, 'anthropic-messages')
+  assert.equal((userCompat.compat as Record<string, unknown> | undefined)?.forceAdaptiveThinking, false)
   const responses = migrateOpenAiModelProfile({ id: 'm4', reasoningEfforts: false }, 'openai-responses')
   assert.equal(responses.contextWindow, 1_000_000)
   assert.equal(responses.maxTokens, undefined)
