@@ -12,7 +12,7 @@ import css from './panel.module.css'
 
 /** 画布逻辑尺寸（viewBox，等比缩放适配面板宽度）。 */
 const WIDTH = 820
-const HEIGHT = 430
+const HEIGHT = 300
 
 /** 力导向模拟节点（内部状态，不外泄）。 */
 interface SimNode { id: string; x: number; y: number; vx: number; vy: number }
@@ -29,9 +29,9 @@ const MAX_STEP = 14
 function restLength(a: string, b: string): number {
   const kindA = a.slice(0, a.indexOf(':'))
   const kindB = b.slice(0, b.indexOf(':'))
-  if (kindA === 'category' || kindB === 'category') return 150
-  if (kindA === 'entry' && kindB === 'entry') return 120
-  return 85
+  if (kindA === 'category' || kindB === 'category') return 110
+  if (kindA === 'entry' && kindB === 'entry') return 90
+  return 65
 }
 
 /** 确定性力导向布局：黄金角初始化 + 300 轮斥力/弹簧/向心模拟，输出节点坐标。 */
@@ -42,7 +42,7 @@ function computeLayout(graph: MemoryGraph): Map<string, { x: number; y: number }
   graph.nodes.forEach((node, index) => {
     // 黄金角 2.399963 均匀撒点：同参数必得同布局，刷新不跳动
     const angle = (index * 2.399963) % (Math.PI * 2)
-    const ring = node.kind === 'category' ? 46 : node.kind === 'tag' ? 130 : 205
+    const ring = node.kind === 'category' ? 38 : node.kind === 'tag' ? 95 : 145
     sim.set(node.id, { id: node.id, x: cx + Math.cos(angle) * ring, y: cy + Math.sin(angle) * ring, vx: 0, vy: 0 })
   })
   const list = [...sim.values()]

@@ -660,7 +660,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .graphDetail { display: flex; flex-direction: column; gap: 5px; padding: 9px 10px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 8px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 
 /* 内置长期记忆（主存储）列表：紧凑双行行条目 + 可点关键词 chips。 */
-.nativeList { display: flex; max-height: 430px; flex-direction: column; overflow: auto; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.nativeList { display: flex; max-height: min(60vh, 640px); flex-direction: column; overflow: auto; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
 .nativeRow { display: flex; flex-direction: column; gap: 4px; padding: 7px 2px; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); font-size: 12px; }
 .nativeRow[data-selected] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 6%, transparent); }
 .nativeRowMain { display: flex; min-width: 0; align-items: center; gap: 8px; }

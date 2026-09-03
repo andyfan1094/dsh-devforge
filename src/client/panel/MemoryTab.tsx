@@ -228,19 +228,32 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         <div className={css['memoryStat']}><span>主动注入</span><strong>{status?.injectCount ?? '—'} 次</strong><small>{settings?.autoInject ? '已开启' : '已关闭'} · {sourceReady ? '数据源就绪' : '待初始化'}</small></div>
       </div>
 
+      {/* 单一两列网格：左列图谱→主存储（点图谱条目即过滤下方列表，联动相邻）；右列操作与库表面板。
+         取代旧的上下两套网格——两套网格左右列高度各自独立，内容错位、中部大片空白。 */}
       <div className={css['memoryGrid']}>
-        <section className={css['memoryPanel']}>
-          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>知识图谱</h3><p className={css['sectionHint']}>由内置长期记忆现算：条目-关键词-分类关联；悬停高亮关联，点条目看详情，点关键词过滤下方列表。</p></div><span className={css['badge']}>{graph === null ? '—' : graph.nodes.length + ' 节点 · ' + graph.edges.length + ' 边'}</span></div>
-          {softError !== '' && <p className={css['operationReport']}>图谱加载失败：{softError}</p>}
-          <MemoryGraphView graph={graph} focusId={focusId} onSelectEntry={(id) => { setSelectedEntryId(id) }} onToggleTag={toggleTag} />
-          <div className={css['graphLegend']}><span><i style={{ background: 'var(--dsw-alias-state-business-primary, #2563eb)' }} />记忆条目</span><span><i style={{ background: '#7c3aed' }} />关键词</span><span><i style={{ background: '#ea580c' }} />分类</span><span>半径 = 关联度</span></div>
-          {selectedEntry !== undefined && <div className={css['graphDetail']}>
-            <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[selectedEntry.category] ?? selectedEntry.category}</span>{selectedEntry.tags.map((tag) => <span key={tag} className={css['memoryChip']} onClick={() => toggleTag(tag)}>{tag}</span>)}</div>
-            <div>{selectedEntry.content}</div>
-            <div className={css['nativeRowMain']}><span className={css['nativeTime']}>{fmtTime(selectedEntry.updatedAt)} · {selectedEntry.source} · 重要度 {selectedEntry.importance}</span><span style={{ flex: 1 }} /><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(selectedEntry.id) }}>删除</button><button type="button" className={css['ghostButton']} onClick={() => setSelectedEntryId('')}>关闭</button></div>
-          </div>}
-        </section>
-
+        <div className={css['memoryStack']}>
+          <section className={css['memoryPanel']}>
+            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>知识图谱</h3><p className={css['sectionHint']}>由内置长期记忆现算：条目-关键词-分类关联；悬停高亮关联，点条目看详情，点关键词过滤下方列表。</p></div><span className={css['badge']}>{graph === null ? '—' : graph.nodes.length + ' 节点 · ' + graph.edges.length + ' 边'}</span></div>
+            {softError !== '' && <p className={css['operationReport']}>图谱加载失败：{softError}</p>}
+            <MemoryGraphView graph={graph} focusId={focusId} onSelectEntry={(id) => { setSelectedEntryId(id) }} onToggleTag={toggleTag} />
+            <div className={css['graphLegend']}><span><i style={{ background: 'var(--dsw-alias-state-business-primary, #2563eb)' }} />记忆条目</span><span><i style={{ background: '#7c3aed' }} />关键词</span><span><i style={{ background: '#ea580c' }} />分类</span><span>半径 = 关联度</span></div>
+            {selectedEntry !== undefined && <div className={css['graphDetail']}>
+              <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[selectedEntry.category] ?? selectedEntry.category}</span>{selectedEntry.tags.map((tag) => <span key={tag} className={css['memoryChip']} onClick={() => toggleTag(tag)}>{tag}</span>)}</div>
+              <div>{selectedEntry.content}</div>
+              <div className={css['nativeRowMain']}><span className={css['nativeTime']}>{fmtTime(selectedEntry.updatedAt)} · {selectedEntry.source} · 重要度 {selectedEntry.importance}</span><span style={{ flex: 1 }} /><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(selectedEntry.id) }}>删除</button><button type="button" className={css['ghostButton']} onClick={() => setSelectedEntryId('')}>关闭</button></div>
+            </div>}
+          </section>
+          <section className={css['memoryPanel']}>
+            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置长期记忆（主存储）</h3><p className={css['sectionHint']}>点内容查看详情；点关键词 chip 可过滤。{activeTag !== '' ? '当前过滤：' + activeTag : ''}</p></div><span className={css['badge']}>{activeTag === '' ? nativeEntries.length + ' 条' : visibleNative.length + '/' + nativeEntries.length + ' 条'}{activeTag !== '' && <button type="button" className={css['ghostButton']} onClick={() => setActiveTag('')}>清除过滤</button>}</span></div>
+            {nativeEntries.length === 0 ? <div className={css['empty']}>暂无内置长期记忆。点右侧「迁移」导入 Mnemon/Hindsight，或正常使用几轮会话自动沉淀。</div> : <div className={css['nativeList']}>
+              {visibleNative.map((entry) => <div key={entry.id} className={css['nativeRow']} data-selected={selectedEntryId === entry.id ? '' : undefined}>
+                <div className={css['nativeRowMain']}><span className={css['nativeContent']} title={entry.content} onClick={() => { setSelectedEntryId(entry.id) }}>{entry.content}</span><span className={css['nativeTime']}>{fmtTime(entry.updatedAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(entry.id) }}>删除</button></div>
+                <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[entry.category] ?? entry.category}</span><span className={css['nativeTime']}>{entry.source} · 重要度 {entry.importance}</span>{entry.tags.map((tag) => <button key={tag} type="button" className={css['memoryChip']} data-active={activeTag === tag.toLocaleLowerCase() ? '' : undefined} onClick={() => toggleTag(tag.toLocaleLowerCase())}>{tag}</button>)}</div>
+              </div>)}
+              {visibleNative.length === 0 && <div className={css['empty']}>该关键词下暂无条目。</div>}
+            </div>}
+          </section>
+        </div>
         <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}>
             <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>用户身份卡</h3><p className={css['sectionHint']}>常驻注入每轮对话（不靠召回，必达）；插件给别人用时，每人填自己的身份与习惯。</p></div><span className={css['badge']} data-kind={profile?.enabled === true && (profile.alias !== '' || profile.identity !== '' || habitsText.trim() !== '') ? 'success' : 'pending'}>{profile?.enabled === false ? '已停用' : '常驻注入'}</span></div>
@@ -277,22 +290,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
             </div>}
             <div className={css['inlineForm']}><input className={css['input']} value={draftContent} placeholder="手动补录一条长期记忆…" onChange={(e) => setDraftContent(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy || draftContent.trim() === ''} onClick={() => { void saveNative() }}>保存</button></div>
           </section>
-        </div>
-      </div>
-
-      <div className={css['memoryGrid']}>
-        <section className={css['memoryPanel']}>
-          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置长期记忆（主存储）</h3><p className={css['sectionHint']}>点内容查看详情；点关键词 chip 可过滤。{activeTag !== '' ? '当前过滤：' + activeTag : ''}</p></div><span className={css['badge']}>{activeTag === '' ? nativeEntries.length + ' 条' : visibleNative.length + '/' + nativeEntries.length} 条{activeTag !== '' && <button type="button" className={css['ghostButton']} onClick={() => setActiveTag('')}>清除过滤</button>}</span></div>
-          {nativeEntries.length === 0 ? <div className={css['empty']}>暂无内置长期记忆。点右侧「迁移」导入 Mnemon/Hindsight，或正常使用几轮会话自动沉淀。</div> : <div className={css['nativeList']}>
-            {visibleNative.map((entry) => <div key={entry.id} className={css['nativeRow']} data-selected={selectedEntryId === entry.id ? '' : undefined}>
-              <div className={css['nativeRowMain']}><span className={css['nativeContent']} title={entry.content} onClick={() => { setSelectedEntryId(entry.id) }}>{entry.content}</span><span className={css['nativeTime']}>{fmtTime(entry.updatedAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(entry.id) }}>删除</button></div>
-              <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[entry.category] ?? entry.category}</span><span className={css['nativeTime']}>{entry.source} · 重要度 {entry.importance}</span>{entry.tags.map((tag) => <button key={tag} type="button" className={css['memoryChip']} data-active={activeTag === tag.toLocaleLowerCase() ? '' : undefined} onClick={() => toggleTag(tag.toLocaleLowerCase())}>{tag}</button>)}</div>
-            </div>)}
-            {visibleNative.length === 0 && <div className={css['empty']}>该关键词下暂无条目。</div>}
-          </div>}
-        </section>
-
-        <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>会话记忆条目（沉淀原文库）</h3><p className={css['sectionHint']}>最近 30 条 · 自动提炼的会话记忆，随 RAG 检索参与每轮注入。</p></div><span className={css['badge']}>{docs.length} 条</span></div>
             {recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => { const preview = (previews[doc.id] ?? '').trim(); return <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={preview !== '' ? preview : memoryTitle(doc)}>{preview !== '' ? preview : memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div> })}</div>}
           </section>
