@@ -44,6 +44,7 @@ function validateDeployTargets(value: unknown): string | undefined {
     const t = item as Record<string, unknown>
     if (t.transport !== 'ssh' && t.transport !== 'winrm') return 'deployTargets.transport 只能是 ssh 或 winrm'
     if (typeof t.alias !== 'string' || t.alias.trim() === '') return 'deployTargets.alias 必须是非空字符串'
+    if (t.remotePath !== undefined && typeof t.remotePath !== 'string') return 'deployTargets.remotePath 必须是字符串'
   }
   return undefined
 }
@@ -166,7 +167,13 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     repoUrl: typeof payload.repoUrl === 'string' ? payload.repoUrl.trim() : (existing?.repoUrl ?? ''),
     repoBranch: typeof payload.repoBranch === 'string' ? payload.repoBranch.trim() : (existing?.repoBranch ?? ''),
     siteUrl: typeof payload.siteUrl === 'string' ? payload.siteUrl.trim() : (existing?.siteUrl ?? ''),
-    deployTargets: Array.isArray(payload.deployTargets) ? payload.deployTargets as DeployTarget[] : (existing?.deployTargets ?? []),
+    deployTargets: Array.isArray(payload.deployTargets)
+      ? (payload.deployTargets as DeployTarget[]).map((target) => ({
+          transport: target.transport,
+          alias: target.alias,
+          ...(typeof target.remotePath === 'string' && target.remotePath.trim() !== '' ? { remotePath: target.remotePath.trim() } : {}),
+        }))
+      : (existing?.deployTargets ?? []),
     deployCommand: typeof payload.deployCommand === 'string' ? payload.deployCommand.trim() : existing?.deployCommand,
     lastCommitAt: existing?.lastCommitAt,
     createdAt: existing?.createdAt ?? now,

@@ -37,10 +37,12 @@ export function checkDeployable(entry: ProjectEntry): string | undefined {
 }
 
 /** 组装单台命令：ssh 走 POSIX shell（cd 后执行）；winrm 走 PowerShell（Set-Location 后执行）。 */
-export function buildRemoteCommand(entry: ProjectEntry, transport: 'ssh' | 'winrm'): string {
+export function buildRemoteCommand(entry: ProjectEntry, transport: 'ssh' | 'winrm', remotePath?: string): string {
   const command = (entry.deployCommand ?? '').trim()
-  if (transport === 'ssh') return 'cd ' + shellQuote(entry.path) + ' && ' + command
-  return 'Set-Location -LiteralPath ' + psQuote(entry.path) + '; ' + command
+  // 执行目录优先用该台目标自己的 remotePath（远程机上的路径），缺省回退项目本机路径。
+  const workDir = remotePath !== undefined && remotePath.trim() !== '' ? remotePath.trim() : entry.path
+  if (transport === 'ssh') return 'cd ' + shellQuote(workDir) + ' && ' + command
+  return 'Set-Location -LiteralPath ' + psQuote(workDir) + '; ' + command
 }
 
 /** 引擎的最小形状（便于测试注入桩件，不耦合完整引擎类型）。 */
@@ -74,7 +76,7 @@ export async function runProjectDeploy(entry: ProjectEntry, engines: DeployEngin
       results.push({ transport: target.transport, alias: target.alias, ok: false, error: '该通道引擎不可用（remote 未启用或类型不符）。' })
       continue
     }
-    const command = buildRemoteCommand(entry, target.transport)
+    const command = buildRemoteCommand(entry, target.transport, target.remotePath)
     try {
       const outcome = await engine.exec(target.alias, command, DEPLOY_TIMEOUT_MS)
       const code = outcome.code ?? 0

@@ -37,6 +37,8 @@ export interface DeployTarget {
   transport: 'ssh' | 'winrm'
   /** 远程运维主机别名。 */
   alias: string
+  /** 该台目标上的项目路径（可选；缺省回退项目本机 path，适用于路径一致或命令自理目录的场景）。 */
+  remotePath?: string
 }
 
 /** 项目登记条目。 */

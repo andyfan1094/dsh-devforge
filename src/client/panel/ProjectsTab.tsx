@@ -49,7 +49,7 @@ interface ProjectFormState {
   repoUrl: string
   repoBranch: string
   siteUrl: string
-  deployTargets: Array<{ transport: 'ssh' | 'winrm'; alias: string }>
+  deployTargets: Array<{ transport: 'ssh' | 'winrm'; alias: string; remotePath: string }>
   deployCommand: string
 }
 
@@ -69,7 +69,7 @@ function formFromEntry(entry: ProjectEntry): ProjectFormState {
     repoUrl: entry.repoUrl,
     repoBranch: entry.repoBranch,
     siteUrl: entry.siteUrl,
-    deployTargets: entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias })),
+    deployTargets: entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias, remotePath: target.remotePath ?? '' })),
     deployCommand: entry.deployCommand ?? '',
   }
 }
@@ -342,7 +342,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
     })
   }
 
-  /** 勾选/取消一台发布服务器。 */
+  /** 勾选/取消一台发布服务器（勾选时初始化空的远程路径）。 */
   const toggleHost = (transport: 'ssh' | 'winrm', alias: string): void => {
     setEditing((current) => {
       if (current === null) return current
@@ -351,7 +351,20 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
         ...current,
         deployTargets: exists
           ? current.deployTargets.filter((target) => !(target.transport === transport && target.alias === alias))
-          : [...current.deployTargets, { transport, alias }],
+          : [...current.deployTargets, { transport, alias, remotePath: '' }],
+      }
+    })
+  }
+
+  /** 修改某台发布目标的远程路径。 */
+  const updateHostRemotePath = (transport: 'ssh' | 'winrm', alias: string, remotePath: string): void => {
+    setEditing((current) => {
+      if (current === null) return current
+      return {
+        ...current,
+        deployTargets: current.deployTargets.map((target) => (
+          target.transport === transport && target.alias === alias ? { ...target, remotePath } : target
+        )),
       }
     })
   }
@@ -655,21 +668,32 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
             />
           </div>
           <div className={css['field']}>
-            <span className={css['fieldLabel']}>发布对应的服务器（远程运维主机）</span>
+            <span className={css['fieldLabel']}>发布对应的服务器（远程运维主机；勾选后可填该台上的项目路径，缺省用本机路径）</span>
             {hosts.length === 0 && <div className={css['resourceMeta']}>远程运维还没有配置主机，可稍后在「远程运维」页签添加。</div>}
             <div className={css['checkRow']}>
               {hosts.map((host) => {
-                const checked = editing.deployTargets.some((target) => target.transport === host.transport && target.alias === host.alias)
+                const picked = editing.deployTargets.find((target) => target.transport === host.transport && target.alias === host.alias)
                 return (
-                  <label key={host.transport + ':' + host.alias} className={css['checkRow']}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => { toggleHost(host.transport, host.alias) }}
-                    />
-                    <span className={css['badge']} data-kind={host.transport}>{host.transport.toUpperCase()}</span>
-                    {' '}{host.alias}
-                  </label>
+                  <div key={host.transport + ':' + host.alias} className={css['checkRow']}>
+                    <label className={css['checkRow']}>
+                      <input
+                        type="checkbox"
+                        checked={picked !== undefined}
+                        onChange={() => { toggleHost(host.transport, host.alias) }}
+                      />
+                      <span className={css['badge']} data-kind={host.transport}>{host.transport.toUpperCase()}</span>
+                      {' '}{host.alias}
+                    </label>
+                    {picked !== undefined && (
+                      <input
+                        className={css['input']}
+                        value={picked.remotePath}
+                        placeholder="该台上的项目路径（可选，如 /srv/app）"
+                        {...inputProps}
+                        onChange={(event) => { updateHostRemotePath(host.transport, host.alias, event.target.value) }}
+                      />
+                    )}
+                  </div>
                 )
               })}
             </div>

@@ -79,3 +79,16 @@ test('全部成功时整体 ok；通道引擎缺失时该台失败并给出原�
   assert.equal(none.ok, false)
   assert.ok((none.error ?? '').includes('remote.enabled'))
 })
+
+test('remotePath：目标自有路径优先于项目本机路径，缺省回退', () => {
+  const entry = mkEntry({
+    path: '/local/repo',
+    deployCommand: 'make deploy',
+    deployTargets: [
+      { transport: 'ssh', alias: 'prod', remotePath: '/srv/app' },
+      { transport: 'ssh', alias: 'dev' },
+    ],
+  })
+  assert.equal(buildRemoteCommand(entry, 'ssh', '/srv/app'), "cd '/srv/app' && make deploy")
+  assert.equal(buildRemoteCommand(entry, 'ssh', undefined), "cd '/local/repo' && make deploy")
+})
