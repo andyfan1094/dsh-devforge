@@ -22,7 +22,7 @@ const RESTART_ICON = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none
 /** 按钮文案（与克隆来源设置按钮保持同等长度，紧凑不拥挤）。 */
 const ENTRY_LABEL = '重启'
 /** 悬停提示（含完整语义，与原按钮 title 区分）。 */
-const ENTRY_TOOLTIP = '重启 DSH：重启本机 DSH Web 服务'
+const ENTRY_TOOLTIP = '重启 DSH Web 服务'
 
 /** 定位侧边栏根元素，与 sidebar-entry-core 同一定位契约（logoRow 归属者优先）。 */
 function sidebarRoot(): HTMLElement | undefined {
