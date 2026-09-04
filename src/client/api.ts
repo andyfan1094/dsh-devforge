@@ -17,7 +17,7 @@ import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol
 import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
-import { PROJECTS_API, type ProjectDetectResult, type ProjectEntry } from '../projects/protocol.ts'
+import { PROJECTS_API, type AutomatchSuggestion, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
@@ -204,6 +204,43 @@ export class DevforgeApi {
       await fetch(PROJECTS_API.projectDetect + '?path=' + encodeURIComponent(path)),
     )
     return data.detect
+  }
+
+  /** 项目面板：扫描本机目录发现 Git 项目（roots 缺省用服务端默认根）。 */
+  async scanProjects(roots?: string[]): Promise<ProjectScanResult> {
+    const query = roots !== undefined && roots.length > 0 ? '?roots=' + encodeURIComponent(roots.join(',')) : ''
+    const data = await readJson<{ scan: ProjectScanResult }>(await fetch(PROJECTS_API.projectScan + query))
+    return data.scan
+  }
+
+  /** 项目面板：刷新全部项目的仓库元数据（分支/远端），返回更新后清单。 */
+  async refreshProjects(): Promise<ProjectEntry[]> {
+    const data = await readJson<{ projects: ProjectEntry[] }>(await fetch(PROJECTS_API.projectRefresh, { method: 'POST' }))
+    return data.projects
+  }
+
+  /** 项目面板：从 package.json / README 提取描述建议。 */
+  async describeProject(path: string): Promise<ProjectDescribeResult> {
+    const data = await readJson<{ describe: ProjectDescribeResult }>(
+      await fetch(PROJECTS_API.projectDescribe + '?path=' + encodeURIComponent(path)),
+    )
+    return data.describe
+  }
+
+  /** 项目面板：重定位本机路径（跨机恢复后更新 machinePaths 映射）。 */
+  async relocateProject(id: string, path: string): Promise<ProjectRelocateResult> {
+    const data = await readJson<{ result: ProjectRelocateResult }>(await fetch(PROJECTS_API.projectRelocate, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, path }),
+    }))
+    return data.result
+  }
+
+  /** 项目面板：为路径失效的登记项目自动匹配本机候选目录。 */
+  async automatchProjects(): Promise<AutomatchSuggestion[]> {
+    const data = await readJson<{ suggestions: AutomatchSuggestion[] }>(await fetch(PROJECTS_API.projectAutomatch))
+    return data.suggestions
   }
 
   /** 请求本机 DSH Web 重启；成功后当前连接会短暂断开。 */

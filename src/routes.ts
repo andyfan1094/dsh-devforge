@@ -13,7 +13,8 @@ import type { HarnessUpdateCheckItem } from './harness-update.ts'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
-import { detectProjectGit, listProjects, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
+import { detectProjectGit, listProjects, refreshAllProjectGitMeta, relocateProject, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
+import { automatchProjects, describeProject, scanForProjects } from './projects/scan.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 
@@ -290,6 +291,73 @@ export function makeRoutes(
         const url = new URL(req.url ?? '/', 'http://localhost')
         const result = detectProjectGit(url.searchParams.get('path') ?? '')
         writeJson(res, 200, { ok: true, detect: result })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/scan',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        // roots 可选：逗号分隔的本机绝对路径；缺省用默认扫描根。
+        const rootsParam = url.searchParams.get('roots') ?? ''
+        const roots = rootsParam.split(',').map((item) => item.trim()).filter((item) => item !== '')
+        try {
+          writeJson(res, 200, { ok: true, scan: scanForProjects(roots) })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/refresh',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          writeJson(res, 200, { ok: true, projects: refreshAllProjectGitMeta() })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/describe',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        writeJson(res, 200, { ok: true, describe: describeProject(url.searchParams.get('path') ?? '') })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/relocate',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        const body = await readJsonBody(req)
+        if (!body) { writeJson(res, 400, { ok: false, error: 'invalid JSON body' }); return }
+        const id = typeof body.id === 'string' ? body.id : ''
+        const path = typeof body.path === 'string' ? body.path : ''
+        if (id === '' || path === '') { writeJson(res, 400, { ok: false, error: 'id 与 path 必填' }); return }
+        writeJson(res, 200, { ok: true, result: relocateProject(id, path) })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/projects/automatch',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          writeJson(res, 200, { ok: true, suggestions: automatchProjects() })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
   ]
