@@ -59,13 +59,16 @@ function SkinSwatch(props: { tokens: Record<string, string> }): JSX.Element {
 
 /** 主组件。 */
 export function SkinTab({ skin }: SkinTabProps): JSX.Element {
-  const [state, setState] = useState<SkinState>(() => skin.getState())
+  // 初始即取快照拷贝：runtime 内部 state 是可变对象，组件须持有自己的不可变快照，
+  // 后续订阅回调（bump）也推快照，保证 React 以引用变化感知每次状态变更。
+  const [state, setState] = useState<SkinState>(() => ({ ...skin.getState() }))
   const [wallpaperError, setWallpaperError] = useState<string>('')
   const [urlDraft, setUrlDraft] = useState<string>('')
   const [customAccent, setCustomAccent] = useState<string>(() => skin.getState().accent ?? '#2f6fed')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
+    // runtime 每次变更都推全新快照（见 skin-runtime 的 bump），setState 引用必变，重渲染必然发生。
     const off = skin.subscribe(setState)
     return off
   }, [skin])

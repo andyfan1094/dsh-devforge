@@ -143,7 +143,7 @@ export interface SkinRuntimeApi {
   setWallpaperFit(fit: WallpaperFit): void
   /** 一键恢复（皮肤/强调色/壁纸全部清除）。 */
   resetAll(): void
-  /** 订阅状态变更。返回取消订阅函数。 */
+  /** 订阅状态变更；每次回调收到全新的快照对象（React 友好）。返回取消订阅函数。 */
   subscribe(listener: Listener): () => void
   /** 释放所有注册与监听。 */
   dispose(): void
@@ -260,7 +260,11 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function bump(): void {
     syncFromTheme()
     state.revision += 1
-    for (const l of listeners) l(state)
+    // 关键：推给订阅者的是浅拷贝快照，绝不是可变的 state 本体。
+    // React 的 useState setter 对 Object.is 相同的引用会直接跳过重渲染，
+    // 若推送 state 本体，SkinTab 的选中高亮会冻结在上一次渲染的皮肤上。
+    const snapshot = { ...state }
+    for (const l of listeners) l(snapshot)
   }
 
   function subscribe(listener: Listener): () => void {

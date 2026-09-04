@@ -14,6 +14,7 @@ import { en, zh, zhDict } from '../src/client/locales.ts'
 import { ACCENT_PRESETS, adjustHex, deriveAccentOverrides, hexToRgb, mixHex, normalizeHex, pickTextOn, relativeLuminance, rgbaStr } from '../src/client/theme/accent.ts'
 import { REQUIRED_TOKEN_KEYS, SKINS, findSkin } from '../src/client/theme/skins.ts'
 import { createSkinRuntime } from '../src/client/theme/skin-runtime.ts'
+import type { SkinState } from '../src/client/theme/skin-runtime.ts'
 
 test('normalizeHex 接受 #rgb / #rrggbb，非法输入返回 null', () => {
   assert.equal(normalizeHex('#abc'), '#aabbcc')
@@ -192,6 +193,52 @@ test('换肤运行时：外部设置刷新与 client 重挂载不会清掉所选
     assert.equal(registrations.size, SKINS.length, '旧 runtime 释放不能卸掉新 runtime 仍使用的主题')
     second.dispose()
     assert.equal(registrations.size, 0, '最后一个 runtime 释放后才卸载主题')
+  } finally {
+    if (hadWindow) Object.defineProperty(root, 'window', { configurable: true, value: previousWindow })
+    else Reflect.deleteProperty(root, 'window')
+  }
+})
+
+test('换肤运行时：订阅者每次收到全新快照对象（引用复用会让 React setState 跳过重渲染）', () => {
+  const root = globalThis as unknown as { window?: unknown }
+  const hadWindow = Object.prototype.hasOwnProperty.call(root, 'window')
+  const previousWindow = root.window
+  const values = new Map<string, string>()
+  Object.defineProperty(root, 'window', {
+    configurable: true,
+    value: { localStorage: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } } },
+  })
+  const themeListeners = new Set<() => void>()
+  let activeId = 'system'
+  const emitThemeChange = (): void => { for (const listener of [...themeListeners]) listener() }
+  const theme = {
+    register: () => () => {},
+    getTheme: () => ({ active: { id: activeId, colorScheme: 'light', tokens: {} } }),
+    setTheme: (id: string) => { activeId = id; emitThemeChange() },
+    overrideTokens: () => () => {},
+  }
+  const ctx = { theme, on: (_event: string, listener: () => void) => { themeListeners.add(listener); return () => { themeListeners.delete(listener) } } }
+  try {
+    const runtime = createSkinRuntime(ctx as never)
+    const snapshots: SkinState[] = []
+    const off = runtime.subscribe((s) => snapshots.push(s))
+    assert.equal(runtime.applySkin(SKINS[1]!.id), true)
+    assert.equal(runtime.setAccent('#112233'), true)
+    off()
+    runtime.dispose()
+    // 换肤（setTheme 同步 theme/change + applySkin 收尾）与强调色至少各推送一次
+    assert.ok(snapshots.length >= 2, '至少推送 2 次状态变更，实际 ' + snapshots.length)
+    for (let i = 1; i < snapshots.length; i++) {
+      assert.notEqual(snapshots[i], snapshots[i - 1]!, '第 ' + (i + 1) + ' 次推送复用了旧引用——React useState 对相同引用会跳过重渲染，选中高亮将冻结')
+    }
+    // 快照内容与真实状态一致
+    const last = snapshots[snapshots.length - 1]!
+    assert.equal(last.skinId, SKINS[1]!.id)
+    assert.equal(last.accent, '#112233')
+    // 快照必须与 runtime 内部可变 state 解耦：后续变更不得篡改已推送的快照
+    assert.equal(runtime.applySkin(SKINS[2]!.id), true)
+    assert.equal(last.skinId, SKINS[1]!.id, '已推送的快照不可被后续状态变更改写')
+    runtime.dispose()
   } finally {
     if (hadWindow) Object.defineProperty(root, 'window', { configurable: true, value: previousWindow })
     else Reflect.deleteProperty(root, 'window')
