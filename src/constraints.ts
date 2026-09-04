@@ -173,6 +173,54 @@ export function renderConstraintText(level: ConstraintLevel, enabled: boolean): 
   return level === 'full' ? CONSTRAINT_FULL_TEXT : CONSTRAINT_SUMMARY_TEXT
 }
 
+// ------------------------------------------------ 项目卡与产出公约注入（0.19.0）
+
+/** 注入数据源（由 index.ts 组装，均带缓存；未提供时对应块不注入）。 */
+export interface InjectionDataSources {
+  /** 登记项目清单（多端语义已在 store 层处理）。 */
+  getProjects?: () => import('./projects/protocol.ts').ProjectEntry[]
+  /** 产出公约摘要文本（enabled=false 返回空串）。 */
+  getConventionText?: () => string
+}
+
+/**
+ * 按会话 cwd 匹配登记项目：cwd 等于项目本机路径或其子路径即命中；
+ * machinePaths 全部映射参与匹配（跨机后旧映射同样能命中）。
+ * 返回命中的第一个项目（无命中返回 undefined）。
+ */
+export function matchProjectByCwd(cwd: string | undefined, entries: readonly import('./projects/protocol.ts').ProjectEntry[]): import('./projects/protocol.ts').ProjectEntry | undefined {
+  const target = normalizePath(cwd ?? '')
+  if (target === undefined) return undefined
+  for (const entry of entries) {
+    const roots = [entry.path, ...Object.values(entry.machinePaths ?? {})]
+    for (const raw of roots) {
+      const base = normalizePath(raw ?? '')
+      if (base === undefined) continue
+      if (target === base || target.startsWith(base + '/')) return entry
+    }
+  }
+  return undefined
+}
+
+/** 渲染当前项目卡（未登记描述等字段留空省略）。 */
+export function renderProjectCard(entry: import('./projects/protocol.ts').ProjectEntry): string {
+  const lines = [
+    '【当前项目（dsh-devforge 注入）】',
+    '- 项目：' + entry.name,
+  ]
+  if (entry.description.trim() !== '') lines.push('- 描述：' + entry.description)
+  if (entry.repoUrl !== '') {
+    lines.push('- 仓库：' + entry.repoKind + ' ' + entry.repoUrl + (entry.repoBranch !== '' ? ' · ' + entry.repoBranch : ''))
+  }
+  if (entry.siteUrl.trim() !== '') lines.push('- 线上地址：' + entry.siteUrl)
+  if (entry.deployTargets.length > 0) {
+    lines.push('- 发布服务器：' + entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、'))
+  }
+  lines.push('- 本机路径：' + entry.path)
+  if (entry.pathExists === false) lines.push('- ⚠️ 本机路径失效：可能从其他电脑同步而来，请向用户确认本机实际路径（可重定位）。')
+  return lines.join('\n')
+}
+
 /** 节名（agent 作用域内唯一；同名重复注册会抛错，卸旧后再挂新）。 */
 export const CONSTRAINT_SECTION_NAME = 'plugin:dsh-devforge:constraints'
 
@@ -208,10 +256,12 @@ export class ConstraintInjectionService {
   private readonly states = new Map<string, AgentState>()
   private readonly disposers: Array<() => void> = []
   private getConfig: () => ConstraintsConfig = () => ({ enabled: true, fullTextPaths: CONSTRAINTS_DEFAULT_PATHS })
+  private sources: InjectionDataSources = {}
 
   /** 启动：挂 agent/created、采纳存量根代理、监听 agent/disposed 清理。 */
-  start(ctx: unknown, getConfig: () => ConstraintsConfig): void {
+  start(ctx: unknown, getConfig: () => ConstraintsConfig, sources: InjectionDataSources = {}): void {
     this.getConfig = getConfig
+    this.sources = sources
     const holder = ctx as { on?: (event: string, listener: (payload: unknown) => void) => unknown; agents?: { roots?: () => unknown } } | null
     if (holder === null || typeof holder !== 'object') return
     try {
@@ -256,7 +306,7 @@ export class ConstraintInjectionService {
         const remove = prompt.section({
           name: CONSTRAINT_SECTION_NAME,
           order: CONSTRAINT_SECTION_ORDER,
-          text: () => renderConstraintText(state.level, this.getConfig().enabled),
+          text: () => this.composeAgentText(state, record),
         })
         if (typeof remove === 'function') state.removeSection = remove
       } catch { /* 节注册失败时该代理仅无注入，不影响其他代理 */ }
@@ -275,6 +325,23 @@ export class ConstraintInjectionService {
         if (typeof off === 'function') state.offEvent = off as () => void
       } catch { /* 事件订阅失败时仅失去第三层，一、二层不受影响 */ }
     }
+  }
+
+  /**
+   * 组装单代理注入文本（每次系统提示装配求值）：
+   * 约束（按级别）+ 产出公约摘要（启用时）+ 当前项目卡（cwd 命中登记项目时）。
+   * 数据源未提供或求值异常时安静降级为纯约束文本，绝不阻塞会话。
+   */
+  private composeAgentText(state: AgentState, record: { session?: unknown }): string {
+    const blocks: string[] = [renderConstraintText(state.level, this.getConfig().enabled)]
+    try {
+      const conventionText = this.sources.getConventionText?.() ?? ''
+      if (conventionText !== '') blocks.push(conventionText)
+      const cwd = resolveAgentCwd(record.session)
+      const project = matchProjectByCwd(cwd, this.sources.getProjects?.() ?? [])
+      if (project !== undefined) blocks.push(renderProjectCard(project))
+    } catch { /* 数据源异常时仅注入约束本体 */ }
+    return blocks.filter((block) => block !== '').join('\n\n')
   }
 
   /** 卸载全部节与监听，清空状态。 */

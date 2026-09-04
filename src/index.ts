@@ -76,6 +76,10 @@ import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
+import { devforgeProjectTool } from './projects/tools.ts'
+import { devforgeWorkspaceTool } from './workspace/tools.ts'
+import { getConvention, renderConventionSummary } from './workspace/convention.ts'
+import { listProjects } from './projects/store.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
@@ -577,7 +581,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory }),
     ...makeWorkflowRoutes(workflowEngine),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
@@ -640,9 +644,27 @@ export function apply(ctx: Context, config?: Config): void {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
     }
     // 项目约束三层注入：常驻摘要保底；cwd 命中开发仓库或出现开发动作时升级全文（0.11.0）。
+    // 0.19.0 起同一节追加产出公约摘要与当前项目卡（数据源带 5s TTL 缓存，避免每次装配读库）。
     if (value.constraints?.enabled) {
       disposeConstraints = ctx.effect(() => {
         const service = new ConstraintInjectionService()
+        // 项目清单与公约摘要的 5 秒缓存：系统提示装配频繁，库读 KB 级但无需每次进行。
+        let projectsCache: { at: number; value: ReturnType<typeof listProjects> } | undefined
+        let conventionCache: { at: number; value: string } | undefined
+        const sources = {
+          getProjects: () => {
+            if (projectsCache === undefined || Date.now() - projectsCache.at > 5000) {
+              projectsCache = { at: Date.now(), value: listProjects() }
+            }
+            return projectsCache.value
+          },
+          getConventionText: () => {
+            if (conventionCache === undefined || Date.now() - conventionCache.at > 5000) {
+              conventionCache = { at: Date.now(), value: renderConventionSummary(getConvention()) }
+            }
+            return conventionCache.value
+          },
+        }
         safeActivate(ctx, '项目约束注入', () => service.start(ctx, () => {
           // 每次装配动态求值：配置热更新即时生效；局部变量保证可选链收窄。
           const constraints = resolve().constraints
@@ -650,7 +672,7 @@ export function apply(ctx: Context, config?: Config): void {
             enabled: constraints?.enabled ?? true,
             fullTextPaths: constraints?.fullTextPaths?.length ? constraints.fullTextPaths : CONSTRAINTS_DEFAULT_PATHS,
           }
-        }))
+        }, sources))
         return () => service.dispose()
       }, 'dsh-devforge: constraints')
     }

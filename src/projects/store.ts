@@ -61,6 +61,7 @@ export function validateProjectPayload(payload: unknown): string | undefined {
   if (p.repoUrl !== undefined && typeof p.repoUrl !== 'string') return 'repoUrl 必须是字符串'
   if (p.repoBranch !== undefined && typeof p.repoBranch !== 'string') return 'repoBranch 必须是字符串'
   if (p.siteUrl !== undefined && typeof p.siteUrl !== 'string') return 'siteUrl 必须是字符串'
+  if (p.deployCommand !== undefined && typeof p.deployCommand !== 'string') return 'deployCommand 必须是字符串'
   return validateDeployTargets(p.deployTargets)
 }
 
@@ -119,6 +120,8 @@ export function listProjects(): ProjectEntry[] {
       repoBranch: typeof parsed.repoBranch === 'string' ? parsed.repoBranch : '',
       siteUrl: typeof parsed.siteUrl === 'string' ? parsed.siteUrl : '',
       deployTargets: Array.isArray(parsed.deployTargets) ? parsed.deployTargets as DeployTarget[] : [],
+      deployCommand: typeof parsed.deployCommand === 'string' ? parsed.deployCommand : undefined,
+      lastCommitAt: typeof parsed.lastCommitAt === 'number' ? parsed.lastCommitAt : undefined,
       createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0,
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
       pathExists: localPath !== '' ? existsSync(localPath) : undefined,
@@ -151,6 +154,8 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     repoBranch: typeof payload.repoBranch === 'string' ? payload.repoBranch.trim() : (existing?.repoBranch ?? ''),
     siteUrl: typeof payload.siteUrl === 'string' ? payload.siteUrl.trim() : (existing?.siteUrl ?? ''),
     deployTargets: Array.isArray(payload.deployTargets) ? payload.deployTargets as DeployTarget[] : (existing?.deployTargets ?? []),
+    deployCommand: typeof payload.deployCommand === 'string' ? payload.deployCommand.trim() : existing?.deployCommand,
+    lastCommitAt: existing?.lastCommitAt,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }
@@ -226,6 +231,7 @@ export function refreshAllProjectGitMeta(): ProjectEntry[] {
       repoKind: origin !== undefined ? origin.kind : project.repoKind,
       repoUrl: origin !== undefined ? origin.url : project.repoUrl,
       repoBranch: detect.branch ?? project.repoBranch,
+      lastCommitAt: detect.lastCommitAt ?? project.lastCommitAt,
       machinePaths: { ...project.machinePaths, [machineId]: project.path },
       updatedAt: Date.now(),
     }
@@ -307,6 +313,26 @@ function readBranch(gitDir: string): string | undefined {
 }
 
 /**
+ * 从 .git/logs/HEAD 末行解析最近一次提交时间（毫秒）。
+ * reflog 行格式：<old-sha> <new-sha> <ref> <unix-ts> <tz>\t<action>；取第 4 个字段。
+ * 文件缺失（shallow/无 reflog）或解析失败返回 undefined，不影响检测主流程。
+ */
+function readLastCommitAt(gitDir: string): number | undefined {
+  try {
+    const logPath = join(gitDir, 'logs', 'HEAD')
+    if (!existsSync(logPath)) return undefined
+    const text = readFileSync(logPath, 'utf8').trim()
+    if (text === '') return undefined
+    const lastLine = text.split(/\r?\n/).pop() ?? ''
+    const parts = lastLine.split(/\s+/)
+    const seconds = Number(parts[3])
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 检测项目路径：存在性、Git 仓库、远端与分支。
  * 只读 .git 元数据；任何读取失败都收敛为结构化结果，绝不抛出。
  */
@@ -333,6 +359,7 @@ export function detectProjectGit(inputPath: string): ProjectDetectResult {
       result.error = '读取 .git/config 失败：' + toMessage(error)
     }
     result.branch = readBranch(gitDir)
+    result.lastCommitAt = readLastCommitAt(gitDir)
     return result
   } catch (error) {
     return { ...base, error: '检测失败：' + toMessage(error) }

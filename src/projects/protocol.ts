@@ -63,6 +63,10 @@ export interface ProjectEntry {
   siteUrl: string
   /** 发布对应的服务器列表。 */
   deployTargets: DeployTarget[]
+  /** 发布命令（可选；在项目目录内执行，如 pnpm run deploy，经远程运维通道执行）。 */
+  deployCommand?: string
+  /** 最近一次提交时间（毫秒；分支刷新时从 .git/logs/HEAD 末行解析，缺省未知）。 */
+  lastCommitAt?: number
   /** 创建时间（毫秒）。 */
   createdAt: number
   /** 更新时间（毫秒）。 */
@@ -151,6 +155,8 @@ export interface ProjectDetectResult {
   branch?: string
   /** 全部远端（origin 排最前）。 */
   remotes: DetectedRemote[]
+  /** 最近一次提交时间（毫秒；从 .git/logs/HEAD 末行解析，缺省未知）。 */
+  lastCommitAt?: number
   /** 检测失败原因（路径不存在等）。 */
   error?: string
 }

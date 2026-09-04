@@ -18,6 +18,7 @@ import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, t
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
+import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
@@ -241,6 +242,22 @@ export class DevforgeApi {
   async automatchProjects(): Promise<AutomatchSuggestion[]> {
     const data = await readJson<{ suggestions: AutomatchSuggestion[] }>(await fetch(PROJECTS_API.projectAutomatch))
     return data.suggestions
+  }
+
+  /** 产出公约：读取当前配置。 */
+  async getConvention(): Promise<WorkspaceConvention> {
+    const data = await readJson<{ convention: WorkspaceConvention }>(await fetch(WORKSPACE_API.convention))
+    return data.convention
+  }
+
+  /** 产出公约：保存配置（目录分类学 + 开关）。 */
+  async saveConvention(convention: WorkspaceConvention): Promise<WorkspaceConvention> {
+    const data = await readJson<{ convention: WorkspaceConvention }>(await fetch(WORKSPACE_API.convention, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(convention),
+    }))
+    return data.convention
   }
 
   /** 请求本机 DSH Web 重启；成功后当前连接会短暂断开。 */

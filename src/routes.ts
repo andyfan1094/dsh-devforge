@@ -15,6 +15,7 @@ import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
 import { detectProjectGit, listProjects, refreshAllProjectGitMeta, relocateProject, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
 import { automatchProjects, describeProject, scanForProjects } from './projects/scan.ts'
+import { WORKSPACE_API, getConvention, saveConvention, validateConvention } from './workspace/convention.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 
@@ -358,6 +359,23 @@ export function makeRoutes(
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }
+      },
+    },
+    {
+      kind: 'exact',
+      path: WORKSPACE_API.convention,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method === 'GET') {
+          writeJson(res, 200, { ok: true, convention: getConvention() })
+          return
+        }
+        if (req.method !== 'PUT') { writeJson(res, 405, { ok: false, error: 'GET/PUT only' }); return }
+        const body = await readJsonBody(req)
+        if (!body) { writeJson(res, 400, { ok: false, error: 'invalid JSON body' }); return }
+        const invalid = validateConvention(body)
+        if (invalid !== undefined) { writeJson(res, 400, { ok: false, error: invalid }); return }
+        writeJson(res, 200, { ok: true, convention: saveConvention(body as never) })
       },
     },
   ]

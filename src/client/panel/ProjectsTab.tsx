@@ -12,6 +12,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { RemoteHostSummary } from '../../protocol.ts'
 import type { AutomatchSuggestion, ProjectDetectResult, ProjectEntry, ProjectScanResult, RepoKind, ScannedProject } from '../../projects/protocol.ts'
+import type { ConventionDir, WorkspaceConvention } from '../../workspace/convention.ts'
+import { DEFAULT_CONVENTION } from '../../workspace/convention.ts'
 import css from './panel.module.css'
 
 /** 仓库类型的中文展示与徽标配色。 */
@@ -27,6 +29,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** 最近提交时间的紧凑展示（今天/昨天/N 天前/具体日期）。 */
+function relativeCommitTime(timestamp: number | undefined): string {
+  if (timestamp === undefined || timestamp <= 0) return '未知'
+  const days = Math.floor((Date.now() - timestamp) / 86_400_000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return days + ' 天前'
+  return new Date(timestamp).toISOString().slice(0, 10)
+}
+
 /** 项目表单的可编辑字段集合。 */
 interface ProjectFormState {
   id: string
@@ -38,11 +50,12 @@ interface ProjectFormState {
   repoBranch: string
   siteUrl: string
   deployTargets: Array<{ transport: 'ssh' | 'winrm'; alias: string }>
+  deployCommand: string
 }
 
 /** 空表单。 */
 function emptyForm(): ProjectFormState {
-  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [] }
+  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [], deployCommand: '' }
 }
 
 /** 由既有条目构造表单。 */
@@ -57,6 +70,7 @@ function formFromEntry(entry: ProjectEntry): ProjectFormState {
     repoBranch: entry.repoBranch,
     siteUrl: entry.siteUrl,
     deployTargets: entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias })),
+    deployCommand: entry.deployCommand ?? '',
   }
 }
 
@@ -83,6 +97,9 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** 失效项目的自动匹配建议（id → 建议路径）。 */
   const [suggestions, setSuggestions] = useState<Map<string, AutomatchSuggestion>>(new Map())
+  /** 产出公约配置（null=未加载）；conventionOpen=配置区展开。 */
+  const [convention, setConvention] = useState<WorkspaceConvention | null>(null)
+  const [conventionOpen, setConventionOpen] = useState(false)
   /** 挂载后是否已完成过一次静默分支刷新（防重复写库）。 */
   const refreshedOnce = useRef(false)
 
@@ -213,6 +230,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       repoBranch: editing.repoBranch,
       siteUrl: editing.siteUrl,
       deployTargets: editing.deployTargets,
+      deployCommand: editing.deployCommand.trim() === '' ? undefined : editing.deployCommand.trim(),
     })
     setEditing(null)
     setNotice('项目已保存。')
@@ -286,6 +304,24 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
     })
   }
 
+  /** 打开产出公约配置区（首次懒加载当前配置）。 */
+  const openConvention = (): void => {
+    setConventionOpen(true)
+    if (convention === null) {
+      void run(async () => { setConvention(await api.getConvention()) })
+    }
+  }
+
+  /** 保存公约（注入 5 秒内随下次系统提示装配生效）。 */
+  const saveConventionConfig = (): void => {
+    if (convention === null) return
+    void run(async () => {
+      const saved = await api.saveConvention(convention)
+      setConvention(saved)
+      setNotice('产出公约已保存：新装配的系统提示将携带最新公约。')
+    })
+  }
+
   /** 勾选/取消一台发布服务器。 */
   const toggleHost = (transport: 'ssh' | 'winrm', alias: string): void => {
     setEditing((current) => {
@@ -322,6 +358,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
           <span className={css['sectionHint']}>本机项目登记（路径 · 描述 · 仓库 · 发布服务器）</span>
           <span className={css['toolbarSpacer']} />
           <button type="button" className={css['ghostButton']} onClick={() => { void refresh() }}>刷新</button>
+          <button type="button" className={css['ghostButton']} disabled={busy} onClick={openConvention}>产出公约</button>
           <button type="button" className={css['ghostButton']} disabled={busy} onClick={startScan}>
             {busy ? '处理中…' : '扫描登记'}
           </button>
@@ -352,6 +389,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     仓库：<span className={css['badge']} data-kind={entry.repoKind}>{REPO_KIND_LABEL[entry.repoKind]}</span>{' '}
                     {entry.repoUrl !== '' ? entry.repoUrl : '—'}
                     {entry.repoBranch !== '' && ' · ' + entry.repoBranch}
+                    {' · 最后提交：' + relativeCommitTime(entry.lastCommitAt)}
                   </span>
                   {entry.siteUrl.trim() !== '' && (
                     <span className={css['resourceMeta']}>
@@ -363,6 +401,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     {entry.deployTargets.length === 0
                       ? '—'
                       : entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、')}
+                    {entry.deployCommand !== undefined && entry.deployCommand !== '' && ' · 命令：' + entry.deployCommand}
                   </span>
                 </div>
                 <div className={css['inlineActions']}>
@@ -418,6 +457,70 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {editing === null && scan === null && conventionOpen && convention !== null && (
+        <div className={css['form']}>
+          <div className={css['toolbar']}>
+            <span className={css['sectionHint']}>产出公约：智能体文件分类学（每轮注入会话；projects 为一等类别不可删除）</span>
+            <span className={css['toolbarSpacer']} />
+            <label className={css['checkRow']}>
+              <input
+                type="checkbox"
+                checked={convention.enabled}
+                onChange={(event) => { setConvention({ ...convention, enabled: event.target.checked }) }}
+              />
+              启用注入
+            </label>
+          </div>
+          <div className={css['tableWrap']}>
+            <div className={css['resourceList']}>
+              {convention.dirs.map((dir, index) => (
+                <div key={dir.kind} className={css['resourceRow']}>
+                  <div className={css['resourceInfo']}>
+                    <span className={css['resourceMeta']}>
+                      <span className={css['badge']} data-kind={dir.kind === 'projects' ? 'cnb' : 'git'}>{dir.kind}</span>
+                      {' '}<strong>{dir.dirname}/</strong>（{dir.label}）{dir.purpose !== '' ? '：' + dir.purpose : ''}
+                    </span>
+                  </div>
+                  <div className={css['inlineActions']}>
+                    <button
+                      type="button"
+                      className={css['ghostButton']}
+                      disabled={dir.kind === 'projects'}
+                      onClick={() => { setConvention({ ...convention, dirs: convention.dirs.filter((_, i) => i !== index) }) }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className={css['inlineActions']}>
+            <button
+              type="button"
+              className={css['ghostButton']}
+              onClick={() => {
+                const kind = window.prompt('新类别键（英文，如 assets）：')
+                if (kind === null || kind.trim() === '') return
+                const dirname = window.prompt('目录名：', kind.trim())
+                if (dirname === null || dirname.trim() === '') return
+                const label = window.prompt('中文名：', kind.trim()) ?? kind.trim()
+                const next: ConventionDir = { kind: kind.trim(), dirname: dirname.trim(), label: label.trim(), purpose: '' }
+                setConvention({ ...convention, dirs: [...convention.dirs, next] })
+              }}
+            >
+              添加类别
+            </button>
+            <button type="button" className={css['ghostButton']} onClick={() => { setConvention({ ...DEFAULT_CONVENTION, dirs: [...DEFAULT_CONVENTION.dirs] }) }}>恢复默认</button>
+            <span className={css['toolbarSpacer']} />
+            <button type="button" className={css['ghostButton']} onClick={() => { setConventionOpen(false) }}>收起</button>
+            <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveConventionConfig() }}>
+              {busy ? '保存中…' : '保存公约'}
+            </button>
           </div>
         </div>
       )}
@@ -515,6 +618,17 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
               placeholder="https://modagentai.com"
               {...inputProps}
               onChange={(event) => { setEditing({ ...editing, siteUrl: event.target.value }) }}
+            />
+          </div>
+          <div className={css['field']}>
+            <label className={css['fieldLabel']} htmlFor="project-deploy-cmd">发布命令（可选；发布时在项目目录内经远程运维通道执行）</label>
+            <input
+              id="project-deploy-cmd"
+              className={css['input']}
+              value={editing.deployCommand}
+              placeholder="pnpm run deploy"
+              {...inputProps}
+              onChange={(event) => { setEditing({ ...editing, deployCommand: event.target.value }) }}
             />
           </div>
           <div className={css['field']}>
