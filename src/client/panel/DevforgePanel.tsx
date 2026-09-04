@@ -169,7 +169,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
         <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
-        <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>
+        {skin !== undefined && <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>}
         <span className={css['toolbarSpacer']} />
         <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云服务器购买 · 点击直达（新标签打开）">⚡ 雨云服务器购买</a>
       </div>
@@ -177,7 +177,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
       <div className={css['panelContent']}>
         {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
 
-        {tab === 'guide' && <GuideTab onNavigate={navigateFromGuide} />}
+        {tab === 'guide' && <GuideTab onNavigate={navigateFromGuide} skinAvailable={skin !== undefined} />}
 
         {tab === 'standards' && (
           <section className={css['tabBody']}>

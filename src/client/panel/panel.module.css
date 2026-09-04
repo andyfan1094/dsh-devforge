@@ -713,8 +713,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
   .sectionHeader .inlineActions .sectionHint { width: 100%; }
 }
 
-/* 使用指南：浏览型页面使用舒适留白，颜色/间距/圆角集中在本地 token，
-   不影响操作台其它页签；内容卡片通过渐进披露保持可扫读。 */
+/* 使用说明：沿用操作台表面、边框和间距，不引入独立宣传页视觉。 */
 .guideWorkspace {
   --guide-accent: var(--dsw-alias-state-business-primary, #2563eb);
   --guide-accent-soft: color-mix(in srgb, var(--guide-accent) 10%, transparent);
@@ -725,9 +724,8 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
   --guide-text: var(--dsw-alias-label-primary, #1f2329);
   --guide-muted: var(--dsw-alias-label-secondary, #667085);
   --guide-faint: var(--dsw-alias-label-tertiary, #98a2b3);
-  --guide-radius-card: var(--dv-radius-card, 10px);
-  --guide-radius-control: var(--dv-radius-control, 7px);
-  --guide-shadow: 0 8px 24px color-mix(in srgb, var(--guide-accent) 10%, transparent);
+  --guide-radius-card: var(--dv-radius-card, 8px);
+  --guide-radius-control: var(--dv-radius-control, 6px);
   display: flex;
   flex: 1;
   min-width: 0;
@@ -743,40 +741,37 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .guideHero {
   display: flex;
   min-width: 0;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 24px 26px;
-  background: linear-gradient(120deg, var(--guide-accent-soft), color-mix(in srgb, #7c3aed 8%, transparent) 55%, var(--guide-surface));
-  border: 1px solid color-mix(in srgb, var(--guide-accent) 22%, var(--guide-border));
-  border-radius: var(--guide-radius-card);
-  box-shadow: var(--guide-shadow);
+  padding: 8px 0 14px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--guide-border);
 }
 .guideHeroCopy { min-width: 0; max-width: 780px; }
-.guideKicker, .guideEyebrow { display: inline-flex; color: var(--guide-accent); font-size: 11px; font-weight: 700; letter-spacing: .06em; }
-.guideKicker { margin-bottom: 7px; text-transform: uppercase; }
-.guideTitle { margin: 0; color: var(--guide-text); font-size: clamp(23px, 3vw, 34px); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
-.guideLead { max-width: 700px; margin: 10px 0 0; color: var(--guide-muted); font-size: 14px; line-height: 1.75; }
-.guidePills { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 16px; color: var(--guide-muted); font-size: 11.5px; }
-.guidePills span { padding: 3px 9px; background: color-mix(in srgb, var(--guide-surface) 72%, transparent); border: 1px solid color-mix(in srgb, var(--guide-accent) 16%, var(--guide-border)); border-radius: 999px; }
+.guideKicker, .guideEyebrow { display: inline-flex; color: var(--guide-accent); font-size: 11px; font-weight: 700; letter-spacing: 0; }
+.guideKicker { margin-bottom: 5px; }
+.guideTitle { margin: 0; color: var(--guide-text); font-size: 24px; font-weight: 700; letter-spacing: 0; line-height: 1.25; }
+.guideLead { max-width: 700px; margin: 7px 0 0; color: var(--guide-muted); font-size: 13px; line-height: 1.65; }
 .guideHeroActions { display: flex; flex: none; align-items: center; gap: 8px; }
-.guideNav { position: sticky; top: 0; z-index: 2; display: flex; flex: none; gap: 4px; min-width: 0; padding: 4px; overflow-x: auto; background: color-mix(in srgb, var(--guide-surface) 92%, transparent); border: 1px solid var(--guide-border); border-radius: var(--guide-radius-control); backdrop-filter: blur(10px); }
-.guideNavButton { min-height: 30px; padding: 5px 13px; color: var(--guide-muted); background: transparent; border: 0; border-radius: var(--guide-radius-control); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; transition: background-color .16s ease, color .16s ease, box-shadow .16s ease; }
+.guideNav { position: sticky; top: 0; z-index: 2; display: flex; flex: none; gap: 2px; min-width: 0; padding: 0; overflow-x: auto; background: var(--guide-surface); border: 0; border-bottom: 1px solid var(--guide-border); border-radius: 0; }
+.guideNavButton { min-height: 34px; padding: 5px 12px; color: var(--guide-muted); background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; transition: background-color .16s ease, color .16s ease; }
 .guideNavButton:hover { color: var(--guide-text); background: var(--guide-surface-muted); }
 .guideNavButton:focus-visible, .featureAction:focus-visible, .guideHeroActions button:focus-visible, .guideActions button:focus-visible, .guideActions a:focus-visible { outline: 2px solid var(--guide-accent); outline-offset: 2px; }
-.guideNavButton[data-active] { color: var(--guide-accent); background: var(--guide-accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--guide-accent) 18%, transparent); font-weight: 700; }
+.guideNavButton[data-active] { color: var(--guide-accent); box-shadow: inset 0 -2px 0 var(--guide-accent); font-weight: 700; }
 .guideContent { display: flex; flex-direction: column; gap: 30px; min-width: 0; }
-.guideSection { display: flex; scroll-margin-top: 12px; flex-direction: column; gap: 16px; min-width: 0; }
+.guideSection { display: flex; scroll-margin-top: 52px; flex-direction: column; gap: 16px; min-width: 0; }
 .guideSectionHeader { display: flex; min-width: 0; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .guideSectionHeader > div { min-width: 0; }
 .guideSectionTitle { margin: 4px 0 3px; color: var(--guide-text); font-size: 20px; font-weight: 700; line-height: 1.3; }
 .guideSectionCopy { max-width: 760px; margin: 0; color: var(--guide-muted); line-height: 1.7; }
 .guideSteps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.guideStep, .providerCard, .featureCard, .recipeCard, .securityCard, .accountMiniCard { min-width: 0; background: var(--guide-surface); border: 1px solid var(--guide-border); border-radius: var(--guide-radius-card); }
+.guideStep, .providerCard, .recipeCard, .securityCard, .accountMiniCard { min-width: 0; background: var(--guide-surface); border: 1px solid var(--guide-border); border-radius: var(--guide-radius-card); }
 .guideStep { position: relative; display: flex; min-height: 142px; flex-direction: column; gap: 7px; padding: 16px; }
-.guideStep:hover, .providerCard:hover, .featureCard:hover, .recipeCard:hover, .securityCard:hover, .accountMiniCard:hover { border-color: color-mix(in srgb, var(--guide-accent) 32%, var(--guide-border)); box-shadow: 0 5px 16px color-mix(in srgb, var(--guide-accent) 8%, transparent); }
-.guideStepNumber { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; flex: none; color: var(--guide-accent); background: var(--guide-accent-soft); border-radius: 8px; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
-.guideStep strong, .providerCard h4, .featureCard h4, .recipeCard h4 { margin: 0; color: var(--guide-text); font-size: 14px; line-height: 1.35; }
+.guideStep:hover, .providerCard:hover, .recipeCard:hover, .securityCard:hover, .accountMiniCard:hover { border-color: var(--guide-border-strong); }
+.guideStepNumber { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; flex: none; color: var(--guide-accent); background: var(--guide-accent-soft); border-radius: 4px; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.guideStep strong, .providerCard h4, .recipeCard h4 { margin: 0; color: var(--guide-text); font-size: 14px; line-height: 1.35; }
 .guideStep p, .providerIntro, .providerNote, .featureSummary, .recipeCard p, .securityCard p, .accountMiniCard span { margin: 0; color: var(--guide-muted); line-height: 1.65; }
 .guideCallout { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; color: var(--guide-muted); background: var(--guide-surface-muted); border: 1px solid var(--guide-border); border-left: 3px solid var(--guide-accent); border-radius: var(--guide-radius-control); }
 .guideCallout strong { flex: none; color: var(--guide-text); }
@@ -799,12 +794,21 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .guideSearch { display: flex; width: min(310px, 100%); flex: none; }
 .guideSearch .input { min-height: 32px; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.featureGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.featureCard { display: flex; flex-direction: column; gap: 8px; padding: 15px; }
-.featureCard h4 { font-size: 15px; }
-.featureSummary { font-size: 12px; }
+.featureDirectory { min-width: 0; overflow: hidden; background: var(--guide-surface); border: 1px solid var(--guide-border); border-radius: var(--guide-radius-card); }
+.featureRow { border-bottom: 1px solid var(--guide-border); }
+.featureRow:last-child { border-bottom: 0; }
+.featureRowSummary { display: grid; grid-template-columns: 16px minmax(105px, 140px) minmax(140px, 210px) minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; padding: 10px 14px; cursor: pointer; list-style: none; }
+.featureRowSummary::-webkit-details-marker { display: none; }
+.featureRowSummary::before { content: '›'; color: var(--guide-faint); font-size: 18px; line-height: 1; transform-origin: center; transition: transform .16s ease; }
+.featureRow[open] .featureRowSummary::before { transform: rotate(90deg); }
+.featureRowSummary:hover { background: var(--guide-surface-muted); }
+.featureRowSummary:focus-visible { outline: 2px solid var(--guide-accent); outline-offset: -2px; }
+.featureRowSummary strong { min-width: 0; color: var(--guide-text); font-size: 13px; }
+.featureRowCategory { min-width: 0; color: var(--guide-faint); font-size: 11px; }
+.featureSummary { min-width: 0; font-size: 12px; }
+.featureRowDetail { display: flex; flex-direction: column; gap: 8px; padding: 2px 14px 12px 165px; }
 .featureList { gap: 6px; padding-left: 18px; font-size: 12px; }
-.featureAction { display: inline-flex; align-items: center; align-self: flex-start; gap: 7px; margin-top: auto; padding: 6px 0 1px; color: var(--guide-accent); background: transparent; border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
+.featureAction { display: inline-flex; align-items: center; align-self: flex-start; gap: 7px; padding: 6px 0 1px; color: var(--guide-accent); background: transparent; border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
 .featureAction:hover { color: var(--dsw-alias-button-info-hover, #1d4ed8); text-decoration: underline; }
 .recipeGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .recipeCard { display: flex; align-items: flex-start; gap: 12px; padding: 15px; }
@@ -817,26 +821,37 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .securityCard p { font-size: 12px; }
 @media (max-width: 1100px) {
   .guideSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .featureGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .securityGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 820px) {
-  .guideHero { align-items: flex-start; flex-direction: column; padding: 20px; }
+  .guideHero { align-items: flex-start; flex-direction: column; padding: 8px 0 14px; }
   .guideHeroActions { width: 100%; }
   .guideHeroActions .primaryButton { flex: 1; }
   .providerGrid, .accountMiniGrid, .recipeGrid { grid-template-columns: minmax(0, 1fr); }
   .guideSectionHeader { align-items: stretch; flex-direction: column; }
   .guideSearch { width: 100%; }
+  .featureRowSummary { grid-template-columns: 16px minmax(90px, 120px) minmax(120px, 180px) minmax(0, 1fr); }
+  .featureRowDetail { padding-left: 145px; }
+}
+@media (max-width: 620px) {
+  .panelHeader { flex-wrap: wrap; }
+  .panelHeader .segmented { margin-left: auto; }
 }
 @media (max-width: 560px) {
   .guideWorkspace { gap: 14px; padding: 0 0 22px; }
-  .guideTitle { font-size: 24px; }
+  .guideTitle { font-size: 22px; }
   .guideLead { font-size: 13px; }
-  .guideSteps, .featureGrid, .securityGrid { grid-template-columns: minmax(0, 1fr); }
+  .guideSteps, .securityGrid { grid-template-columns: minmax(0, 1fr); }
   .guideCallout { flex-direction: column; gap: 3px; }
   .guideActions .ghostButton { margin-left: 0; }
+  .featureRowSummary { grid-template-columns: 16px minmax(0, 1fr); gap: 2px 8px; }
+  .featureRowSummary::before { grid-column: 1; grid-row: 1 / 4; }
+  .featureRowCategory { grid-column: 2; grid-row: 1; }
+  .featureRowSummary strong { grid-column: 2; grid-row: 2; }
+  .featureRowSummary .featureSummary { grid-column: 2; grid-row: 3; }
+  .featureRowDetail { padding-left: 38px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .guideNavButton, .guideStep, .providerCard, .featureCard, .recipeCard, .securityCard, .accountMiniCard { transition: none; }
+  .guideNavButton, .featureRowSummary::before { transition: none; }
 }
 

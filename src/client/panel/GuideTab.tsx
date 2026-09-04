@@ -3,16 +3,18 @@
  * 页面只负责静态说明与页签跳转，不读取凭据、不复制后端规则；外部链接统一新标签打开。
  */
 import { useMemo, useState } from 'react'
-import type { JSX } from 'react'
+import type { JSX, UIEvent } from 'react'
 import css from './panel.module.css'
 
 /** 教程可直接跳转的操作台页签。 */
-export type GuideDestination = 'codeplan' | 'rag' | 'memory' | 'workflow' | 'standards' | 'browser' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
+export type GuideDestination = 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'standards' | 'browser' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 教程页属性。 */
 export interface GuideTabProps {
-  /** 点击「去配置」时切换到对应的操作台页签。 */
+  /** 点击操作按钮时切换到对应的操作台页签。 */
   onNavigate: (target: GuideDestination) => void
+  /** 皮肤运行时为可选能力，不可用时不展示无效入口。 */
+  skinAvailable: boolean
 }
 
 interface ProviderGuide {
@@ -38,6 +40,16 @@ interface FeatureGuide {
   destination?: GuideDestination
   action?: string
 }
+
+type GuideSection = 'start' | 'accounts' | 'features' | 'recipes' | 'security'
+
+const GUIDE_SECTIONS: ReadonlyArray<readonly [GuideSection, string]> = [
+  ['start', '首次配置'],
+  ['accounts', '账号与密钥'],
+  ['features', '功能说明'],
+  ['recipes', '常用操作'],
+  ['security', '安全与排错'],
+]
 
 const PROVIDERS: ProviderGuide[] = [
   {
@@ -111,9 +123,9 @@ const FEATURES: FeatureGuide[] = [
   {
     id: 'coding-plan',
     category: '模型与额度',
-    title: 'Coding Plan 控制面板',
-    summary: '统一配置智谱、MiniMax、火山方舟、硅基流动和 OpenAI 中转，并查看可用模型与用量。',
-    bullets: ['控制面板会汇总各服务商凭据状态和 Token 用量；进入具体服务商页签后再完成 Key、模型和推理档位配置。', '智谱和 MiniMax 支持从官方拉取模型；方舟区分 Plan Key 与用量查询 AK/SK；OpenAI 中转支持多个端点和端点级生图模型。', 'Key 只在保存时单向提交给 Host，页面不会回填明文；服务商注册、套餐和计费以官方页面为准。'],
+    title: 'Coding Plan',
+    summary: '配置智谱、MiniMax、火山方舟和硅基流动；OpenAI 兼容中转在独立子页维护。',
+    bullets: ['概览汇总四家 Coding Plan 的凭据状态和 Token 用量；进入服务商页签后配置 Key、模型和推理档位。', '智谱和 MiniMax 可从官方同步模型；方舟的 Plan Key 与用量查询 AK/SK 需要分别配置。', 'OpenAI 中转支持多个端点和端点级生图模型。Key 保存后不会在页面回显明文。'],
     destination: 'codeplan',
     action: '打开 Coding Plan',
   },
@@ -154,6 +166,15 @@ const FEATURES: FeatureGuide[] = [
     action: '打开工作流',
   },
   {
+    id: 'mcp',
+    category: '外部工具',
+    title: 'MCP 服务器',
+    summary: '通过 stdio 本地进程或 Streamable HTTP 服务向模型注册外部工具。',
+    bullets: ['添加服务器时设置唯一 serverName；公开工具名为 mcp__<serverName>__<tool>。', 'stdio 填命令、参数、工作目录和环境变量；HTTP 填 URL 与请求头。敏感值只显示配置状态，编辑时留空会保留原值。', '可先测试当前表单。保存后立即挂载，无需重启；连接异常时使用「重载全部」。'],
+    destination: 'mcp',
+    action: '打开 MCP',
+  },
+  {
     id: 'projects',
     category: '项目管理',
     title: '项目与产出公约',
@@ -178,7 +199,7 @@ const FEATURES: FeatureGuide[] = [
     summary: '把 store.db 与飞书配置加密后存入 CNB 私密仓库，换电脑可预览后恢复。',
     bullets: ['进入「代码仓库 → CNB → 加密备份」，选择 CNB 账号、私密仓库、6 位密码和同步间隔，再启用自动同步。', '「立即备份」用于手动推送；「查看远端备份」只读清单；恢复或同步前先输入密码预览文件与来源机器。', '确认恢复会覆盖本机配置，但覆盖前会自动保留 *.pre-restore.bak；恢复完成后必须重启 DSH 才全部生效。'],
     destination: 'repos',
-    action: '打开备份配置',
+    action: '打开代码仓库',
   },
   {
     id: 'remote',
@@ -206,6 +227,29 @@ const FEATURES: FeatureGuide[] = [
     bullets: ['先在设置中启用本地浏览器；面板可打开 URL、读取无障碍快照、截图和停止浏览器。', 'browser_tabs 管理多标签页，browser_snapshot/browser_click/browser_type 按稳定引用操作，browser_upload 安全上传图片。', '闲鱼消息读取、回复和商品发布使用独立标签页；真实回复/发布必须绑定联系人或传入确认发布，避免误操作。'],
     destination: 'browser',
     action: '打开浏览器面板',
+  },
+  {
+    id: 'content-operations',
+    category: '可见自动化',
+    title: '闲鱼与小红书',
+    summary: '复用已登录的前台浏览器读取闲鱼消息，并在确认后回复或发布内容。',
+    bullets: ['读取闲鱼会话不会发消息；打开未读会话会产生已读状态。', '回复必须确认联系人和完整正文；发布闲鱼商品或小红书笔记必须明确确认发布。', '发布前复核当前账号、价格、标题、正文和图片，完成后关闭闲置标签页。'],
+    destination: 'browser',
+    action: '打开浏览器面板',
+  },
+  {
+    id: 'minimax-hub',
+    category: '多媒体生成',
+    title: 'MiniMax Hub',
+    summary: '调用本机已登录的 MiniMax Hub 生成图片或 H3 视频，完成后自动落盘。',
+    bullets: ['Hub 必须已登录并运行；图片默认使用 banana_2，视频可选 MiniMax-H3 或 MiniMax-H3-Max。', '视频支持参考图、首尾帧和续写，时长通常为 4–15 秒；单次生成可能等待 5–30 分钟。', 'Hub 桌面网关与 Coding Plan 官方 API 是独立通道；不确定参数时先查询 Hub 能力。'],
+  },
+  {
+    id: 'capability-injection',
+    category: '智能体上下文',
+    title: '项目约束与能力注入',
+    summary: '把当前项目、开发约束、产出目录和已安装工具能力提供给会话。',
+    bullets: ['项目登记提供本机路径、仓库和发布目标；触发开发行为后会注入完整暂存测试约束。', '项目、临时文件、脚本、下载、备份、交付物和笔记分别放入约定目录，避免散落在工作区根目录。', '插件装卸或启停后，可用能力清单随运行时更新；发送、发布、推送和重启仍遵循各工具的确认规则。'],
   },
   {
     id: 'skin',
@@ -302,56 +346,58 @@ function ExternalLink(props: { href: string; children: string }): JSX.Element {
 }
 
 /** 教程页：静态内容优先，搜索只过滤功能说明，不触发任何网络请求。 */
-export function GuideTab({ onNavigate }: GuideTabProps): JSX.Element {
-  const [section, setSection] = useState<'start' | 'accounts' | 'features' | 'recipes' | 'security'>('start')
+export function GuideTab({ onNavigate, skinAvailable }: GuideTabProps): JSX.Element {
+  const [section, setSection] = useState<GuideSection>('start')
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLocaleLowerCase()
+  const availableFeatures = useMemo(() => skinAvailable ? ALL_FEATURES : ALL_FEATURES.filter((feature) => feature.id !== 'skin'), [skinAvailable])
   const visibleFeatures = useMemo(() => {
-    if (normalizedQuery === '') return ALL_FEATURES
-    return ALL_FEATURES.filter((feature) => [feature.category, feature.title, feature.summary, ...feature.bullets].join(' ').toLocaleLowerCase().includes(normalizedQuery))
-  }, [normalizedQuery])
+    if (normalizedQuery === '') return availableFeatures
+    return availableFeatures.filter((feature) => [feature.category, feature.title, feature.summary, ...feature.bullets].join(' ').toLocaleLowerCase().includes(normalizedQuery))
+  }, [availableFeatures, normalizedQuery])
 
   const jump = (target: GuideDestination): void => { onNavigate(target) }
-  const selectSection = (next: typeof section): void => {
+  const selectSection = (next: GuideSection): void => {
     setSection(next)
-    document.getElementById('dsh-devforge-guide-' + next)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    document.getElementById('dsh-devforge-guide-' + next)?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' })
+  }
+  const syncSectionFromScroll = (event: UIEvent<HTMLElement>): void => {
+    const container = event.currentTarget
+    const threshold = container.getBoundingClientRect().top + 56
+    let active: GuideSection = 'start'
+    for (const [id] of GUIDE_SECTIONS) {
+      const element = container.querySelector<HTMLElement>('#dsh-devforge-guide-' + id)
+      if (element !== null && element.getBoundingClientRect().top <= threshold) active = id
+    }
+    if (container.scrollTop + container.clientHeight >= container.scrollHeight - 2) active = 'security'
+    if (active !== section) setSection(active)
   }
 
   return (
-    <section className={css['guideWorkspace']} data-dsh-part="guide-tab" aria-label="天工造梦使用指南">
+    <section className={css['guideWorkspace']} data-dsh-part="guide-tab" aria-label="天工造梦使用说明" onScroll={syncSectionFromScroll}>
       <header className={css['guideHero']}>
         <div className={css['guideHeroCopy']}>
-          <span className={css['guideKicker']}>天工造梦 · 使用指南</span>
-          <h2 className={css['guideTitle']}>从注册账号到第一次交付</h2>
-          <p className={css['guideLead']}>这是一份面向第一次使用者的完整手册：先配置一个模型，再按需要启用记忆、项目、代码仓库、远程运维和飞书。每个入口都能从本页直接跳转。</p>
-          <div className={css['guidePills']}>
-            <span>✓ 先配一个模型即可开始</span>
-            <span>✓ 密钥只写入受管凭据</span>
-            <span>✓ 危险操作默认需确认</span>
-          </div>
+          <span className={css['guideKicker']}>天工造梦</span>
+          <h2 className={css['guideTitle']}>使用说明</h2>
+          <p className={css['guideLead']}>先配置一个模型，再按需设置记忆、项目、代码仓库、远程运维和飞书。带「打开」按钮的项目会切换到对应顶层页签。</p>
         </div>
         <div className={css['guideHeroActions']}>
-          <button type="button" className={css['primaryButton']} onClick={() => jump('codeplan')}>开始配置 Coding Plan</button>
-          <button type="button" className={css['ghostButton']} onClick={() => selectSection('features')}>按功能查找</button>
+          <button type="button" className={css['primaryButton']} onClick={() => jump('codeplan')}>配置模型</button>
+          <button type="button" className={css['ghostButton']} onClick={() => selectSection('features')}>查看功能</button>
         </div>
       </header>
 
       <nav className={css['guideNav']} aria-label="教程目录">
-        {([
-          ['start', '快速开始'],
-          ['accounts', '注册与密钥'],
-          ['features', '功能用法'],
-          ['recipes', '常用流程'],
-          ['security', '安全与排错'],
-        ] as const).map(([id, label]) => (
-          <button key={id} type="button" className={css['guideNavButton']} data-active={section === id ? '' : undefined} aria-current={section === id ? 'page' : undefined} onClick={() => selectSection(id)}>{label}</button>
+        {GUIDE_SECTIONS.map(([id, label]) => (
+          <button key={id} type="button" className={css['guideNavButton']} data-active={section === id ? '' : undefined} aria-current={section === id ? 'location' : undefined} onClick={() => selectSection(id)}>{label}</button>
         ))}
       </nav>
 
       <div className={css['guideContent']}>
         <section id="dsh-devforge-guide-start" className={css['guideSection']}>
           <div className={css['guideSectionHeader']}>
-            <div><span className={css['guideEyebrow']}>01 · 先跑起来</span><h3 className={css['guideSectionTitle']}>三分钟首次使用</h3><p className={css['guideSectionCopy']}>天工造梦本身不要求另注册一个「天工造梦账号」。它运行在你本机的 DSH Web 中；你只需为想使用的模型或外部服务注册对应平台账号。</p></div>
+            <div><span className={css['guideEyebrow']}>01 · 开始</span><h3 className={css['guideSectionTitle']}>首次配置</h3><p className={css['guideSectionCopy']}>天工造梦运行在本机 DSH Web 中，不需要单独注册账号。使用模型或外部服务时，再注册对应平台账号。</p></div>
           </div>
           <div className={css['guideSteps']}>
             <article className={css['guideStep']}><span className={css['guideStepNumber']}>01</span><strong>打开操作台</strong><p>在左侧点击「天工造梦」。教程就在第一个页签，所有配置页签也从这里进入。</p></article>
@@ -359,7 +405,7 @@ export function GuideTab({ onNavigate }: GuideTabProps): JSX.Element {
             <article className={css['guideStep']}><span className={css['guideStepNumber']}>03</span><strong>保存并同步模型</strong><p>进入 Coding Plan 保存 Key，再点击对应的模型同步按钮；回到对话模型选择器即可使用。</p></article>
             <article className={css['guideStep']}><span className={css['guideStepNumber']}>04</span><strong>按需扩展能力</strong><p>想让模型记住项目就用记忆中枢；想接代码或服务器就配置仓库、远程主机；想手机聊天就接飞书。</p></article>
           </div>
-          <div className={css['guideCallout']} data-kind="info"><strong>建议顺序</strong><span>模型 → 记忆中枢 → 项目 → 代码仓库 → 远程运维 → 飞书。先验证最小闭环，再逐项增加权限，排错最简单。</span></div>
+          <div className={css['guideCallout']} data-kind="info"><strong>配置顺序</strong><span>模型 → 记忆中枢 → 项目 → 代码仓库 → 远程运维 → 飞书。每配置一项先确认能正常使用，再继续下一项。</span></div>
         </section>
 
         <section id="dsh-devforge-guide-accounts" className={css['guideSection']}>
@@ -373,7 +419,7 @@ export function GuideTab({ onNavigate }: GuideTabProps): JSX.Element {
                 <p className={css['providerIntro']}>{provider.intro}</p>
                 <ol className={css['providerSteps']}>{provider.steps.map((step) => <li key={step}>{step}</li>)}</ol>
                 <p className={css['providerNote']}>{provider.note}</p>
-                <div className={css['guideActions']}><ExternalLink href={provider.registerUrl}>{provider.registerLabel}</ExternalLink><ExternalLink href={provider.docsUrl}>{provider.docsLabel}</ExternalLink>{provider.destination !== undefined && <button type="button" className={css['ghostButton']} onClick={() => jump(provider.destination as GuideDestination)}>去配置</button>}</div>
+                <div className={css['guideActions']}><ExternalLink href={provider.registerUrl}>{provider.registerLabel}</ExternalLink><ExternalLink href={provider.docsUrl}>{provider.docsLabel}</ExternalLink>{provider.destination !== undefined && <button type="button" className={css['ghostButton']} onClick={() => jump(provider.destination as GuideDestination)}>打开 Coding Plan</button>}</div>
               </article>
             ))}
           </div>
@@ -386,16 +432,28 @@ export function GuideTab({ onNavigate }: GuideTabProps): JSX.Element {
 
         <section id="dsh-devforge-guide-features" className={css['guideSection']}>
           <div className={css['guideSectionHeader']}>
-            <div><span className={css['guideEyebrow']}>03 · 功能地图</span><h3 className={css['guideSectionTitle']}>每个页签解决什么问题</h3><p className={css['guideSectionCopy']}>用搜索快速定位功能。卡片中的「打开」会切换到真实操作台，不会丢失本教程的说明。</p></div>
+            <div><span className={css['guideEyebrow']}>03 · 功能</span><h3 className={css['guideSectionTitle']}>功能说明</h3><p className={css['guideSectionCopy']}>按关键词筛选并展开条目。「打开」只切换到对应顶层页签，不会定位到页签内的子页面。</p></div>
             <label className={css['guideSearch']}><span className={css['srOnly']}>搜索功能</span><input className={css['input']} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索：记忆、飞书、备份、模型…" /></label>
           </div>
-          {visibleFeatures.length === 0 ? <div className={css['empty']}>没有匹配的功能。试试「模型」「项目」「密钥」或「备份」。</div> : <div className={css['featureGrid']}>
-            {visibleFeatures.map((feature) => <article key={feature.id} className={css['featureCard']}><span className={css['guideEyebrow']}>{feature.category}</span><h4>{feature.title}</h4><p className={css['featureSummary']}>{feature.summary}</p><ul className={css['featureList']}>{feature.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>{feature.destination !== undefined && <button type="button" className={css['featureAction']} onClick={() => jump(feature.destination as GuideDestination)}>{feature.action ?? '打开功能'} <span aria-hidden="true">→</span></button>}</article>)}
+          {visibleFeatures.length === 0 ? <div className={css['empty']}>没有匹配的功能。试试「模型」「项目」「密钥」或「备份」。</div> : <div className={css['featureDirectory']}>
+            {visibleFeatures.map((feature) => (
+              <details key={feature.id} className={css['featureRow']}>
+                <summary className={css['featureRowSummary']}>
+                  <span className={css['featureRowCategory']}>{feature.category}</span>
+                  <strong>{feature.title}</strong>
+                  <span className={css['featureSummary']}>{feature.summary}</span>
+                </summary>
+                <div className={css['featureRowDetail']}>
+                  <ul className={css['featureList']}>{feature.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
+                  {feature.destination !== undefined && <button type="button" className={css['featureAction']} onClick={() => jump(feature.destination as GuideDestination)}>{feature.action ?? '打开功能'} <span aria-hidden="true">→</span></button>}
+                </div>
+              </details>
+            ))}
           </div>}
         </section>
 
         <section id="dsh-devforge-guide-recipes" className={css['guideSection']}>
-          <div className={css['guideSectionHeader']}><div><span className={css['guideEyebrow']}>04 · 推荐实践</span><h3 className={css['guideSectionTitle']}>四条常用流程</h3><p className={css['guideSectionCopy']}>按目标选择流程，避免第一次就把所有密钥和权限都配齐。</p></div></div>
+          <div className={css['guideSectionHeader']}><div><span className={css['guideEyebrow']}>04 · 操作顺序</span><h3 className={css['guideSectionTitle']}>常用操作</h3><p className={css['guideSectionCopy']}>按目标配置必要项目，不必一次填完所有密钥和权限。</p></div></div>
           <div className={css['recipeGrid']}>
             {RECIPES.map((recipe, index) => <article key={recipe.title} className={css['recipeCard']}><span className={css['guideStepNumber']}>0{index + 1}</span><div><h4>{recipe.title}</h4><p>{recipe.text}</p><button type="button" className={css['featureAction']} onClick={() => jump(recipe.target)}>去相关页面 →</button></div></article>)}
           </div>
