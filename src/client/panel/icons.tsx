@@ -109,6 +109,18 @@ export function IconTiangong({ size }: IconProps): JSX.Element {
   )
 }
 
+/** 教程：书页中的问号，表达帮助与上手指南。 */
+export function IconGuide({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5z" />
+      <path d="M4 4.5v18" />
+      <path d="M10 8.5a2.2 2.2 0 1 1 3.8 1.5c-.8.8-1.8 1-1.8 2.5" />
+      <path d="M12 16.5h.01" />
+    </svg>
+  )
+}
+
 /** 插件更新：循环升级箭头。 */
 export function IconUpdate({ size }: IconProps): JSX.Element {
   return (
