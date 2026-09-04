@@ -23,6 +23,8 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .panel { --dv-gap: 10px; --dv-row-pad: 7px; --dv-cell-pad: 6px 10px; --dv-card-pad: 12px 14px; --dv-grid-gap: 12px; --dv-section-gap: 10px; --dv-page-pad: 10px 14px 12px; --dv-control-h: 28px; --dv-radius-card: 8px; --dv-radius-control: 6px; display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; padding: var(--dv-page-pad); gap: var(--dv-gap); background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #1f2329); font-family: var(--dsw-font-family, ui-sans-serif, system-ui, sans-serif); }
 .panel[data-density="cozy"] { --dv-gap: 14px; --dv-row-pad: 13px; --dv-cell-pad: 10px 12px; --dv-card-pad: 16px 18px; --dv-grid-gap: 20px; --dv-section-gap: 14px; --dv-page-pad: 14px 18px 16px; --dv-control-h: 32px; }
 .panelHeader { display: flex; align-items: center; gap: 10px; flex: none; }
+.panelHeaderActions { display: flex; flex: none; align-items: center; gap: 8px; }
+.guideHeaderTab { flex: none; }
 .panelTitle { margin: 0; flex: 1; display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); white-space: nowrap; }
 .panelTitleIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; color: var(--dsw-alias-state-business-primary, #2563eb); background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 12%, transparent); }
 .backButton { display: inline-flex; align-items: center; gap: 4px; }
@@ -835,7 +837,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 }
 @media (max-width: 620px) {
   .panelHeader { flex-wrap: wrap; }
-  .panelHeader .segmented { margin-left: auto; }
+  .panelHeader .panelHeaderActions { margin-left: auto; }
 }
 @media (max-width: 560px) {
   .guideWorkspace { gap: 14px; padding: 0 0 22px; }
