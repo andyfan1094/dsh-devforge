@@ -10,7 +10,7 @@
  *      body[data-ds-dark-theme]，与 GUI 自带的 light/dark 切换联动；
  *   4. labelKey 走 locale 字典，漏译会在单测里直接报错。
  *
- * 10 套主题覆盖深浅两端各 5 套，强调点为克制的材质与配色
+ * 14 套主题覆盖浅色 8 套与深色 6 套，强调点为克制的材质与配色
  * （与社区皮肤插件差异化，色值与命名皆为本仓库原创）。
  */
 
@@ -496,6 +496,42 @@ export const SKINS: readonly SkinDefinition[] = [
       '--dsw-alias-scrollbar-bg-l2': '#382b58',
       '--dsw-alias-scrollbar-hover-l1': '#4a3a72',
       '--dsw-alias-scrollbar-hover-l2': '#4a3a72',
+    },
+  },
+  {
+    // 中国红（浅色）：宣纸米白暖底 + 国旗红 #c8102e 主色，
+    // 边框/悬停层带朱砂染，观感是「白纸 + 印章红」，避免整屏大红造成视觉疲劳。
+    id: 'devforge-china-red',
+    labelKey: 'skin.chinaRed',
+    colorScheme: 'light',
+    tokens: {
+      '--dsw-alias-bg-base': '#fbf4ee',
+      '--dsw-alias-bg-layer-1': '#ffffff',
+      '--dsw-alias-bg-layer-2': '#f8e9e2',
+      '--dsw-alias-bg-layer-3': '#f2d8cd',
+      '--dsw-alias-bg-overlay': '#fdf8f4',
+      '--dsw-alias-border-l1': 'rgba(200, 16, 46, 0.13)',
+      '--dsw-alias-border-l2': 'rgba(200, 16, 46, 0.22)',
+      '--dsw-alias-label-primary': '#38201c',
+      '--dsw-alias-label-secondary': '#7d5a52',
+      '--dsw-alias-label-tertiary': '#a5847a',
+      '--dsw-alias-brand-primary': '#c8102e',
+      '--dsw-alias-brand-text': '#ffffff',
+      '--dsw-alias-button-primary-hover': '#ab0d27',
+      '--dsw-alias-button-primary-dimmed': '#f9e2df',
+      '--dsw-alias-state-business-primary': '#c8102e',
+      '--dsw-alias-state-business-tertiary': '#f9e2df',
+      '--dsw-alias-interactive-bg-hover': 'rgba(200, 16, 46, 0.08)',
+      '--dsw-alias-interactive-bg-active': 'rgba(200, 16, 46, 0.15)',
+      '--dsw-alias-markdown-code-block': '#f8e9e2',
+      '--dsw-alias-markdown-inline-code': '#f4dfd6',
+      '--dsw-specific-sidebar-fill': '#f8e9e2',
+      '--dsw-specific-sidebar-nav-item-active': '#f2d8cd',
+      '--dsw-specific-sidebar-nav-item-hover': '#f5e0d7',
+      '--dsw-alias-scrollbar-bg-l1': '#eed5ca',
+      '--dsw-alias-scrollbar-bg-l2': '#e7c8bb',
+      '--dsw-alias-scrollbar-hover-l1': '#d5ab99',
+      '--dsw-alias-scrollbar-hover-l2': '#d5ab99',
     },
   },
 ]

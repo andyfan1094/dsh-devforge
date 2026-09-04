@@ -129,6 +129,23 @@ test('SKINS 不存在重名（用于 setTheme 校验）', () => {
   assert.equal(findSkin('not-a-skin'), undefined)
 })
 
+test('中国红皮肤：设计锚点（浅色宣纸底 + 国旗红主色 + 白字）不被无意篡改', () => {
+  const skin = findSkin('devforge-china-red')
+  assert.ok(skin !== undefined, '中国红皮肤必须已注册')
+  assert.equal(skin!.colorScheme, 'light', '中国红是浅色系')
+  assert.equal(skin!.labelKey, 'skin.chinaRed')
+  // 主色：国旗红/中国红经典色值
+  assert.equal(skin!.tokens['--dsw-alias-brand-primary'], '#c8102e')
+  // 品牌底色上的文字必须由 pickTextOn 决定（#c8102e 亮度低 → 白字）
+  assert.equal(skin!.tokens['--dsw-alias-brand-text'], pickTextOn('#c8102e'))
+  assert.equal(skin!.tokens['--dsw-alias-brand-text'], '#ffffff')
+  // 底面保持宣纸暖白而非整屏大红：bg-base 必须是高亮度暖白
+  const base = skin!.tokens['--dsw-alias-bg-base']!
+  assert.ok(relativeLuminance(base) > 0.85, 'bg-base 应为宣纸暖白，实际 ' + base)
+  // 悬停层是朱砂染（带透明度的主色），与品牌色同源
+  assert.equal(skin!.tokens['--dsw-alias-interactive-bg-hover'], 'rgba(200, 16, 46, 0.08)')
+})
+
 test('SKINS 的 brand-text 与品牌色对比度合规（lum ≥ 0.55 用深字，否则用浅字）', () => {
   for (const s of SKINS) {
     const brand = s.tokens['--dsw-alias-brand-primary']
