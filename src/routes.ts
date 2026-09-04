@@ -15,7 +15,10 @@ import { isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
 import { detectProjectGit, listProjects, refreshAllProjectGitMeta, relocateProject, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
 import { automatchProjects, describeProject, scanForProjects } from './projects/scan.ts'
+import { runProjectDeploy } from './projects/deploy.ts'
+import type { ProjectDeployResult } from './projects/protocol.ts'
 import { WORKSPACE_API, getConvention, saveConvention, validateConvention } from './workspace/convention.ts'
+import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 
@@ -94,6 +97,8 @@ export function makeRoutes(
     /** DSH 本体检查（官方 GitHub Tags，含预发布版本比较与升级命令引导）。 */
     harnessCheck: () => Promise<HarnessUpdateCheckItem>
   },
+  /** 一键发布执行器（可选；index.ts 闭包延迟取远程引擎，请求时才解引用）。 */
+  deploy?: { run(id: string): Promise<ProjectDeployResult> },
 ): WebRoute[] {
   return [
     {
@@ -356,6 +361,27 @@ export function makeRoutes(
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         try {
           writeJson(res, 200, { ok: true, suggestions: automatchProjects() })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: PROJECTS_API.projectDeploy,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        if (deploy === undefined) { writeJson(res, 503, { ok: false, error: '发布执行器未就绪（远程引擎尚未激活）。' }); return }
+        const body = await readJsonBody(req)
+        if (!body || typeof body.id !== 'string' || body.id.trim() === '') {
+          writeJson(res, 400, { ok: false, error: 'id 必填' })
+          return
+        }
+        const entry = listProjects().find((project) => project.id === body.id)
+        if (entry === undefined) { writeJson(res, 404, { ok: false, error: 'unknown project: ' + body.id }); return }
+        try {
+          writeJson(res, 200, { ok: true, result: await deploy.run(body.id) })
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

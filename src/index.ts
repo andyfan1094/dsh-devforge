@@ -77,6 +77,7 @@ import { DshWebRestartManager } from './restart.ts'
 import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { devforgeProjectTool } from './projects/tools.ts'
+import { runProjectDeploy } from './projects/deploy.ts'
 import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
 import { listProjects } from './projects/store.ts'
@@ -557,6 +558,8 @@ export function apply(ctx: Context, config?: Config): void {
   }, (input) => generateText({ system: input.system, user: input.user, ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}), ...(input.provider !== undefined ? { provider: input.provider } : {}), ...(input.model !== undefined ? { model: input.model } : {}) }))
 
   // ---- 可重挂表面（路由/工具/系统提示）----
+  // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
+  let remoteActivation: ReturnType<typeof activateRemote> | undefined
   const routes = [
     ...makeRoutes(engine, standards, restartManager, () => ({
       enabled: resolve().pluginBrief?.enabled ?? true,
@@ -566,6 +569,12 @@ export function apply(ctx: Context, config?: Config): void {
       check: () => pluginUpdateService.check(),
       apply: (packageName: string) => pluginUpdateService.apply(packageName),
       harnessCheck: () => harnessCheck(),
+    }, {
+      run: async (id: string) => {
+        const entry = listProjects().find((project) => project.id === id)
+        if (entry === undefined) return { ok: false, results: [], error: 'unknown project: ' + id }
+        return runProjectDeploy(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine })
+      },
     }),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
@@ -743,7 +752,7 @@ export function apply(ctx: Context, config?: Config): void {
       }).dispose
     })
     safeActivate(ctx, '远程运维', () => {
-      const remoteActivation = activateRemote(ctx, value.remote ?? { enabled: false })
+      remoteActivation = activateRemote(ctx, value.remote ?? { enabled: false })
       disposeRemote = remoteActivation.dispose
     })
     // 本地浏览器：独立于远程运维，启用即注册 browser_* 工具。

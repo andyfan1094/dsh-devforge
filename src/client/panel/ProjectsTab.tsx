@@ -304,6 +304,26 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
     })
   }
 
+  /** 一键发布：确认后对全部发布目标逐台执行 deployCommand，逐台展示结果。 */
+  const deploy = (entry: ProjectEntry): void => {
+    const targets = entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、')
+    if (!window.confirm('确认发布「' + entry.name + '」？\n命令：' + (entry.deployCommand ?? '') + '\n目标：' + targets)) return
+    void run(async () => {
+      const result = await api.deployProject(entry.id)
+      if (result.results.length === 0) {
+        setError(result.error ?? '发布未执行。')
+        return
+      }
+      const lines = result.results.map((item) => {
+        const badge = item.ok ? '✅' : '❌'
+        const detail = item.ok ? '完成' : (item.error ?? '失败')
+        return badge + ' ' + item.transport + ':' + item.alias + ' ' + detail + (item.output !== undefined && item.ok !== true ? '\n' + item.output : '')
+      })
+      if (result.ok) setNotice('发布完成（' + entry.name + '）：\n' + lines.join('\n'))
+      else setError('发布存在失败项（' + entry.name + '）：\n' + lines.join('\n'))
+    })
+  }
+
   /** 打开产出公约配置区（首次懒加载当前配置）。 */
   const openConvention = (): void => {
     setConventionOpen(true)
@@ -407,6 +427,9 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                 <div className={css['inlineActions']}>
                   {entry.pathExists === false && (
                     <button type="button" className={css['ghostButton']} onClick={() => { relocate(entry) }}>重定位</button>
+                  )}
+                  {entry.deployCommand !== undefined && entry.deployCommand !== '' && entry.deployTargets.length > 0 && entry.pathExists !== false && (
+                    <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { deploy(entry) }}>发布</button>
                   )}
                   <button type="button" className={css['ghostButton']} onClick={() => { setEditing(formFromEntry(entry)) }}>编辑</button>
                   <button type="button" className={css['dangerButton']} onClick={() => { void remove(entry) }}>删除</button>

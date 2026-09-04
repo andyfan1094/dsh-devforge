@@ -17,7 +17,7 @@ import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol
 import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
-import { PROJECTS_API, type AutomatchSuggestion, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
+import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
 import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
@@ -242,6 +242,16 @@ export class DevforgeApi {
   async automatchProjects(): Promise<AutomatchSuggestion[]> {
     const data = await readJson<{ suggestions: AutomatchSuggestion[] }>(await fetch(PROJECTS_API.projectAutomatch))
     return data.suggestions
+  }
+
+  /** 项目面板：一键发布（对全部发布目标逐台执行 deployCommand）。 */
+  async deployProject(id: string): Promise<ProjectDeployResult> {
+    const data = await readJson<{ result: ProjectDeployResult }>(await fetch(PROJECTS_API.projectDeploy, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }))
+    return data.result
   }
 
   /** 产出公约：读取当前配置。 */

@@ -24,6 +24,8 @@ export const PROJECTS_API = {
   projectRelocate: '/api/dsh-devforge/projects/relocate',
   /** 自动匹配（GET）：在本机常见代码根里为失效路径找候选目录。 */
   projectAutomatch: '/api/dsh-devforge/projects/automatch',
+  /** 一键发布（POST {id}）：对全部发布目标逐台执行 deployCommand。 */
+  projectDeploy: '/api/dsh-devforge/projects/deploy',
 } as const
 
 /** 代码仓库托管类型。 */
@@ -129,6 +131,29 @@ export interface AutomatchSuggestion {
   repoUrl: string
   /** 本机匹配到的候选目录绝对路径。 */
   candidatePath: string
+}
+
+/** 单台发布目标的执行结果。 */
+export interface DeployTargetResult {
+  /** 通道类型。 */
+  transport: 'ssh' | 'winrm'
+  /** 远程主机别名。 */
+  alias: string
+  /** 是否成功（退出码 0 / PowerShell 无异常）。 */
+  ok: boolean
+  /** 退出码（ssh 提供）。 */
+  exitCode?: number
+  /** 输出摘要（截断后）。 */
+  output?: string
+  /** 失败原因。 */
+  error?: string
+}
+
+/** 发布执行结果。 */
+export interface ProjectDeployResult {
+  ok: boolean
+  results: DeployTargetResult[]
+  error?: string
 }
 
 /** 检测到的单个远端。 */

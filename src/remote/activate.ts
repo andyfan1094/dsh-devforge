@@ -26,9 +26,13 @@ export interface RemoteConfig {
   enabled: boolean
 }
 
-/** 一次激活产生的全部 disposer（路由/upgrade/工具）。 */
+/** 一次激活产生的全部 disposer（路由/upgrade/工具）与引擎引用（供项目一键发布复用同一连接池）。 */
 export interface RemoteActivation {
   dispose(): void
+  /** SSH 引擎（remote.enabled=false 时为 undefined）。 */
+  sshEngine?: SshEngine
+  /** WinRM 引擎（remote.enabled=false 时为 undefined）。 */
+  winrmEngine?: WinRmEngine
 }
 
 /** 激活远程运维能力；调用方负责在 sync() 卸载时调用 dispose()。 */
@@ -92,5 +96,7 @@ export function activateRemote(ctx: Context, config: RemoteConfig): RemoteActiva
         try { dispose() } catch { /* 卸载期单点失败不阻断其余清理 */ }
       }
     },
+    sshEngine,
+    winrmEngine,
   }
 }
