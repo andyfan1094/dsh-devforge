@@ -143,3 +143,15 @@ export function IconSkin({ size }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** MCP 服务器接入：插头（外部工具服务器接入宿主）。 */
+export function IconMcp({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M9 7V3" />
+      <path d="M15 7V3" />
+      <path d="M6.5 7h11v4a5.5 5.5 0 0 1-11 0z" />
+      <path d="M12 16.5V22" />
+    </svg>
+  )
+}

@@ -15,6 +15,7 @@ import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageD
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
@@ -732,5 +733,52 @@ export class DevforgeApi {
       body: JSON.stringify(patch),
     }))
     return data.result
+  }
+
+  // ---------------- MCP 服务器接入（0.21.0） ----------------
+
+  /** MCP：读取服务器配置清单（env/headers 值脱敏，只含键与是否已配置）。 */
+  async listMcpServers(signal?: AbortSignal): Promise<McpServerSummary[]> {
+    const data = await readJson<{ servers: McpServerSummary[] }>(await fetch(MCP_API.servers, { signal }))
+    return data.servers
+  }
+
+  /** MCP：保存（新增或更新）一台服务器；保存即挂载/卸载生效。 */
+  async saveMcpServer(request: McpServerSaveRequest, signal?: AbortSignal): Promise<McpServerSummary> {
+    const data = await readJson<{ server: McpServerSummary }>(await fetch(MCP_API.servers, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+      signal,
+    }))
+    return data.server
+  }
+
+  /** MCP：删除一台服务器；删除即卸载其全部工具。 */
+  async deleteMcpServer(id: string, signal?: AbortSignal): Promise<void> {
+    await readJson(await fetch(MCP_API.servers + '?id=' + encodeURIComponent(id), { method: 'DELETE', signal }))
+  }
+
+  /** MCP：连接测试。id = 测已存配置（含已存密钥）；server = 测面板内联表单（密钥空值回填已存值）。 */
+  async testMcpServer(input: { id?: string; server?: McpServerSaveRequest }, signal?: AbortSignal): Promise<McpTestResult> {
+    const data = await readJson<{ result: McpTestResult }>(await fetch(MCP_API.test, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal,
+    }))
+    return data.result
+  }
+
+  /** MCP：读取运行时状态（fiber 挂载情况 + 实际注册到模型的 mcp__ 工具）。 */
+  async getMcpStatus(signal?: AbortSignal): Promise<McpRuntimeStatus> {
+    const data = await readJson<{ status: McpRuntimeStatus }>(await fetch(MCP_API.status, { signal }))
+    return data.status
+  }
+
+  /** MCP：全量重载（断开全部 fiber 后按当前配置重建）。 */
+  async reloadMcp(signal?: AbortSignal): Promise<McpRuntimeStatus> {
+    const data = await readJson<{ status: McpRuntimeStatus }>(await fetch(MCP_API.reload, { method: 'POST', signal }))
+    return data.status
   }
 }

@@ -51,6 +51,8 @@ import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, typ
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
+import { McpService } from './mcp/service.ts'
+import { makeMcpRoutes } from './mcp/routes.ts'
 import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
 import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -167,6 +169,8 @@ export interface Config {
   memory?: { enabled?: boolean }
   /** 硅基流动 Provider 子配置。 */
   siliconflow?: { enabled?: boolean; apiKeyEnv?: string; timeoutMs?: number }
+  /** MCP 服务器接入子配置（服务器明细存 store.db 面板管理，此处仅总开关）。 */
+  mcp?: { enabled?: boolean }
 }
 
 /** 配置默认值。 */
@@ -243,6 +247,9 @@ export const Config = z.object({
     apiKeyEnv: z.string().default('SILICONFLOW_API_KEY').description('硅基流动受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('硅基流动接口超时（毫秒）'),
   }).description('硅基流动配置'),
+  mcp: z.object({
+    enabled: z.boolean().default(true).description('MCP 服务器接入总开关：按 store.db 配置把外部 MCP 服务器的工具注册给模型（明细在天工造梦「MCP」页管理）'),
+  }).description('MCP 服务器接入配置'),
   pluginUpdate: z.object({
     enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
     profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
@@ -274,6 +281,7 @@ const DEVFORGE_GUIDANCE = [
   '- xianyu_messages_list / xianyu_conversation_read：在独立消息标签页读取当前登录闲鱼账号的会话与消息；打开未读会话会触发已读状态。',
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
   '- xianyu_publish：在独立发布标签页上传图片、填写商品信息并核验发布结果；真实发布必须传入“确认发布”。',
+  '- MCP 服务器接入：外部 MCP 服务器在天工造梦面板「MCP」页配置；启用的服务器其工具以 mcp__<serverName>__<tool> 名称注册（如 mcp__github__create_issue），可直接调用，调用失败如实报错。',
 ].join('\n')
 
 /** 插件挂载（mountOnce 防重复挂载，dsh-winrm 同款）。 */
@@ -346,6 +354,7 @@ export function apply(ctx: Context, config?: Config): void {
         apiKeyEnv: value.siliconflow?.apiKeyEnv ?? 'SILICONFLOW_API_KEY',
         timeoutMs: value.siliconflow?.timeoutMs ?? 15000,
       },
+      mcp: { enabled: value.mcp?.enabled ?? true },
     }
   }
 
@@ -394,6 +403,8 @@ export function apply(ctx: Context, config?: Config): void {
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
   const siliconFlowConfig: SiliconFlowCapabilityConfig = { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000 }
   const siliconFlowService = new SiliconFlowService(ctx, siliconFlowConfig)
+  // MCP 服务器接入：官方 dsh-mcp-client 桥的挂载管理者（fiber 集随 store.db 配置 reconcile）。
+  const mcpService = new McpService(ctx, () => resolve().mcp?.enabled !== false)
 
   // ---- 启动自动补齐：llm-pi-ai 就绪后把官方模型与推理档位写入设置；无变化时不产生写入。----
   let autoEnsureToken = 0
@@ -590,6 +601,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeRagRoutes(ragService, ragEmbedders),
     ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory }),
     ...makeWorkflowRoutes(workflowEngine),
+    ...makeMcpRoutes(mcpService),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
@@ -784,6 +796,8 @@ export function apply(ctx: Context, config?: Config): void {
     safeActivate(ctx, 'CNB 托管', () => { disposeCnb = activateCnb(ctx, resolve().cnb ?? { enabled: false }).dispose })
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
     safeActivate(ctx, '飞书桥', () => { disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose })
+    // MCP 服务器接入：按 store.db 配置对齐官方桥 fiber（关闭即全部卸载；reconcile 幂等，热更新不打断在用连接）。
+    safeActivate(ctx, 'MCP 服务器接入', () => { mcpService.activateHandle() })
   }
 
   // ---- 设置面板接线（改配置即热更新）----

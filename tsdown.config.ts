@@ -42,6 +42,10 @@ const HOST_EXTERNALS = [
   '@deepseek-ai/dsh-settings',
   '@deepseek-ai/dsh-system-prompt',
   '@deepseek-ai/dsh-tools',
+  // MCP 服务器接入（0.21.0）：官方桥 + 其子进程脱敏 seam + MCP 协议 SDK，运行时解析不打包。
+  '@deepseek-ai/dsh-mcp-client',
+  '@deepseek-ai/dsh-subprocess',
+  '@modelcontextprotocol/sdk',
   'schemastery',
   // 远程运维引擎的原生/网络依赖：原生模块必须运行时解析，不能打进 bundle。
   'ssh2',
