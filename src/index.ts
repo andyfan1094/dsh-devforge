@@ -82,6 +82,7 @@ import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
 import { listProjects } from './projects/store.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
+import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
@@ -604,6 +605,7 @@ export function apply(ctx: Context, config?: Config): void {
   let disposeOpenAiTools: (() => void) | undefined
   let disposeBrowser: (() => void) | undefined
   let disposeConstraints: (() => void) | undefined
+  let disposeSandboxDiscipline: (() => void) | undefined
   let disposeUserProfile: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
@@ -624,6 +626,7 @@ export function apply(ctx: Context, config?: Config): void {
     disposeOpenAiTools?.(); disposeOpenAiTools = undefined
     disposeBrowser?.(); disposeBrowser = undefined
     disposeConstraints?.(); disposeConstraints = undefined
+    disposeSandboxDiscipline?.(); disposeSandboxDiscipline = undefined
     disposeUserProfile?.(); disposeUserProfile = undefined
     pluginBriefSurface.dispose()
     pluginBriefSurface = {
@@ -652,6 +655,14 @@ export function apply(ctx: Context, config?: Config): void {
     if (value.announceToAgent) {
       disposeSection = ctx.systemPrompt.section({ name: 'plugin:dsh-devforge', order: SECTION_ORDER, text: DEVFORGE_GUIDANCE })
     }
+    // 沙箱升级纪律常驻节（0.20.0）：OpenAI 兼容模型误用 sandbox_permissions /
+    // justification 会触发 "not strictly wider"/"invalid justification" 死循环，
+    // 把宿主沙箱的精确规则（升级阶梯/成对校验/拒绝即终局）注入全部会话。始终开启。
+    disposeSandboxDiscipline = ctx.systemPrompt.section({
+      name: SANDBOX_DISCIPLINE_SECTION_NAME,
+      order: SANDBOX_DISCIPLINE_SECTION_ORDER,
+      text: SANDBOX_DISCIPLINE_TEXT,
+    })
     // 项目约束三层注入：常驻摘要保底；cwd 命中开发仓库或出现开发动作时升级全文（0.11.0）。
     // 0.19.0 起同一节追加产出公约摘要与当前项目卡（数据源带 5s TTL 缓存，避免每次装配读库）。
     if (value.constraints?.enabled) {
