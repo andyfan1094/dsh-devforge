@@ -45,10 +45,42 @@ export function buildRemoteCommand(entry: ProjectEntry, transport: 'ssh' | 'winr
   return 'Set-Location -LiteralPath ' + psQuote(workDir) + '; ' + command
 }
 
-/** 引擎的最小形状（便于测试注入桩件，不耦合完整引擎类型）。 */
+/** 引擎的最小形状（对齐 SSH/WinRM 引擎真实 ExecResult；便于测试注入桩件）。 */
 export interface DeployEngines {
-  ssh?: { exec(alias: string, command: string, timeoutMs?: number): Promise<{ code?: number; stdout?: string; stderr?: string }> }
-  winrm?: { exec(alias: string, command: string, timeoutMs?: number): Promise<{ code?: number; stdout?: string; stderr?: string }> }
+  ssh?: { exec(alias: string, command: string, timeoutMs?: number): Promise<DeployEngineOutcome> }
+  winrm?: { exec(alias: string, command: string, timeoutMs?: number): Promise<DeployEngineOutcome> }
+}
+
+/** 引擎单次执行结果（与 remote 引擎 ExecResult 对齐）。 */
+export interface DeployEngineOutcome {
+  /** 引擎自带的成功判定（exitCode 为 null 时的兜底依据）。 */
+  success?: boolean
+  /** 远程退出码；通道异常死亡时为 null（此时不能当成功）。 */
+  exitCode?: number | null
+  /** 是否执行超时。 */
+  timedOut?: boolean
+  stdout?: string
+  stderr?: string
+  /** 引擎层错误（别名不存在、连接失败等）。 */
+  error?: string
+}
+
+/**
+ * 把引擎结果判定为单台成败：
+ * 超时 → 失败；exitCode 明确 → 0 为成功；exitCode 缺失（null/undefined）→ 退回引擎 success 字段；
+ * 引擎 error 字段存在 → 一律失败并携带原因。绝不把「未知退出码」静默当成功。
+ */
+export function judgeOutcome(outcome: DeployEngineOutcome): { ok: boolean; exitCode?: number; error?: string } {
+  if (outcome.timedOut === true) return { ok: false, error: '远程命令执行超时' }
+  if (outcome.error !== undefined && outcome.error !== '') return { ok: false, error: outcome.error }
+  if (typeof outcome.exitCode === 'number') {
+    return outcome.exitCode === 0
+      ? { ok: true, exitCode: outcome.exitCode }
+      : { ok: false, exitCode: outcome.exitCode, error: '远程命令退出码 ' + outcome.exitCode }
+  }
+  return outcome.success === true
+    ? { ok: true }
+    : { ok: false, error: '远程退出码不可知（通道异常），按失败处理' }
 }
 
 /** 截断输出摘要。 */
@@ -79,15 +111,15 @@ export async function runProjectDeploy(entry: ProjectEntry, engines: DeployEngin
     const command = buildRemoteCommand(entry, target.transport, target.remotePath)
     try {
       const outcome = await engine.exec(target.alias, command, DEPLOY_TIMEOUT_MS)
-      const code = outcome.code ?? 0
+      const verdict = judgeOutcome(outcome)
       const output = clampOutput([outcome.stdout, outcome.stderr].filter((part) => part !== undefined && part !== '').join('\n'))
       results.push({
         transport: target.transport,
         alias: target.alias,
-        ok: code === 0,
-        exitCode: code,
+        ok: verdict.ok,
+        ...(verdict.exitCode !== undefined ? { exitCode: verdict.exitCode } : {}),
         ...(output !== undefined ? { output } : {}),
-        ...(code !== 0 ? { error: '远程命令退出码 ' + code } : {}),
+        ...(verdict.error !== undefined ? { error: verdict.error } : {}),
       })
     } catch (cause) {
       results.push({
