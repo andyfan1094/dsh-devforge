@@ -129,21 +129,22 @@ test('SKINS 不存在重名（用于 setTheme 校验）', () => {
   assert.equal(findSkin('not-a-skin'), undefined)
 })
 
-test('中国红皮肤：设计锚点（浅色宣纸底 + 国旗红主色 + 白字）不被无意篡改', () => {
+test('中国红皮肤：设计锚点（深宫红底 + 朱砂主色 + 宣纸白字）不被无意篡改', () => {
   const skin = findSkin('devforge-china-red')
   assert.ok(skin !== undefined, '中国红皮肤必须已注册')
-  assert.equal(skin!.colorScheme, 'light', '中国红是浅色系')
+  // v1 浅色朱染被辉哥反馈「像粉色」，v2 定版为深色红墙底：改回浅色即视为破坏设计
+  assert.equal(skin!.colorScheme, 'dark', '中国红 v2 是深色系（红墙暗面）')
   assert.equal(skin!.labelKey, 'skin.chinaRed')
-  // 主色：国旗红/中国红经典色值
-  assert.equal(skin!.tokens['--dsw-alias-brand-primary'], '#c8102e')
-  // 品牌底色上的文字必须由 pickTextOn 决定（#c8102e 亮度低 → 白字）
-  assert.equal(skin!.tokens['--dsw-alias-brand-text'], pickTextOn('#c8102e'))
+  // 主色：朱砂/朱漆经典色值（高饱和，暗底上保持中国红冲击力）
+  assert.equal(skin!.tokens['--dsw-alias-brand-primary'], '#e34234')
+  // 品牌底色上的文字必须由 pickTextOn 决定（#e34234 亮度低 → 白字）
+  assert.equal(skin!.tokens['--dsw-alias-brand-text'], pickTextOn('#e34234'))
   assert.equal(skin!.tokens['--dsw-alias-brand-text'], '#ffffff')
-  // 底面保持宣纸暖白而非整屏大红：bg-base 必须是高亮度暖白
+  // 底面必须是深绛红墙而非粉色：bg-base 亮度必须足够低
   const base = skin!.tokens['--dsw-alias-bg-base']!
-  assert.ok(relativeLuminance(base) > 0.85, 'bg-base 应为宣纸暖白，实际 ' + base)
+  assert.ok(relativeLuminance(base) < 0.06, 'bg-base 应为深绛红墙，实际 ' + base)
   // 悬停层是朱砂染（带透明度的主色），与品牌色同源
-  assert.equal(skin!.tokens['--dsw-alias-interactive-bg-hover'], 'rgba(200, 16, 46, 0.08)')
+  assert.equal(skin!.tokens['--dsw-alias-interactive-bg-hover'], 'rgba(227, 66, 52, 0.13)')
 })
 
 test('SKINS 的 brand-text 与品牌色对比度合规（lum ≥ 0.55 用深字，否则用浅字）', () => {

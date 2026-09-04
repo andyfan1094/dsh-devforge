@@ -10,7 +10,7 @@
  *      body[data-ds-dark-theme]，与 GUI 自带的 light/dark 切换联动；
  *   4. labelKey 走 locale 字典，漏译会在单测里直接报错。
  *
- * 14 套主题覆盖浅色 8 套与深色 6 套，强调点为克制的材质与配色
+ * 14 套主题覆盖浅色 7 套与深色 7 套，强调点为克制的材质与配色
  * （与社区皮肤插件差异化，色值与命名皆为本仓库原创）。
  */
 
@@ -499,39 +499,40 @@ export const SKINS: readonly SkinDefinition[] = [
     },
   },
   {
-    // 中国红（浅色）：宣纸米白暖底 + 国旗红 #c8102e 主色，
-    // 边框/悬停层带朱砂染，观感是「白纸 + 印章红」，避免整屏大红造成视觉疲劳。
+    // 中国红（深色 v2）：红墙暗面深绛底 + 朱砂 #e34234 主色 + 宣纸白文字。
+    // v1 的浅色朱染被辉哥反馈「像粉色」——红色大面积稀释必然发粉，
+    // 改为深色红墙底，主色用高饱和朱砂，一眼即是中国红。
     id: 'devforge-china-red',
     labelKey: 'skin.chinaRed',
-    colorScheme: 'light',
+    colorScheme: 'dark',
     tokens: {
-      '--dsw-alias-bg-base': '#fbf4ee',
-      '--dsw-alias-bg-layer-1': '#ffffff',
-      '--dsw-alias-bg-layer-2': '#f8e9e2',
-      '--dsw-alias-bg-layer-3': '#f2d8cd',
-      '--dsw-alias-bg-overlay': '#fdf8f4',
-      '--dsw-alias-border-l1': 'rgba(200, 16, 46, 0.13)',
-      '--dsw-alias-border-l2': 'rgba(200, 16, 46, 0.22)',
-      '--dsw-alias-label-primary': '#38201c',
-      '--dsw-alias-label-secondary': '#7d5a52',
-      '--dsw-alias-label-tertiary': '#a5847a',
-      '--dsw-alias-brand-primary': '#c8102e',
+      '--dsw-alias-bg-base': '#260b0f',
+      '--dsw-alias-bg-layer-1': '#301015',
+      '--dsw-alias-bg-layer-2': '#3c141a',
+      '--dsw-alias-bg-layer-3': '#4a181f',
+      '--dsw-alias-bg-overlay': '#2a0d12',
+      '--dsw-alias-border-l1': 'rgba(255, 138, 130, 0.15)',
+      '--dsw-alias-border-l2': 'rgba(255, 138, 130, 0.24)',
+      '--dsw-alias-label-primary': '#f9ecdf',
+      '--dsw-alias-label-secondary': '#d6a294',
+      '--dsw-alias-label-tertiary': '#a5766c',
+      '--dsw-alias-brand-primary': '#e34234',
       '--dsw-alias-brand-text': '#ffffff',
-      '--dsw-alias-button-primary-hover': '#ab0d27',
-      '--dsw-alias-button-primary-dimmed': '#f9e2df',
-      '--dsw-alias-state-business-primary': '#c8102e',
-      '--dsw-alias-state-business-tertiary': '#f9e2df',
-      '--dsw-alias-interactive-bg-hover': 'rgba(200, 16, 46, 0.08)',
-      '--dsw-alias-interactive-bg-active': 'rgba(200, 16, 46, 0.15)',
-      '--dsw-alias-markdown-code-block': '#f8e9e2',
-      '--dsw-alias-markdown-inline-code': '#f4dfd6',
-      '--dsw-specific-sidebar-fill': '#f8e9e2',
-      '--dsw-specific-sidebar-nav-item-active': '#f2d8cd',
-      '--dsw-specific-sidebar-nav-item-hover': '#f5e0d7',
-      '--dsw-alias-scrollbar-bg-l1': '#eed5ca',
-      '--dsw-alias-scrollbar-bg-l2': '#e7c8bb',
-      '--dsw-alias-scrollbar-hover-l1': '#d5ab99',
-      '--dsw-alias-scrollbar-hover-l2': '#d5ab99',
+      '--dsw-alias-button-primary-hover': '#ee5a4d',
+      '--dsw-alias-button-primary-dimmed': '#3f1712',
+      '--dsw-alias-state-business-primary': '#e34234',
+      '--dsw-alias-state-business-tertiary': '#3f1712',
+      '--dsw-alias-interactive-bg-hover': 'rgba(227, 66, 52, 0.13)',
+      '--dsw-alias-interactive-bg-active': 'rgba(227, 66, 52, 0.2)',
+      '--dsw-alias-markdown-code-block': '#3c141a',
+      '--dsw-alias-markdown-inline-code': '#451922',
+      '--dsw-specific-sidebar-fill': '#2b0e12',
+      '--dsw-specific-sidebar-nav-item-active': '#3c141a',
+      '--dsw-specific-sidebar-nav-item-hover': '#331116',
+      '--dsw-alias-scrollbar-bg-l1': '#4a181f',
+      '--dsw-alias-scrollbar-bg-l2': '#571e26',
+      '--dsw-alias-scrollbar-hover-l1': '#6e2a32',
+      '--dsw-alias-scrollbar-hover-l2': '#6e2a32',
     },
   },
 ]
