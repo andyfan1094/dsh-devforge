@@ -2,6 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  buildDshPluginAddCommand,
   checkOne,
   compareSemver,
   parseSiteIndex,
@@ -12,6 +13,20 @@ import {
   type LatestInfo,
   type UpdateSource,
 } from '../src/plugin-update.ts'
+
+test('buildDshPluginAddCommand：Windows 经 cmd.exe 启动并对含空格路径加引号', () => {
+  const command = buildDshPluginAddCommand('win32', 'web', 'C:\\Temp dir\\x.tgz')
+  assert.equal(command.file, 'cmd.exe')
+  assert.deepEqual(command.args, ['/d', '/s', '/c', 'dsh plugin --profile web add "C:\\Temp dir\\x.tgz"'])
+  assert.equal(command.verbatim, true)
+})
+
+test('buildDshPluginAddCommand：POSIX 直接执行 dsh', () => {
+  const command = buildDshPluginAddCommand('linux', 'web', '/tmp/x.tgz')
+  assert.equal(command.file, 'dsh')
+  assert.deepEqual(command.args, ['plugin', '--profile', 'web', 'add', '/tmp/x.tgz'])
+  assert.equal(command.verbatim, false)
+})
 
 test('parseTagVersion：剥 v 前缀并拒绝非语义化版本', () => {
   assert.equal(parseTagVersion('v0.13.0'), '0.13.0')

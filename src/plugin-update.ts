@@ -229,10 +229,33 @@ export async function downloadTgz(url: string, packageName: string, version: str
   return target
 }
 
+/**
+ * 构造 `dsh plugin add` 的启动命令。
+ *
+ * Windows 上 `dsh` 是 npm 生成的 .cmd 垫片：Node 出于安全限制不允许不经 shell
+ * 直接执行 .cmd（裸 spawn/execFile 报 spawn dsh ENOENT），必须经 cmd.exe 启动，
+ * 由 cmd 按 PATHEXT 自行解析 dsh.cmd；/d 忽略 AutoRun、/s 规整引号剥离，
+ * 配合 windowsVerbatimArguments 把整行按原样交给 cmd（与 dshmarket 同款方案）。
+ * POSIX 无垫片问题，保持直接 execFile。
+ */
+export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: string, tgzPath: string): { file: string; args: string[]; verbatim: boolean } {
+  if (platform === 'win32') {
+    // cmd.exe /s /c 之后整行按原样解析：参数含空格时手工加引号即可（本路径均为本机生成的临时 tgz 与 profile 名，不含引号字符）。
+    const quote = (value: string): string => (value.includes(' ') ? '"' + value + '"' : value)
+    return {
+      file: 'cmd.exe',
+      args: ['/d', '/s', '/c', ['dsh', 'plugin', '--profile', quote(profile), 'add', quote(tgzPath)].join(' ')],
+      verbatim: true,
+    }
+  }
+  return { file: 'dsh', args: ['plugin', '--profile', profile, 'add', tgzPath], verbatim: false }
+}
+
 /** 执行 dsh plugin add（默认实现；测试可注入）。 */
 export function runPluginAdd(profile: string, tgzPath: string, timeoutMs = 180000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('dsh', ['plugin', '--profile', profile, 'add', tgzPath], { timeout: timeoutMs, encoding: 'utf8' }, (error, stdout, stderr) => {
+    const command = buildDshPluginAddCommand(process.platform, profile, tgzPath)
+    execFile(command.file, command.args, { timeout: timeoutMs, encoding: 'utf8', windowsVerbatimArguments: command.verbatim, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         const detail = (stderr || stdout || error.message).toString().slice(-400)
         reject(new Error('dsh plugin add 失败：' + detail))
