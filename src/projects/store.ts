@@ -52,9 +52,16 @@ function validateDeployTargets(value: unknown): string | undefined {
 export function validateProjectPayload(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return 'body must be a JSON object'
   const p = payload as Record<string, unknown>
-  if (typeof p.name !== 'string' || p.name.trim() === '') return 'name 必须是非空字符串'
-  if (typeof p.path !== 'string' || p.path.trim() === '') return 'path 必须是非空字符串'
-  if (!isAbsolute(p.path.trim())) return 'path 必须是绝对路径'
+  // 部分更新（带 id）时 name/path 可省略（未传即保留旧值）；新增（无 id）必须必填。
+  const isUpdate = typeof p.id === 'string' && p.id.trim() !== ''
+  if (!isUpdate) {
+    if (typeof p.name !== 'string' || p.name.trim() === '') return 'name 必须是非空字符串'
+    if (typeof p.path !== 'string' || p.path.trim() === '') return 'path 必须是非空字符串'
+  } else {
+    if (p.name !== undefined && (typeof p.name !== 'string' || p.name.trim() === '')) return 'name 必须是非空字符串'
+    if (p.path !== undefined && (typeof p.path !== 'string' || p.path.trim() === '')) return 'path 必须是非空字符串'
+  }
+  if (p.path !== undefined && typeof p.path === 'string' && !isAbsolute(p.path.trim())) return 'path 必须是绝对路径'
   if (p.description !== undefined && typeof p.description !== 'string') return 'description 必须是字符串'
   const kind = p.repoKind ?? 'none'
   if (kind !== 'none' && kind !== 'cnb' && kind !== 'github' && kind !== 'git') return 'repoKind 必须是 none/cnb/github/git'
@@ -139,13 +146,19 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
   const id = typeof payload.id === 'string' && payload.id.trim() !== '' ? payload.id.trim() : randomUUID()
   const machineId = getMachineId()
   const existing = getProject(id)
-  const path = String(payload.path).trim()
+  // 部分更新时 path/name 可省略（未传即保留旧值）；新增场景校验层已保证必填。
+  const path = typeof payload.path === 'string' && payload.path.trim() !== ''
+    ? payload.path.trim()
+    : (existing?.path ?? '')
   // 本机映射与既有映射合并：既有映射保留其他机器的登记，本机键覆盖为最新值。
-  const machinePaths: Record<string, string> = { ...(existing?.machinePaths ?? {}), [machineId]: path }
+  const machinePaths: Record<string, string> = { ...(existing?.machinePaths ?? {}) }
+  if (path !== '') machinePaths[machineId] = path
   // 可选字段「未传即保留旧值」：部分更新（如只改名称）不会误清空其余登记。
   const entry: ProjectEntry = {
     id,
-    name: String(payload.name).trim(),
+    name: typeof payload.name === 'string' && payload.name.trim() !== ''
+      ? payload.name.trim()
+      : (existing?.name ?? ''),
     path,
     machinePaths,
     description: typeof payload.description === 'string' ? payload.description : (existing?.description ?? ''),
@@ -314,8 +327,8 @@ function readBranch(gitDir: string): string | undefined {
 
 /**
  * 从 .git/logs/HEAD 末行解析最近一次提交时间（毫秒）。
- * reflog 行格式：<old-sha> <new-sha> <ref> <unix-ts> <tz>\t<action>；取第 4 个字段。
- * 文件缺失（shallow/无 reflog）或解析失败返回 undefined，不影响检测主流程。
+ * reflog 行的作者名可含空格，字段数不定，故以「unix 秒时间戳 + 4 位时区 + 制表符」
+ * 模式锚定（如 1788054798 +0800<TAB>）；文件缺失或解析失败返回 undefined，不影响检测主流程。
  */
 function readLastCommitAt(gitDir: string): number | undefined {
   try {
@@ -324,8 +337,9 @@ function readLastCommitAt(gitDir: string): number | undefined {
     const text = readFileSync(logPath, 'utf8').trim()
     if (text === '') return undefined
     const lastLine = text.split(/\r?\n/).pop() ?? ''
-    const parts = lastLine.split(/\s+/)
-    const seconds = Number(parts[3])
+    const match = /(\d{9,})\s+[+-]\d{4}\t/.exec(lastLine)
+    if (match === null) return undefined
+    const seconds = Number(match[1])
     return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined
   } catch {
     return undefined

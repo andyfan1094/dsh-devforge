@@ -108,14 +108,35 @@ test('分支刷新：HEAD 变更后 refreshAllProjectGitMeta 回填新分支，�
   const gone = saveProject({ name: '戊项目', path: missingRepo })
   rmSync(missingRepo, { recursive: true, force: true })
 
+  // 写入真实形态的 reflog 末行：作者名含空格，时间戳须按「秒数+时区+制表符」锚定。
+  mkdirSync(join(repo, '.git', 'logs'), { recursive: true })
+  writeFileSync(
+    join(repo, '.git', 'logs', 'HEAD'),
+    '0000000000000000000000000000000000000000 1ab0bfa36e8db43affd120d0fc7189d00696a4b1 '
+    + 'andyfan1094 <34331092+andyfan1094@users.noreply.github.com> 1788054798 +0800\tclone: from https://github.com/o/r\n',
+  )
+
   // 换分支后刷新：dev → release。
   writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/release\n')
   const list = refreshAllProjectGitMeta()
   const refreshed = list.find((entry) => entry.name === '丁项目')
   assert.equal(refreshed?.repoBranch, 'release')
+  // reflog 时间戳正确解析为毫秒（1788054798 秒）。
+  assert.equal(refreshed?.lastCommitAt, 1788054798_000)
   // 失效项目不抛错、路径原样保留。
   const still = list.find((entry) => entry.id === gone.id)
   assert.equal(still?.path, missingRepo)
   assert.equal(still?.pathExists, false)
+  rmSync(repo, { recursive: true, force: true })
+})
+
+test('部分更新：带 id 只传 deployCommand 时其余登记保留（校验不再误拒）', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'projects-partial-'))
+  const saved = saveProject({ name: '己项目', path: repo, description: '原描述', repoBranch: 'main' })
+  const patched = saveProject({ id: saved.id, deployCommand: 'pnpm run deploy' })
+  assert.equal(patched.path, repo)
+  assert.equal(patched.description, '原描述')
+  assert.equal(patched.repoBranch, 'main')
+  assert.equal(patched.deployCommand, 'pnpm run deploy')
   rmSync(repo, { recursive: true, force: true })
 })
