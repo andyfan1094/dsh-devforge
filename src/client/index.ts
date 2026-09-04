@@ -14,6 +14,7 @@ import { DevforgeApi } from './api.ts'
 import { en, zh, type DevforgeKey } from './locales.ts'
 import { mountPanel } from './mount.tsx'
 import { PanelController } from './panel/controller.ts'
+import { mountRestartEntry } from './restart-entry.ts'
 import { mountSidebarEntry } from './sidebar-entry.ts'
 import { createSkinRuntime } from './theme/skin-runtime.ts'
 
@@ -61,6 +62,7 @@ export function apply(ctx: ClientContext): void {
   const disposers: Array<() => void> = []
   try {
     disposers.push(mountSidebarEntry(controller))
+    disposers.push(mountRestartEntry(api))
     disposers.push(mountPanel(controller, api, skin))
   } catch (error) {
     // 挂载失败降级：面板不可用但 GUI 无恙

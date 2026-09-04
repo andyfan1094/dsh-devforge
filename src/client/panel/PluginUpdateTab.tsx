@@ -87,7 +87,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
         setApplyError('')
         setDone('')
         const result = await api.applyPluginUpdate(item.packageName)
-        setDone('已升级 ' + result.packageName + ' 到 v' + result.version + '：请点右上角「重启 DSH」生效。')
+        setDone('已升级 ' + result.packageName + ' 到 v' + result.version + '：请点左下角「设置」旁的「重启」按钮生效。')
         onRefresh()
       } catch (e) {
         setApplyError(e instanceof Error ? e.message : String(e))
@@ -147,7 +147,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
       )}
       {!loading && harness !== null && harness.status === 'update-available' && harness.upgrade !== null && (
         <div className={css['banner']}>
-          DSH 本体有新版：本体是运行中的宿主进程，本插件不自动替换。请在终端执行复制来的命令（当前安装方式：{harness.upgrade.manager === 'npm' ? 'npm 全局' : harness.upgrade.manager === 'pnpm' ? 'pnpm 全局' : '未识别，按官方 npm 渠道'}；{harness.upgrade.evidence}），完成后点右上角「重启 DSH」生效。
+          DSH 本体有新版：本体是运行中的宿主进程，本插件不自动替换。请在终端执行复制来的命令（当前安装方式：{harness.upgrade.manager === 'npm' ? 'npm 全局' : harness.upgrade.manager === 'pnpm' ? 'pnpm 全局' : '未识别，按官方 npm 渠道'}；{harness.upgrade.evidence}），完成后点左下角「设置」旁的「重启」按钮生效。
         </div>
       )}
       {!loading && !enabled && <div className={css['empty']}>插件更新能力已关闭（请在设置中开启）；DSH 本体检查不受此开关影响</div>}

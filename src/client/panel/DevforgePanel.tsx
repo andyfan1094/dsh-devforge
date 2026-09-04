@@ -39,7 +39,6 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
   const [tab, setTab] = useState<Tab>('codeplan')
   const [standards, setStandards] = useState<StandardSummary[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
-  const [restarting, setRestarting] = useState(false)
   const [error, setError] = useState('')
   /** 规范数据是否已返回，避免慢请求期间误报“为空”。 */
   const [loaded, setLoaded] = useState(false)
@@ -124,36 +123,6 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
     }
   }
 
-  /** 请求 DSH 重启，并在 Host 恢复后刷新当前 GUI。 */
-  const restartDsh = async (): Promise<void> => {
-    if (restarting) return
-    try {
-      setError('')
-      setRestarting(true)
-      await api.restartDsh()
-
-      const waitForHost = async (attemptsLeft: number): Promise<void> => {
-        try {
-          await api.listStandards()
-          window.location.reload()
-        } catch {
-          if (attemptsLeft === 0) {
-            setRestarting(false)
-            setError('DSH 未在预期时间内恢复，请稍后手动刷新页面。')
-            return
-          }
-          window.setTimeout(() => { void waitForHost(attemptsLeft - 1) }, 500)
-        }
-      }
-
-      // 旧 Host 先退出，独立进程随后启动新 Host；延迟避免仍命中旧服务。
-      window.setTimeout(() => { void waitForHost(20) }, 750)
-    } catch (e) {
-      setRestarting(false)
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
   /** 切换密度档并持久化；样式侧由 .panel[data-density] 的 token 覆盖生效。 */
   const applyDensity = (next: 'compact' | 'cozy'): void => {
     setDensity(next)
@@ -178,15 +147,6 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
           <button type="button" data-active={density === 'compact' || undefined} onClick={() => applyDensity('compact')}>紧凑</button>
           <button type="button" data-active={density === 'cozy' || undefined} onClick={() => applyDensity('cozy')}>舒适</button>
         </div>
-        <button
-          type="button"
-          className={css['ghostButton']}
-          title="重启本机 DSH Web 服务"
-          disabled={restarting}
-          onClick={() => { void restartDsh() }}
-        >
-          {restarting ? '正在重启…' : '重启 DSH'}
-        </button>
       </div>
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">

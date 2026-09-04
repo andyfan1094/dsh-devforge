@@ -257,6 +257,9 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .resetBadge[data-urgency="danger"] { color: var(--dsw-alias-state-error-primary, #dc2626); border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #dc2626) 40%, transparent); background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #dc2626) 10%, transparent); }
 .resetBadge[data-urgency="danger"]::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 1px; animation: resetPulse 1.6s ease-out infinite; }
 @keyframes resetPulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+/* 侧边栏重启入口：重启进行中的图标旋转反馈（Host 恢复后页面自动刷新，无需其余状态）。 */
+.restartSpin { animation: devforgeRestartSpin 0.9s linear infinite; }
+@keyframes devforgeRestartSpin { to { transform: rotate(360deg); } }
 .usageToolbar { display: flex; min-height: var(--dv-control-h, 28px); align-items: center; justify-content: space-between; gap: 12px; }
 .segmented { display: inline-flex; flex: none; padding: 2px; background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 6px; }
 .segmented button { min-height: calc(var(--dv-control-h, 28px) - 6px); padding: 3px 9px; color: var(--dsw-alias-label-secondary, #667085); background: transparent; border: none; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
