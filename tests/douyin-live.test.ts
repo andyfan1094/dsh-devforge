@@ -11,6 +11,7 @@ import { resolveDouyinRoom } from '../src/douyin-live/room.ts'
 import { isDouyinLiveUrl, publicRoomIdFromDouyinUrl } from '../src/douyin-live/link.ts'
 import { makeDouyinLiveRoutes } from '../src/douyin-live/routes.ts'
 import { WelcomeSpeechService } from '../src/douyin-live/speech.ts'
+import { DouyinReceiverProcess } from '../src/douyin-live/receiver.ts'
 
 /** 伪接收器仅在内存广播，不向真实直播发送任何消息。 */
 class FakeSocket extends EventEmitter {
@@ -33,6 +34,37 @@ function fixture() {
 
 const chat = (id: number) => ({ type: 'WebcastChatMessage', data: { common: { msgId: String(id) }, user: { nickName: '测试观众' }, content: '测试弹幕 ' + id } })
 const like = (id: number, nickname = '点赞观众') => ({ type: 'WebcastLikeMessage', data: { common: { msgId: String(id) }, user: { nickName: nickname }, count: 1 } })
+
+test('连接器缺失时按需启动、并发调用只启动一次', async () => {
+  let healthy = false
+  let starts = 0
+  const logs: string[] = []
+  const receiver = new DouyinReceiverProcess({
+    binaryPath: '/bin/true',
+    probe: async () => healthy,
+    startProcess: () => { starts += 1; healthy = true },
+    pollIntervalMs: 50,
+    startupTimeoutMs: 1000,
+    log: message => logs.push(message),
+  })
+  await Promise.all([receiver.ensureRunning(), receiver.ensureRunning()])
+  await receiver.ensureRunning()
+  assert.equal(starts, 1)
+  assert.deepEqual(logs, ['抖音直播：本地连接器未运行，开始按需启动', '抖音直播：本地连接器启动并通过健康检查'])
+})
+
+test('连接器启动后健康检查超时返回可读错误', async () => {
+  let starts = 0
+  const receiver = new DouyinReceiverProcess({
+    binaryPath: '/bin/true',
+    probe: async () => false,
+    startProcess: () => { starts += 1 },
+    pollIntervalMs: 50,
+    startupTimeoutMs: 1000,
+  })
+  await assert.rejects(receiver.ensureRunning(), /健康检查/)
+  assert.equal(starts, 1)
+})
 
 test('房间解析支持号码、直链及逐跳验证分享链接', async () => {
   const signal = AbortSignal.timeout(1000)
@@ -126,6 +158,24 @@ test('连接手动开启，状态帧标记上游就绪，去重及缓存有界',
   assert.equal(service.snapshot().messages.length, 0)
   socket.message(chat(602))
   assert.ok(service.snapshot().messages[0]!.sequence > 602)
+})
+
+test('点击连接前先确保本地连接器可用', async t => {
+  const sockets: FakeSocket[] = []
+  let ensureCalls = 0
+  const service = new DouyinLiveService({
+    store: { read: () => ({ roomInput: '' }), write: () => {} },
+    log: () => {},
+    monitorIntervalMs: 100000,
+    receiver: { ensureRunning: async () => { ensureCalls += 1 } },
+    resolve: async input => String(input),
+    socket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket },
+  })
+  t.after(() => service.dispose())
+  await service.connect('123')
+  assert.equal(ensureCalls, 1)
+  assert.equal(sockets.length, 1)
+  assert.equal(service.snapshot().connection, 'connecting')
 })
 
 test('断线仅安排一次重连，手动断开后旧事件不再污染状态', async t => {

@@ -54,6 +54,7 @@ import { ragRunTool } from './workflow/tools.ts'
 import { McpService } from './mcp/service.ts'
 import { makeMcpRoutes } from './mcp/routes.ts'
 import { DouyinLiveService } from './douyin-live/service.ts'
+import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
 import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
 import { douyinLiveStore } from './douyin-live/store.ts'
 import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
@@ -575,7 +576,11 @@ export function apply(ctx: Context, config?: Config): void {
   // ---- 可重挂表面（路由/工具/系统提示）----
   // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
   let remoteActivation: ReturnType<typeof activateRemote> | undefined
-  const douyinLive = new DouyinLiveService({ store: douyinLiveStore, log: (message) => ctx.logger.info(message) })
+  const douyinLive = new DouyinLiveService({
+    store: douyinLiveStore,
+    log: (message) => ctx.logger.info(message),
+    receiver: new DouyinReceiverProcess({ log: (message) => ctx.logger.info(message) }),
+  })
   ctx.effect(() => () => douyinLive.dispose(), 'dsh-devforge: douyin live')
   const routes = [
     ...makeDouyinLiveRoutes(douyinLive),

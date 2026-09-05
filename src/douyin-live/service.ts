@@ -4,6 +4,7 @@ import { probeDouyinPublicRoom, readDouyinCompanionSnapshot } from './companion.
 import { WelcomeSpeechService } from './speech.ts'
 import { asRecord, normalizeDouyinMessage } from './normalize.ts'
 import { DouyinInputError, resolveDouyinRoom } from './room.ts'
+import type { DouyinReceiver } from './receiver.ts'
 
 /** 可替换外部边界供离线测试；生产只访问固定本机接收器和伴侣日志。 */
 interface Dependencies {
@@ -14,6 +15,7 @@ interface Dependencies {
   companionRead?: () => CompanionSnapshot
   companionProbe?: typeof probeDouyinPublicRoom
   speech?: WelcomeSpeechService
+  receiver?: DouyinReceiver
   retryMs?: number
   monitorIntervalMs?: number
 }
@@ -25,6 +27,7 @@ const EMPTY_CONFIG: DouyinLiveConfig = { roomInput: '', autoMonitor: false, welc
 export class DouyinLiveService {
   private readonly deps: Dependencies
   private readonly speech: WelcomeSpeechService
+  private readonly receiver: DouyinReceiver
   private state: DouyinLiveSnapshot = { config: EMPTY_CONFIG, companion: EMPTY_COMPANION, connection: 'idle', upstreamReady: false, roomId: '', error: '', messages: [], received: 0 }
   private socket?: WebSocket
   private retry?: ReturnType<typeof setTimeout>
@@ -47,6 +50,7 @@ export class DouyinLiveService {
   constructor(deps: Dependencies) {
     this.deps = deps
     this.speech = deps.speech ?? new WelcomeSpeechService()
+    this.receiver = deps.receiver ?? { ensureRunning: async () => {} }
     this.ensureLoaded()
     this.state.companion = this.readCompanion()
     this.monitorTimer = setInterval(() => { void this.monitorCompanion() }, deps.monitorIntervalMs ?? 5000)
@@ -203,7 +207,9 @@ export class DouyinLiveService {
       this.wanted = true
       this.autoOwned = autoOwned
       this.attempt = 0
-      this.open(generation)
+      await this.receiver.ensureRunning(AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]))
+      if (generation !== this.generation) return
+      await this.open(generation, true)
     } catch (error) {
       if (generation !== this.generation) return
       this.state.connection = 'error'
@@ -236,9 +242,19 @@ export class DouyinLiveService {
   }
 
   /** 固定本机接收器，不允许 HTTP 参数控制 WS 主机、端口或认证头。 */
-  private open(generation: number): void {
+  private async open(generation: number, receiverReady = false): Promise<void> {
     if (!this.wanted || generation !== this.generation) return
     this.state.connection = this.attempt ? 'reconnecting' : 'connecting'
+    if (!receiverReady) try {
+      await this.receiver.ensureRunning()
+    } catch (error) {
+      if (this.wanted && generation === this.generation) {
+        this.deps.log('抖音直播：本地连接器未就绪，安排重试：' + (error instanceof Error ? error.message : String(error)))
+        this.schedule(generation)
+      }
+      return
+    }
+    if (!this.wanted || generation !== this.generation) return
     const url = 'ws://127.0.0.1:1088/ws/' + this.state.roomId
     let socket: WebSocket
     try { socket = this.deps.socket?.(url) ?? new WebSocket(url, { handshakeTimeout: 8000, maxPayload: 1024 * 1024, followRedirects: false }) }
@@ -309,7 +325,7 @@ export class DouyinLiveService {
     this.state.error = '本地接收器已断开，正在重试；请确认 douyinLive 正在运行。'
     this.deps.log('抖音直播：本地接收器断线，安排重试')
     const delay = Math.min(30000, (this.deps.retryMs ?? 1000) * 2 ** Math.min(this.attempt++, 5))
-    this.retry = setTimeout(() => { this.retry = undefined; this.open(generation) }, delay)
+    this.retry = setTimeout(() => { this.retry = undefined; void this.open(generation) }, delay)
     this.retry.unref()
   }
 }
