@@ -277,23 +277,42 @@ test('入场欢迎语音按昵称60秒和全局3秒限频', () => {
   speech.dispose()
 })
 
-test('点赞语音轮换祝福并沿用进场限频', () => {
+test('点赞语音在全局冷却期间排队并轮换祝福', () => {
   let now = 0
   const spoken: string[] = []
   const speech = new WelcomeSpeechService(text => spoken.push(text), () => now)
   assert.equal(speech.announceLike('小明'), true)
   now = 1000
-  assert.equal(speech.announceLike('小红'), false)
-  now = 3000
   assert.equal(speech.announceLike('小红'), true)
-  now = 6000
+  assert.equal(spoken.length, 1)
+  now = 3000
   assert.equal(speech.announceLike('小李'), true)
+  assert.equal(spoken.length, 2)
   assert.match(spoken[0]!, /^感谢小明点赞，祝你东财西财八方来财，财源广进$/)
   assert.notEqual(spoken[0], spoken[1])
   assert.match(spoken[1]!, /^感谢小红点赞，祝你/)
+  now = 6000
+  assert.equal(speech.announceLike('小周'), true)
+  assert.equal(spoken.length, 3)
   assert.match(spoken[2]!, /^感谢小李点赞，祝你/)
   now = 9000
   assert.equal(speech.announceLike('小明'), false)
+  assert.equal(spoken.length, 4)
+  speech.dispose()
+})
+
+test('关闭点赞语音会取消尚未播报的队列', () => {
+  let now = 0
+  const spoken: string[] = []
+  const speech = new WelcomeSpeechService(text => spoken.push(text), () => now)
+  assert.equal(speech.announceLike('小明'), true)
+  now = 1000
+  assert.equal(speech.announceLike('小红'), true)
+  speech.clearPendingLikes()
+  now = 3000
+  assert.equal(speech.announceLike('小李'), true)
+  assert.equal(spoken.length, 2)
+  assert.match(spoken[1]!, /^感谢小李点赞，祝你/)
   speech.dispose()
 })
 

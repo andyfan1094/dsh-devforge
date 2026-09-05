@@ -99,6 +99,7 @@ export class DouyinLiveService {
     this.ensureLoaded()
     this.state.config = { ...this.state.config, welcomeSpeech: enabled }
     this.deps.store.write(this.state.config)
+    if (!enabled) this.speech.clearPendingLikes()
   }
 
   /** 手动停止；自动跟随会抑制当前这一场，下一次重新开播才会再次连接。 */
@@ -224,6 +225,7 @@ export class DouyinLiveService {
 
   /** 内部停止不改变自动跟随抑制标记，用于切换房间、重连和卸载。 */
   private disconnectInternal(): void {
+    this.speech.clearPendingLikes()
     this.generation += 1
     this.wanted = false
     this.resolving?.abort()
