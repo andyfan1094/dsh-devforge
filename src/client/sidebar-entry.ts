@@ -11,8 +11,8 @@ import { mountSidebarEntry as mountSharedSidebarEntry } from './sidebar-entry-co
 /** 稳定入口选择器（供家族排序和视觉测试使用）。 */
 export const ENTRY_SELECTOR = '[data-dsh-devforge-entry]'
 
-/** 天工造梦图标：齿轮（天工/工艺）内嵌四角星（造梦/灵感），尺寸由 SSH 同款 entryIcon CSS 统一约束。 */
-const ICON = '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.2"/><path d="M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1"/><path d="M8 5.1c.35 1.55.9 2.1 2.9 2.9-2 .8-2.55 1.35-2.9 2.9-.35-1.55-.9-2.1-2.9-2.9 2-.8 2.55-1.35 2.9-2.9z" fill="currentColor" stroke="none"/></svg>'
+/** 天工造梦图标：开口玉璧环（天工/巧夺天工）内嵌四角星（造梦/灵感），与品牌 logo「金环梦星」同构；尺寸由 SSH 同款 entryIcon CSS 统一约束。 */
+const ICON = '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.3 5A5.2 5.2 0 1 1 9.3 3"/><path d="M8 5.1c.35 1.55.9 2.1 2.9 2.9-2 .8-2.55 1.35-2.9 2.9-.35-1.55-.9-2.1-2.9-2.9 2-.8 2.55-1.35 2.9-2.9z" fill="currentColor" stroke="none"/></svg>'
 
 /**
  * 使用 shared core 挂载入口。position=after 让天工造梦落在已装操作类插件之后，

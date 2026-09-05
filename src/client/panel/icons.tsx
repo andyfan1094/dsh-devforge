@@ -98,12 +98,11 @@ export function IconFeishu({ size }: IconProps): JSX.Element {
   )
 }
 
-/** 天工造梦标题图标：齿轮（天工）内嵌四角星（造梦），与侧边栏入口同构。 */
+/** 天工造梦标题图标：开口玉璧环（天工/巧夺天工）内嵌四角星（造梦/灵感），与侧边栏入口和品牌 logo 同构。 */
 export function IconTiangong({ size }: IconProps): JSX.Element {
   return (
     <svg {...base(size)} aria-hidden="true">
-      <circle cx="12" cy="12" r="7.6" />
-      <path d="M12 1.5v2.2M12 20.3v2.2M1.5 12h2.2M20.3 12h2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M19.4 4.6l-1.6 1.6M6.2 17.8l-1.6 1.6" />
+      <path d="M18.2 7.6A7.6 7.6 0 1 1 14 4.7" />
       <path d="M12 7.4c.6 2.4 1.5 3.3 4.6 4.6-3.1 1.3-4 2.2-4.6 4.6-.6-2.4-1.5-3.3-4.6-4.6 3.1-1.3 4-2.2 4.6-4.6z" fill="currentColor" stroke="none" />
     </svg>
   )
