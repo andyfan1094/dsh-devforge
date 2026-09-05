@@ -53,6 +53,9 @@ import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
 import { McpService } from './mcp/service.ts'
 import { makeMcpRoutes } from './mcp/routes.ts'
+import { DouyinLiveService } from './douyin-live/service.ts'
+import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
+import { douyinLiveStore } from './douyin-live/store.ts'
 import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
 import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -572,7 +575,10 @@ export function apply(ctx: Context, config?: Config): void {
   // ---- 可重挂表面（路由/工具/系统提示）----
   // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
   let remoteActivation: ReturnType<typeof activateRemote> | undefined
+  const douyinLive = new DouyinLiveService({ store: douyinLiveStore, log: (message) => ctx.logger.info(message) })
+  ctx.effect(() => () => douyinLive.dispose(), 'dsh-devforge: douyin live')
   const routes = [
+    ...makeDouyinLiveRoutes(douyinLive),
     ...makeRoutes(engine, standards, restartManager, () => ({
       enabled: resolve().pluginBrief?.enabled ?? true,
       text: pluginBriefSurface.currentText(),
@@ -650,7 +656,7 @@ export function apply(ctx: Context, config?: Config): void {
     // 本地浏览器能力随每次同步重建，先断开常驻路由的句柄。
     browserApi = undefined
     const value = resolve()
-    if (!value.enabled) return
+    if (!value.enabled) { douyinLive.dispose(); return }
     // 统一 SQLite 存储：一次性把旧 JSON 数据文件迁入 devforge/store.db（幂等；
     // 旧文件归档为 *.migrated.bak 可回滚），并把 coding plan 凭据镜像进库供整体备份。
     try {

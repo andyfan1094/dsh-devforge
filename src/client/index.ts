@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { DevforgeApi } from './api.ts'
+import { registerDouyinLiveSidebar } from './douyin-live-sidebar.tsx'
 import { en, zh, type DevforgeKey } from './locales.ts'
 import { mountPanel } from './mount.tsx'
 import { PanelController } from './panel/controller.ts'
@@ -51,6 +52,10 @@ export function apply(ctx: ClientContext): void {
 
   const controller = new PanelController()
   const api = new DevforgeApi()
+  // 子注入只等待可选侧栏；服务替换/卸载自动清理注册，不阻塞主操作台，也不抢焦点。
+  ctx.inject(['betterSidebar'], (sidebarCtx) => {
+    sidebarCtx.effect(() => registerDouyinLiveSidebar(sidebarCtx, api), 'dsh-devforge: douyin live sidebar')
+  })
   // 皮肤引导恢复须早于面板首次打开；自身降级不影响其它挂载。
   let skin: ReturnType<typeof createSkinRuntime> | undefined
   try {

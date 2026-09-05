@@ -5,6 +5,7 @@
 
 import { DEVFORGE_API, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import type { TokenUsageReport } from '../usage/types.ts'
+import { DOUYIN_LIVE_API, type DouyinLiveSnapshot } from '../douyin-live/protocol.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
@@ -56,6 +57,48 @@ function buildQuery(params: Record<string, string | undefined>): string {
 
 /** dsh-devforge 面板 API 集合。 */
 export class DevforgeApi {
+  /** 读取直播接收快照；侧栏隐藏或卸载时可取消，不改变 Host 连接。 */
+  async getDouyinLiveSnapshot(signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/snapshot', { signal, cache: 'no-store' }))
+    return data.snapshot
+  }
+
+  /** 连接指定抖音房间；房间解析和上游连接完全由 Host 负责。 */
+  async connectDouyinLive(roomInput: string, signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/connect', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ roomInput }), signal,
+    }))
+    return data.snapshot
+  }
+
+  /** 设置 Host 是否自动跟随本机直播伴侣的开播状态。 */
+  async setDouyinLiveAutoMonitor(enabled: boolean, signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/auto', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }), signal,
+    }))
+    return data.snapshot
+  }
+
+  /** 设置本机入场欢迎语音播报。 */
+  async setDouyinLiveSpeech(enabled: boolean, signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/speech', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }), signal,
+    }))
+    return data.snapshot
+  }
+
+  /** 主动断开 Host 的直播接收连接。 */
+  async disconnectDouyinLive(signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/disconnect', { method: 'POST', signal }))
+    return data.snapshot
+  }
+
+  /** 清空 Host 消息缓冲区，不断开接收连接。 */
+  async clearDouyinLive(signal?: AbortSignal): Promise<DouyinLiveSnapshot> {
+    const data = await readJson<{ ok: true; snapshot: DouyinLiveSnapshot }>(await fetch(DOUYIN_LIVE_API + '/clear', { method: 'POST', signal }))
+    return data.snapshot
+  }
+
   /** 规范清单。 */
   async listStandards(): Promise<StandardSummary[]> {
     const data = await readJson<{ standards: StandardSummary[] }>(await fetch(DEVFORGE_API.standards))
