@@ -24,7 +24,6 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .panel[data-density="cozy"] { --dv-gap: 14px; --dv-row-pad: 13px; --dv-cell-pad: 10px 12px; --dv-card-pad: 16px 18px; --dv-grid-gap: 20px; --dv-section-gap: 14px; --dv-page-pad: 14px 18px 16px; --dv-control-h: 32px; }
 .panelHeader { display: flex; align-items: center; gap: 10px; flex: none; }
 .panelHeaderActions { display: flex; flex: none; align-items: center; gap: 8px; }
-.guideHeaderTab { flex: none; }
 .panelTitle { margin: 0; flex: 1; display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 700; color: var(--dsw-alias-label-primary, #1f2329); white-space: nowrap; }
 .panelTitleIcon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; color: var(--dsw-alias-state-business-primary, #2563eb); background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 12%, transparent); }
 .backButton { display: inline-flex; align-items: center; gap: 4px; }

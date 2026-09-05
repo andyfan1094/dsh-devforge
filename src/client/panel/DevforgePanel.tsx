@@ -150,7 +150,6 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
         </button>
         <h2 className={css['panelTitle']}><span className={css['panelTitleIcon']}><IconTiangong size={16} /></span>天工造梦{version !== '' && <span className={css['panelVersion']}>v{version}</span>}</h2>
         <div className={css['panelHeaderActions']}>
-          <button type="button" className={[css['tab'], css['guideHeaderTab']].join(' ')} data-active={tab === 'guide' ? '' : undefined} aria-label="打开教程" onClick={() => { setTab('guide') }}><IconGuide />教程</button>
           <div className={css['segmented']} role="group" aria-label="信息密度" title="紧凑：一屏多信息不拥挤；舒适：更宽松留白">
             <button type="button" data-active={density === 'compact' || undefined} onClick={() => applyDensity('compact')}>紧凑</button>
             <button type="button" data-active={density === 'cozy' || undefined} onClick={() => applyDensity('cozy')}>舒适</button>
@@ -159,6 +158,8 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
       </div>
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
+        {/* 教程固定为首个页签，入口位置与首次配置指引保持一致。 */}
+        <button type="button" role="tab" aria-selected={tab === 'guide'} data-active={tab === 'guide' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('guide') }}><IconGuide />教程</button>
         <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('rag') }}><IconTiangong />记忆中枢</button>
         <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
