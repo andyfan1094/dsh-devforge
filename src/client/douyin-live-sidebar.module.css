@@ -13,9 +13,12 @@
   --live-space-sm: 8px;
   --live-space-md: 12px;
   --live-space-lg: 16px;
-  --live-font-sm: 12px;
-  --live-font: 14px;
-  --live-title: 17px;
+  --live-font-sm: 13px;
+  --live-font: 15px;
+  --live-title: 18px;
+  --live-message: 16px;
+  --live-message-meta: 14px;
+  --live-message-name: 17px;
   --live-control: 34px;
   --live-radius: 8px;
   display: flex;
@@ -80,20 +83,20 @@
 .panel .check input { width: var(--live-space-lg); height: var(--live-space-lg); min-height: 0; margin: 0; accent-color: var(--live-accent); cursor: pointer; }
 .messages { flex: 1 0 100px; min-height: 100px; overflow: auto; overflow-wrap: anywhere; scrollbar-width: thin; border-top: 1px solid var(--live-border); border-bottom: 1px solid var(--live-border); }
 .messages ol { list-style: none; margin: 0; padding: 0; }
-.message { padding: 12px 10px 12px 12px; border-bottom: 1px solid var(--live-border); font-size: 14px; line-height: 1.65; transition: background-color 180ms, border-color 180ms, box-shadow 180ms; }
+.message { padding: 16px 12px 16px 14px; border-bottom: 1px solid var(--live-border); font-size: var(--live-message); line-height: 1.65; transition: background-color 180ms, border-color 180ms, box-shadow 180ms; }
 .message:last-child { border-bottom: 0; }
 .message:hover { background: var(--live-hover); }
 .message:first-child { border-left: 3px solid var(--live-accent); background: color-mix(in srgb, var(--live-accent) 8%, var(--live-bg)); box-shadow: inset 0 0 16px color-mix(in srgb, var(--live-accent) 8%, transparent); animation: newest-message-in 220ms ease-out; }
 .message:first-child .messageType { font-weight: 700; }
 @keyframes newest-message-in { from { opacity: .55; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.messageMeta { align-items: baseline; gap: var(--live-space-xs) var(--live-space-sm); font-size: 12px; }
-.messageMeta strong { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: var(--live-text); }
+.messageMeta { align-items: baseline; gap: var(--live-space-xs) var(--live-space-sm); font-size: var(--live-message-meta); }
+.messageMeta strong { flex: 1; min-width: 0; font-size: var(--live-message-name); font-weight: 700; color: var(--live-text); }
 .messageMeta time { color: var(--live-muted); white-space: nowrap; }
 .messageType { color: var(--live-muted); flex-shrink: 0; }
 .messageType[data-type="chat"] { color: var(--live-accent); }
 .messageType[data-type="gift"] { color: var(--live-error); }
 .messageType[data-type="member"], .messageType[data-type="social"] { color: var(--live-success); }
-.message p { margin: 6px 0 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.message p { margin: 8px 0 0; font-size: var(--live-message); line-height: 1.65; white-space: pre-wrap; }
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--live-space-sm); min-height: 100px; padding: var(--live-space-lg); color: var(--live-muted); text-align: center; }
 .footer { font-size: var(--live-font-sm); }
 @container (max-width: 230px) {

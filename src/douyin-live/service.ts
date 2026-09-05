@@ -90,7 +90,7 @@ export class DouyinLiveService {
     void this.monitorCompanion()
   }
 
-  /** 开关本机入场欢迎播报；默认关闭，避免首次升级时突然出声。 */
+  /** 开关进场与点赞语音播报；默认关闭，避免首次升级时突然出声。 */
   setWelcomeSpeech(enabled: boolean): void {
     this.ensureLoaded()
     this.state.config = { ...this.state.config, welcomeSpeech: enabled }
@@ -280,7 +280,10 @@ export class DouyinLiveService {
         if (this.seen.size > 2000) this.seen.delete(this.seen.values().next().value!)
       }
       if (normalized.message.type !== 'system') { this.state.upstreamReady = true; this.attempt = 0 }
-      if (normalized.message.type === 'member' && this.state.config.welcomeSpeech) this.speech.announce(normalized.message.nickname, normalized.message.receivedAt)
+      if (this.state.config.welcomeSpeech) {
+        if (normalized.message.type === 'member') this.speech.announce(normalized.message.nickname, normalized.message.receivedAt)
+        else if (normalized.message.type === 'like') this.speech.announceLike(normalized.message.nickname, normalized.message.receivedAt)
+      }
       this.sequence += 1
       this.state.messages.push(normalized.message)
       if (this.state.messages.length > 500) this.state.messages.shift()

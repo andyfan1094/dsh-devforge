@@ -224,7 +224,7 @@ function DouyinLiveSidebar({ api, visible, tabPath, tabMeta }: { api: DevforgeAp
       if (action === 'connect') roomDirty.current = false
       applySnapshot(next)
       setPollError('')
-      setFeedback(action === 'clear' ? '消息已清空' : action === 'disconnect' ? '已断开连接' : action === 'autoOn' ? '自动跟随已开启' : action === 'autoOff' ? '自动跟随已关闭' : action === 'speechOn' ? '入场语音已开启' : action === 'speechOff' ? '入场语音已关闭' : '连接请求已受理')
+      setFeedback(action === 'clear' ? '消息已清空' : action === 'disconnect' ? '已断开连接' : action === 'autoOn' ? '自动跟随已开启' : action === 'autoOff' ? '自动跟随已关闭' : action === 'speechOn' ? '语音播报已开启' : action === 'speechOff' ? '语音播报已关闭' : '连接请求已受理')
     } catch (error) {
       if (actionRequest.current === request) {
         setActionError(request.signal.aborted ? '请求已中止，连接状态以最新快照为准' : errorText(error))
@@ -287,7 +287,7 @@ function DouyinLiveSidebar({ api, visible, tabPath, tabMeta }: { api: DevforgeAp
       </form>
       {snapshot && <div className={css.autoRow}>
         <label className={css.check}><input type="checkbox" checked={snapshot.config.autoMonitor} disabled={busy !== null} onChange={(event) => { void runAction(event.target.checked ? 'autoOn' : 'autoOff') }} />自动跟随直播伴侣</label>
-        <label className={css.check}><input type="checkbox" checked={snapshot.config.welcomeSpeech} disabled={busy !== null} onChange={(event) => { void runAction(event.target.checked ? 'speechOn' : 'speechOff') }} />入场语音播报</label>
+        <label className={css.check}><input type="checkbox" checked={snapshot.config.welcomeSpeech} disabled={busy !== null} onChange={(event) => { void runAction(event.target.checked ? 'speechOn' : 'speechOff') }} />进场/点赞语音播报</label>
         <span className={css.autoStatus}>伴侣：{snapshot.companion.installed ? snapshot.companion.state === 'live' ? '直播中' : snapshot.companion.state === 'offline' ? '未开播' : '状态未知' : '未安装'}</span>
       </div>}
       {snapshot && <div className={css.summary}>

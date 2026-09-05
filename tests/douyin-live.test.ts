@@ -32,6 +32,7 @@ function fixture() {
 }
 
 const chat = (id: number) => ({ type: 'WebcastChatMessage', data: { common: { msgId: String(id) }, user: { nickName: '测试观众' }, content: '测试弹幕 ' + id } })
+const like = (id: number, nickname = '点赞观众') => ({ type: 'WebcastLikeMessage', data: { common: { msgId: String(id) }, user: { nickName: nickname }, count: 1 } })
 
 test('房间解析支持号码、直链及逐跳验证分享链接', async () => {
   const signal = AbortSignal.timeout(1000)
@@ -224,6 +225,46 @@ test('入场欢迎语音按昵称60秒和全局3秒限频', () => {
   assert.equal(speech.announce('小明'), true)
   assert.deepEqual(spoken, ['欢迎小明进入我的直播间', '欢迎小红进入我的直播间', '欢迎小明进入我的直播间'])
   speech.dispose()
+})
+
+test('点赞语音轮换祝福并沿用进场限频', () => {
+  let now = 0
+  const spoken: string[] = []
+  const speech = new WelcomeSpeechService(text => spoken.push(text), () => now)
+  assert.equal(speech.announceLike('小明'), true)
+  now = 1000
+  assert.equal(speech.announceLike('小红'), false)
+  now = 3000
+  assert.equal(speech.announceLike('小红'), true)
+  now = 6000
+  assert.equal(speech.announceLike('小李'), true)
+  assert.match(spoken[0]!, /^感谢小明点赞，祝你东财西财八方来财，财源广进$/)
+  assert.notEqual(spoken[0], spoken[1])
+  assert.match(spoken[1]!, /^感谢小红点赞，祝你/)
+  assert.match(spoken[2]!, /^感谢小李点赞，祝你/)
+  now = 9000
+  assert.equal(speech.announceLike('小明'), false)
+  speech.dispose()
+})
+
+test('点赞事件触发 Host 语音播报', async t => {
+  let stored = { roomInput: '123', autoMonitor: false, welcomeSpeech: true }
+  const spoken: string[] = []
+  const sockets: FakeSocket[] = []
+  const speech = new WelcomeSpeechService(text => spoken.push(text), () => 0)
+  const service = new DouyinLiveService({
+    store: { read: () => stored, write: value => { stored = value } }, log: () => {}, monitorIntervalMs: 100000,
+    speech,
+    companionRead: () => ({ installed: false, state: 'unknown', internalRoomId: '', publicRoomId: '', error: '' }),
+    resolve: async input => String(input),
+    socket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket },
+  })
+  t.after(() => service.dispose())
+  await service.connect('123')
+  sockets[0]!.emit('open')
+  sockets[0]!.message(like(1, '点赞观众'))
+  assert.equal(spoken.length, 1)
+  assert.match(spoken[0]!, /^感谢点赞观众点赞，祝你/)
 })
 
 test('路由验证方法、同源边界、损坏JSON与只读快照', async t => {
