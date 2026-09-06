@@ -16,14 +16,12 @@ const ZREAD_ENDPOINT = 'https://open.bigmodel.cn/api/mcp/zread/mcp'
 export interface ZhipuMcpActivationConfig {
   /** 是否启用官方 MCP 工具。 */
   enabled: boolean
-  /** 受管凭据引用名（智谱 Coding Plan Key）。 */
-  apiKeyEnv: string
   /** 单请求超时（毫秒）。 */
   timeoutMs: number
 }
 
-/** 构造三个官方客户端；凭据每次请求重新解析。 */
-export function makeZhipuMcpClients(config: ZhipuMcpActivationConfig, resolveApiKey: () => Promise<string>): { search: ZhipuMcpClient; reader: ZhipuMcpClient; zread: ZhipuMcpClient } {
+/** 构造三个官方客户端；凭据按 Key 池档位每次请求重新解析，401/403/429 自动换挡。 */
+export function makeZhipuMcpClients(config: ZhipuMcpActivationConfig, resolveApiKey: (attempt: number) => Promise<string>): { search: ZhipuMcpClient; reader: ZhipuMcpClient; zread: ZhipuMcpClient } {
   return {
     search: new ZhipuMcpClient(SEARCH_ENDPOINT, resolveApiKey, config.timeoutMs),
     reader: new ZhipuMcpClient(READER_ENDPOINT, resolveApiKey, config.timeoutMs),
@@ -96,7 +94,7 @@ export function makeZhipuMcpToolDefinitions(clients: ReturnType<typeof makeZhipu
 }
 
 /** 在插件作用域注册智谱官方 MCP 工具；返回卸载函数。 */
-export function activateZhipuMcpTools(ctx: Context, config: ZhipuMcpActivationConfig, resolveApiKey: () => Promise<string>): { dispose: () => void } {
+export function activateZhipuMcpTools(ctx: Context, config: ZhipuMcpActivationConfig, resolveApiKey: (attempt: number) => Promise<string>): { dispose: () => void } {
   if (!config.enabled) return { dispose: () => undefined }
   const clients = makeZhipuMcpClients(config, resolveApiKey)
   const tools = makeZhipuMcpToolDefinitions(clients)

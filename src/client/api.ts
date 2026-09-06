@@ -535,10 +535,23 @@ export class DevforgeApi {
     return data.status
   }
 
-  /** 读取智谱官方额度、模型和 MCP 用量。 */
-  async getZhipuDashboard(window: ZhipuUsageWindow, signal?: AbortSignal): Promise<ZhipuDashboard> {
-    const data = await readJson<{ dashboard: ZhipuDashboard }>(await fetch(ZHIPU_API.dashboard + '?window=' + encodeURIComponent(window), { signal }))
+  /** 读取智谱官方额度、模型和 MCP 用量；keyEnv 省略时由 Host 按池序自动切换。 */
+  async getZhipuDashboard(window: ZhipuUsageWindow, signal?: AbortSignal, keyEnv?: string): Promise<ZhipuDashboard> {
+    const params = new URLSearchParams({ window })
+    if (keyEnv !== undefined && keyEnv !== '') params.set('key', keyEnv)
+    const data = await readJson<{ dashboard: ZhipuDashboard }>(await fetch(ZHIPU_API.dashboard + '?' + params.toString(), { signal }))
     return data.dashboard
+  }
+
+  /** 把某把池内 Key 设为主 Key（改写聊天路由 zai-coding-cn 的凭据引用，下一请求生效）。 */
+  async setZhipuPrimaryKey(env: string, signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.setPrimary, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ env }),
+      signal,
+    }))
+    return data.status
   }
 
   /** 补齐 zai-coding-cn 的 GLM-5.3 与 GLM-5.3-Flash。 */
@@ -739,6 +752,15 @@ export class DevforgeApi {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ref, value }),
+    }))
+  }
+
+  /** 从受管凭据中删除一个引用（智谱附加 Key 槽位移除时使用；主 Key 不允许在面板删除）。 */
+  async removeCredential(ref: string): Promise<{ removed: boolean }> {
+    return await readJson(await fetch(CREDENTIALS_API.remove, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref }),
     }))
   }
 

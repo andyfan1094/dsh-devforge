@@ -4,7 +4,12 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { parseQuotaLimits } from './quota.ts'
+import { ZhipuKeyPool, firstSuccessful } from './key-pool.ts'
+import { ZhipuServiceError } from './errors.ts'
 import type { ZhipuDashboard, ZhipuModelUsage, ZhipuStatus, ZhipuToolUsage, ZhipuUsageWindow } from './protocol.ts'
+
+/** 兼容既有导入方（routes/tests）：错误类本体在 errors.ts。 */
+export { ZhipuServiceError }
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 const PROVIDER_ID = 'zai-coding-cn'
@@ -25,6 +30,20 @@ export function mergeZhipuProvider(provider: Record<string, unknown> | undefined
   }
 }
 
+/** 解析当前主 Key 引用名：聊天路由 zai-coding-cn 的 provider.apiKeyEnv 优先，回落插件配置。 */
+export function resolveZhipuPrimaryKeyName(
+  section: { providers?: Record<string, { apiKeyEnv?: unknown }> } | undefined,
+  fallback: string,
+): string {
+  const env = section?.providers?.[PROVIDER_ID]?.apiKeyEnv
+  return typeof env === 'string' && env !== '' ? env : fallback
+}
+
+/** llm-pi-ai 设置里智谱 provider 段的读取形状。 */
+interface ZhipuProviderSection {
+  providers?: Record<string, { models?: Array<{ id?: string }>; apiKeyEnv?: unknown }>
+}
+
 /** 智谱 capability 配置。 */
 export interface ZhipuCapabilityConfig {
   enabled: boolean
@@ -34,34 +53,32 @@ export interface ZhipuCapabilityConfig {
   mcpTools: boolean
 }
 
-/** 可直接呈现给面板的分类错误；内容不得包含请求头或 Key。 */
-export class ZhipuServiceError extends Error {
-  readonly status: number
-
-  constructor(message: string, status = 502) {
-    super(message)
-    this.name = 'ZhipuServiceError'
-    this.status = status
-  }
-}
-
 /** 智谱官方模型与监控接口服务。 */
 export class ZhipuCodingPlanService {
   /** 上游固定为官方 HTTPS 域名，避免自定义地址带走 API Key。 */
   private readonly baseURL = 'https://open.bigmodel.cn'
   private readonly ctx: Context
   private readonly config: ZhipuCapabilityConfig
+  /** Key 池：主 Key + 附加槽位的统一解析与失败切换来源。 */
+  private readonly pool: ZhipuKeyPool
 
-  constructor(ctx: Context, config: ZhipuCapabilityConfig) {
+  constructor(ctx: Context, config: ZhipuCapabilityConfig, pool: ZhipuKeyPool) {
     this.ctx = ctx
     this.config = config
+    this.pool = pool
   }
 
-  /** 返回凭据和模型路由的脱敏状态。 */
+  /** 当前主 Key 引用名（聊天路由实际使用的凭据引用，面板「设为主 Key」的目标位）。 */
+  private async primaryName(): Promise<string> {
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    return resolveZhipuPrimaryKeyName(section, this.config.apiKeyEnv)
+  }
+
+  /** 返回凭据和模型路由的脱敏状态（含 Key 池清单）。 */
   async status(): Promise<ZhipuStatus> {
-    const reference = this.reference()
+    const reference = this.providerReference()
     const credential = await this.ctx.credentials.describe(reference)
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
     const provider = section?.providers?.[PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configuredIds = new Set(liveIds)
@@ -74,12 +91,18 @@ export class ZhipuCodingPlanService {
       providerConfigured: provider !== undefined,
       models: displayIds.map((id) => ({ id, configured: configuredIds.has(id) })),
       mcpTools: this.config.mcpTools,
+      keys: await this.pool.list(),
     }
   }
 
-  /** 调官方 /api/paas/v4/models 拉取在售模型清单，合并进 provider，返回更新后状态。 */
+  /** 调官方 /api/paas/v4/models 拉取在售模型清单，合并进 provider；Key 失效或限流自动切换。 */
   async fetchModelsFromOfficial(): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
-    const apiKey = await this.resolveApiKey()
+    const candidates = await this.pool.ordered()
+    return await firstSuccessful(candidates, (candidate) => this.fetchModelsWithKey(candidate.value))
+  }
+
+  /** 用一把 Key 拉取官方模型清单（不含切换逻辑）。 */
+  private async fetchModelsWithKey(apiKey: string): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
     const controller = new AbortController()
     const timer = setTimeout(controller.abort.bind(controller), this.config.timeoutMs)
     let response: Response
@@ -104,9 +127,23 @@ export class ZhipuCodingPlanService {
     return next
   }
 
-  /** 查询额度和选定时间窗内的模型、MCP 用量。 */
-  async dashboard(window: ZhipuUsageWindow, signal?: AbortSignal): Promise<ZhipuDashboard> {
-    const apiKey = await this.resolveApiKey()
+  /**
+   * 查询额度和选定时间窗内的模型、MCP 用量。
+   * keyEnv 省略时按池序（主 Key 优先）查询并自动切换；指定时只查该把 Key（按 Key 查看用量）。
+   * 返回值带 keyEnv 标明实际使用的是哪把 Key。
+   */
+  async dashboard(window: ZhipuUsageWindow, signal?: AbortSignal, keyEnv?: string): Promise<ZhipuDashboard> {
+    const candidates = keyEnv !== undefined && keyEnv !== ''
+      ? [await this.pool.resolveByEnv(keyEnv)]
+      : await this.pool.ordered()
+    return await firstSuccessful(candidates, async (candidate) => ({
+      ...(await this.fetchDashboard(candidate.value, window, signal)),
+      keyEnv: candidate.env,
+    }))
+  }
+
+  /** 用一把 Key 查询监控接口并规整看板数据（不含切换逻辑）。 */
+  private async fetchDashboard(apiKey: string, window: ZhipuUsageWindow, signal?: AbortSignal): Promise<Omit<ZhipuDashboard, 'keyEnv'>> {
     const end = new Date()
     const hours = window === 'day' ? 24 : 24 * 7
     const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
@@ -128,6 +165,34 @@ export class ZhipuCodingPlanService {
       fetchedAt: Date.now(),
       warnings,
     }
+  }
+
+  /** 把某把池内 Key 设为主 Key：改写聊天路由 provider.apiKeyEnv，下一请求即生效。 */
+  async setPrimaryKey(env: string): Promise<ZhipuStatus> {
+    // 先校验该引用在池内且已配置，未配置的空槽位不允许设为主 Key。
+    await this.pool.resolveByEnv(env)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as ZhipuProviderSection | undefined
+      const provider = current?.providers?.[PROVIDER_ID]
+      if (provider !== undefined && provider.apiKeyEnv === env) return await this.status()
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
+          op: 'set',
+          path: ['providers', PROVIDER_ID, 'apiKeyEnv'],
+          value: env,
+        }], descriptor.revision)
+        return await this.status()
+      } catch (error) {
+        if (error instanceof SettingsConflictError) {
+          if (attempt === 1) throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+          continue
+        }
+        throw error
+      }
+    }
+    throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
   }
 
   /** 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。 */
@@ -157,10 +222,12 @@ export class ZhipuCodingPlanService {
     throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
   }
 
-  /** 校验并构造凭据引用，避免错误配置以内部异常呈现。 */
-  private reference(): ReturnType<typeof credentialRef> {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.config.apiKeyEnv)) throw new ZhipuServiceError('智谱凭据引用格式无效。', 400)
-    return credentialRef(this.config.apiKeyEnv)
+  /** 校验并构造聊天路由 provider 的凭据引用（主 Key 的脱敏状态仍按它上报）。 */
+  private providerReference(): ReturnType<typeof credentialRef> {
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const name = resolveZhipuPrimaryKeyName(section, this.config.apiKeyEnv)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new ZhipuServiceError('智谱凭据引用格式无效。', 400)
+    return credentialRef(name)
   }
 
   /** 把官方 models 合并进 provider；写 settings 复用并发重试。 */
@@ -196,15 +263,6 @@ export class ZhipuCodingPlanService {
     }
     throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
   }
-
-  /** 每次请求重新解析凭据，Key 更新无需重启。 */
-  private async resolveApiKey(): Promise<string> {
-    const resolved = await this.ctx.credentials.resolve(this.reference())
-    const value = resolved?.value.trim()
-    if (value === undefined || value === '') throw new ZhipuServiceError('尚未配置智谱 Coding Plan API Key。', 400)
-    return value
-  }
-
 
   /** 访问官方监控接口，限制响应大小并分类常见错误。 */
   private async get(path: string, apiKey: string, signal?: AbortSignal): Promise<unknown> {

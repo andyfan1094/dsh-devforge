@@ -68,8 +68,9 @@ import type { BrowserStatus } from './browser/protocol.ts'
 import { makeBrowserRoutes } from './browser/routes.ts'
 import type { BrowserRoutesService } from './browser/service.ts'
 import { makeZhipuRoutes } from './zhipu/routes.ts'
-import { ZhipuCodingPlanService, type ZhipuCapabilityConfig } from './zhipu/service.ts'
+import { ZhipuCodingPlanService, resolveZhipuPrimaryKeyName, type ZhipuCapabilityConfig } from './zhipu/service.ts'
 import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
+import { ZhipuKeyPool } from './zhipu/key-pool.ts'
 import { makeMiniMaxRoutes } from './minimax/routes.ts'
 import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.ts'
 import { activateMiniMaxTools, activateMiniMaxHubTools } from './minimax/tools.ts'
@@ -275,7 +276,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
-  '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度。',
+  '- zhipu_web_search / zhipu_web_reader / zhipu_zread_search / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（联网搜索/网页读取/开源仓库解读），消耗套餐每月 MCP 额度；Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换。',
   '- minimax_web_search / minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（联网搜索/图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
   '- OpenAI 中转站：Coding Plan 页内支持多个中转端点、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
@@ -401,7 +402,12 @@ export function apply(ctx: Context, config?: Config): void {
   }
 
   // ---- 常驻套餐能力服务：路由与启动自动补齐共用同一实例。----
-  const zhipuService = new ZhipuCodingPlanService(ctx, zhipuConfig)
+  // 智谱 Key 池：主 Key 取聊天路由 provider.apiKeyEnv（回落插件配置），附加槽位固定命名 _2…_6。
+  const zhipuKeys = new ZhipuKeyPool(ctx.credentials, async () => {
+    const section = ctx.settings.get(settingsNamespace('llm-pi-ai')) as { providers?: Record<string, { apiKeyEnv?: unknown }> } | undefined
+    return resolveZhipuPrimaryKeyName(section, zhipuConfig.apiKeyEnv)
+  })
+  const zhipuService = new ZhipuCodingPlanService(ctx, zhipuConfig, zhipuKeys)
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
@@ -468,6 +474,15 @@ export function apply(ctx: Context, config?: Config): void {
     if (value === undefined || value === '') throw new RagEmbeddingError(missing, 400)
     return value
   }
+  // 智谱 RAG 凭据：按 Key 池取第一把已配置 Key（主 Key 优先；embeddings/rerank 不做请求级失败切换，见 README 边界）。
+  const zhipuPoolCredential = (missing: string) => async (): Promise<string> => {
+    try {
+      const ordered = await zhipuKeys.ordered()
+      return ordered[0].value
+    } catch {
+      throw new RagEmbeddingError(missing, 400)
+    }
+  }
   const ragOpenAiCredential = async (): Promise<string> => {
     const openai = resolve().openai
     const env = openai?.endpoints?.[0]?.apiKeyEnv ?? openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY'
@@ -480,7 +495,7 @@ export function apply(ctx: Context, config?: Config): void {
     return baseURL.replace(/\/v1\/?$/i, '')
   }
   const ragEmbedders = {
-    zhipu: new ZhipuEmbedder(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 向量化不可用。')),
+    zhipu: new ZhipuEmbedder(zhipuPoolCredential('尚未配置智谱 API Key（Key 池为空），RAG 向量化不可用。')),
     ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', path: '/embeddings', model: 'doubao-embedding' }),
     'openai-gateway': new ZhipuEmbedder(ragOpenAiCredential, { baseURLProvider: ragOpenAiBaseURL, path: '/v1/embeddings', model: 'text-embedding-3-small' }),
     // 本地 Ollama：零额度免费无限用（bge-m3 中文 1024 维）；key 占位不影响（Ollama 不校验）。
@@ -507,8 +522,8 @@ export function apply(ctx: Context, config?: Config): void {
   const ragStore = new RagStore()
   const ragService = new RagService(ragStore, ragEmbedders)
   const nativeMemory = new NativeMemoryStore(ragStore)
-  // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）。
-  ragService.setReranker(new ZhipuReranker(ragCredential('ZAI_CODING_CN_API_KEY', '尚未配置智谱 API Key（ZAI_CODING_CN_API_KEY），RAG 精排不可用。')))
+  // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）；凭据同样走 Key 池第一把。
+  ragService.setReranker(new ZhipuReranker(zhipuPoolCredential('尚未配置智谱 API Key（Key 池为空），RAG 精排不可用。')))
 
   /** 默认模型路由文本生成（记忆提炼/重排打分/工作流共用；凭据由宿主 Provider 体系承载）。 */
   const generateText = async (input: { system: string; user: string; maxTokens?: number; provider?: string; model?: string }): Promise<string> => {
@@ -776,13 +791,11 @@ export function apply(ctx: Context, config?: Config): void {
           : {}),
       }).dispose
     })
-    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走受管引用，绝不落明文。
+    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走 Key 池（401/403/429 自动换下一把），绝不落明文。
     safeActivate(ctx, '智谱 MCP 工具', () => {
-      disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled === true && value.zhipu?.mcpTools !== false, apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY', timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async () => {
-        const resolved = await ctx.credentials.resolve(credentialRef(value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY'))
-        const apiKeyValue = resolved?.value.trim() ?? ''
-        if (apiKeyValue === '') throw new Error('尚未配置智谱 Coding Plan API Key，无法调用官方 MCP 工具。')
-        return apiKeyValue
+      disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled === true && value.zhipu?.mcpTools !== false, timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async (attempt) => {
+        const picked = await zhipuKeys.resolveByAttempt(attempt)
+        return picked.value
       }).dispose
     })
     safeActivate(ctx, '远程运维', () => {

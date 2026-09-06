@@ -6,6 +6,7 @@ export const ZHIPU_API = {
   dashboard: '/api/dsh-devforge/zhipu/dashboard',
   setup: '/api/dsh-devforge/zhipu/setup',
   fetchModels: '/api/dsh-devforge/zhipu/fetch-models',
+  setPrimary: '/api/dsh-devforge/zhipu/set-primary',
 } as const
 
 /** 用量查询窗口。 */
@@ -48,6 +49,8 @@ export interface ZhipuDashboard {
   window: ZhipuUsageWindow
   fetchedAt: number
   warnings: string[]
+  /** 本次数据实际使用的受管凭据引用名（多 Key 池下标明数据归属）。 */
+  keyEnv?: string
 }
 
 /** 官方 MCP 工具描述（tools/list 规整后）。 */
@@ -56,6 +59,16 @@ export interface ZhipuMcpToolDescriptor {
   name: string
   /** 官方工具说明。 */
   description: string
+}
+
+/** 一把池内 Key 的脱敏描述（与 key-pool 保持同一形状）。 */
+export interface ZhipuPoolKey {
+  /** 受管凭据引用名。 */
+  env: string
+  /** 是否已配置（可参与解析与切换）。 */
+  configured: boolean
+  /** 是否为主 Key（聊天模型路由当前使用的引用）。 */
+  primary: boolean
 }
 
 /** 模型路由和凭据的脱敏状态。 */
@@ -67,4 +80,6 @@ export interface ZhipuStatus {
   models: Array<{ id: string; configured: boolean }>
   /** 官方 MCP 工具（联网搜索/网页读取/Zread）是否启用。 */
   mcpTools: boolean
+  /** Key 池清单：主 Key 在前，附加槽位按序跟随（含未配置槽位，供面板管理）。 */
+  keys: ZhipuPoolKey[]
 }

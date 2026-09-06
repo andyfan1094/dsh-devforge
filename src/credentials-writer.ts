@@ -59,6 +59,22 @@ function upsertRef(raw: string, ref: string, value: string): string {
   return joinLines(lines)
 }
 
+/** 从受管凭据中删除一个 ref（不存在则无操作）；返回 { removed } 表示本次是否真的删了。 */
+export async function deleteCredential(ref: string, filePath?: string): Promise<{ removed: boolean }> {
+  if (!REF_PATTERN.test(ref)) throw new Error('凭据引用名格式无效：' + ref)
+  const target = resolvePath(filePath)
+  const raw = await readSafe(filePath)
+  if (raw === '') return { removed: false }
+  const lines = raw.split('\n')
+  const entry = parseRefs(raw).find((item) => item.ref === ref)
+  if (entry === undefined) return { removed: false }
+  const backupPath = target + '.bak.' + formatTimestamp()
+  try { await copyFile(target, backupPath) } catch { /* 备份失败不阻塞删除 */ }
+  lines.splice(entry.line, 1)
+  await writeFile(target, joinLines(lines), { mode: 0o600 })
+  return { removed: true }
+}
+
 /** 在 raw 中解析 refs 段。 */
 function parseRefs(raw: string): Array<{ ref: string; line: number }> {
   if (raw === '') return []
