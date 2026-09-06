@@ -85,6 +85,9 @@ function acquireThemeLease(themeSvc: ThemeRegistrationService): () => void {
   }
 }
 
+/** 界面遮罩滑杆下限：0 表示完全显示主题背景图。 */
+export const MIN_WALLPAPER_OPACITY = 0
+
 /** 默认值。 */
 const DEFAULT_WALLPAPER_OPACITY = 0.82
 const DEFAULT_WALLPAPER_BLUR = 0

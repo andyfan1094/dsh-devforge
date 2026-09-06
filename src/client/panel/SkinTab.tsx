@@ -9,7 +9,7 @@ import type { JSX } from 'react'
 import type { SkinRuntimeApi, SkinState, WallpaperFit } from '../theme/skin-runtime.ts'
 import type { DevforgeKey } from '../locales.ts'
 import { ACCENT_PRESETS, pickTextOn } from '../theme/accent.ts'
-import { WALLPAPER_FITS } from '../theme/skin-runtime.ts'
+import { MIN_WALLPAPER_OPACITY, WALLPAPER_FITS } from '../theme/skin-runtime.ts'
 import { tt } from './helpers.ts'
 import css from './panel.module.css'
 
@@ -268,7 +268,7 @@ export function SkinTab({ skin }: SkinTabProps): JSX.Element {
             <span>{tt('skin.opacity')}</span>
             <input
               type="range"
-              min={0.4}
+              min={MIN_WALLPAPER_OPACITY}
               max={1}
               step={0.02}
               value={state.opacity}

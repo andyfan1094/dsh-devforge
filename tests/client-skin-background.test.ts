@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { SKINS } from '../src/client/theme/skins.ts'
-import { createSkinRuntime } from '../src/client/theme/skin-runtime.ts'
+import { createSkinRuntime, MIN_WALLPAPER_OPACITY } from '../src/client/theme/skin-runtime.ts'
 
 test('主题背景随切换更新，自定义壁纸优先且清除后回退主题图', () => {
   const root = globalThis as unknown as { window?: unknown }
@@ -33,6 +33,8 @@ test('主题背景随切换更新，自定义壁纸优先且清除后回退主�
     assert.equal(runtime.applySkin(first.id), true)
     assert.equal(runtime.getState().wallpaperSource, 'skin')
     assert.equal(runtime.getState().wallpaper, first.backgroundImage)
+    runtime.setWallpaperOpacity(MIN_WALLPAPER_OPACITY)
+    assert.equal(runtime.getState().opacity, 0, '遮罩应支持降到 0%')
 
     const custom = 'data:image/jpeg;base64,custom-wallpaper'
     assert.equal(runtime.setWallpaper(custom), true)
