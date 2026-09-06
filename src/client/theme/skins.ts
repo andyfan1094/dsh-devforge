@@ -16,6 +16,7 @@
 
 import type { ThemeDefinition } from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { DevforgeKey } from '../locales.ts'
+import { THEME_BACKGROUNDS } from './backgrounds.ts'
 
 /** 单套皮肤的全部 token key 列表（测试 + 文档的真相源）。 */
 export const REQUIRED_TOKEN_KEYS = [
@@ -52,6 +53,8 @@ export const REQUIRED_TOKEN_KEYS = [
 export interface SkinDefinition extends ThemeDefinition {
   /** locale key（zh/en 都必填，单测断言）。 */
   labelKey: DevforgeKey
+  /** 与主题绑定的默认背景图；用户手动壁纸存在时由运行时让位。 */
+  backgroundImage: string
 }
 
 /** 内置皮肤目录 —— 注册顺序即 GUI 皮肤选择器的展示顺序。 */
@@ -59,6 +62,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-dawn-mist',
     labelKey: 'skin.dawnMist',
+    backgroundImage: THEME_BACKGROUNDS['devforge-dawn-mist'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#f6f9fd',
@@ -93,6 +97,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-sakura',
     labelKey: 'skin.sakura',
+    backgroundImage: THEME_BACKGROUNDS['devforge-sakura'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#fdf5f8',
@@ -127,6 +132,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-paper',
     labelKey: 'skin.paper',
+    backgroundImage: THEME_BACKGROUNDS['devforge-paper'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#faf6ee',
@@ -161,6 +167,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-forest',
     labelKey: 'skin.forest',
+    backgroundImage: THEME_BACKGROUNDS['devforge-forest'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#f4faf5',
@@ -195,6 +202,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-citrus',
     labelKey: 'skin.citrus',
+    backgroundImage: THEME_BACKGROUNDS['devforge-citrus'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#fdf8f2',
@@ -229,6 +237,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-midnight',
     labelKey: 'skin.midnight',
+    backgroundImage: THEME_BACKGROUNDS['devforge-midnight'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#0f1420',
@@ -263,6 +272,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-graphite',
     labelKey: 'skin.graphite',
+    backgroundImage: THEME_BACKGROUNDS['devforge-graphite'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#131316',
@@ -297,6 +307,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-violet-night',
     labelKey: 'skin.violetNight',
+    backgroundImage: THEME_BACKGROUNDS['devforge-violet-night'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#1c1230',
@@ -331,6 +342,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-pine-night',
     labelKey: 'skin.pineNight',
+    backgroundImage: THEME_BACKGROUNDS['devforge-pine-night'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#0b1411',
@@ -365,6 +377,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-jade-ink',
     labelKey: 'skin.jadeInk',
+    backgroundImage: THEME_BACKGROUNDS['devforge-jade-ink'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#0c1517',
@@ -399,6 +412,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-lavender',
     labelKey: 'skin.lavender',
+    backgroundImage: THEME_BACKGROUNDS['devforge-lavender'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#f6f3fb',
@@ -433,6 +447,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-wisteria',
     labelKey: 'skin.wisteria',
+    backgroundImage: THEME_BACKGROUNDS['devforge-wisteria'],
     colorScheme: 'light',
     tokens: {
       '--dsw-alias-bg-base': '#faf5fd',
@@ -467,6 +482,7 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     id: 'devforge-crystal-violet',
     labelKey: 'skin.crystalViolet',
+    backgroundImage: THEME_BACKGROUNDS['devforge-crystal-violet'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#14101e',
@@ -504,6 +520,7 @@ export const SKINS: readonly SkinDefinition[] = [
     // 改为深色红墙底，主色用高饱和朱砂，一眼即是中国红。
     id: 'devforge-china-red',
     labelKey: 'skin.chinaRed',
+    backgroundImage: THEME_BACKGROUNDS['devforge-china-red'],
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': '#260b0f',

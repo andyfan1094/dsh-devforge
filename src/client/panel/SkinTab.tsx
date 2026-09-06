@@ -25,19 +25,25 @@ function fmtSize(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(2) + ' MB'
 }
 
-/** 单皮肤卡片预览 swatch（inline style 取自 token）。 */
-function SkinSwatch(props: { tokens: Record<string, string> }): JSX.Element {
+/** 单皮肤卡片预览：使用主题对应背景图，并叠加轻遮罩保证色板文字可读。 */
+function SkinSwatch(props: { tokens: Record<string, string>; backgroundImage: string; colorScheme: 'light' | 'dark' }): JSX.Element {
   const t = props.tokens
-  const gradient = 'linear-gradient(120deg, '
+  const fallback = 'linear-gradient(120deg, '
     + (t['--dsw-alias-bg-layer-2'] ?? '#fff')
     + ' 0%, '
     + (t['--dsw-alias-bg-layer-1'] ?? '#fff')
     + ' 60%, '
     + (t['--dsw-alias-bg-layer-3'] ?? '#fff')
     + ' 100%)'
+  const wash = props.colorScheme === 'dark'
+    ? 'linear-gradient(120deg, rgba(5, 8, 16, 0.56), rgba(5, 8, 16, 0.18))'
+    : 'linear-gradient(120deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.04))'
+  const background = props.backgroundImage.length > 0
+    ? wash + ', url("' + props.backgroundImage.replace(/"/g, '%22') + '")'
+    : fallback
   return (
     <div className={css['skinSwatch']}>
-      <div className={css['skinSwatchBg']} style={{ background: gradient }} />
+      <div className={css['skinSwatchBg']} style={{ background }} />
       <div
         className={css['skinSwatchDot']}
         style={{
@@ -154,7 +160,11 @@ export function SkinTab({ skin }: SkinTabProps): JSX.Element {
               onClick={() => skin.applySkin(s.id)}
               title={tt(s.labelKey)}
             >
-              <SkinSwatch tokens={s.tokens as Record<string, string>} />
+              <SkinSwatch
+                tokens={s.tokens as Record<string, string>}
+                backgroundImage={s.backgroundImage}
+                colorScheme={s.colorScheme}
+              />
               <div className={css['skinCardMeta']}>
                 <span className={css['skinCardName']}>{tt(s.labelKey)}</span>
                 <span
@@ -242,13 +252,15 @@ export function SkinTab({ skin }: SkinTabProps): JSX.Element {
           <button
             type="button"
             className={css['ghostButton']}
-            disabled={state.wallpaper === null}
+            disabled={state.wallpaperSource !== 'custom'}
             onClick={handleRemoveWallpaper}
-          >{tt('skin.wallpaperRemove')}</button>
+          >{tt('skin.wallpaperRestoreTheme')}</button>
           <span className={css['sectionHint']}>
             {state.wallpaper === null
               ? tt('skin.wallpaperOff')
-              : fmtSize(state.wallpaper.length)}
+              : state.wallpaperSource === 'custom'
+                ? tt('skin.wallpaperCustom') + ' · ' + fmtSize(state.wallpaper.length)
+                : tt('skin.wallpaperFollowing')}
           </span>
         </div>
         <div className={css['sliderRow']}>

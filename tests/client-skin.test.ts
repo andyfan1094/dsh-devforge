@@ -90,8 +90,8 @@ test('ACCENT_PRESETS 全部 hex 合法 + 全部 labelKey 命中 zhDict', () => {
   }
 })
 
-test('SKINS 至少 5 套深 + 5 套浅，且 id 唯一', () => {
-  assert.ok(SKINS.length >= 8, '至少 8 套皮肤')
+test('SKINS 恰好 14 套，覆盖现有浅色与深色主题，且 id 唯一', () => {
+  assert.equal(SKINS.length, 14, '主题数量应保持 14 套，避免漏配背景')
   const ids = new Set<string>()
   let lightCount = 0
   let darkCount = 0
@@ -102,17 +102,18 @@ test('SKINS 至少 5 套深 + 5 套浅，且 id 唯一', () => {
     if (s.colorScheme === 'light') lightCount++
     else darkCount++
   }
-  assert.ok(lightCount >= 4, '浅色至少 4 套')
-  assert.ok(darkCount >= 4, '深色至少 4 套')
+  assert.equal(lightCount, 7, '浅色主题应保持 7 套')
+  assert.equal(darkCount, 7, '深色主题应保持 7 套')
 })
 
-test('SKINS 每套都覆盖全部必需 token，且 token 值非空', () => {
+test('SKINS 每套都绑定唯一的内嵌高质量背景图', () => {
+  const backgrounds = new Set<string>()
   for (const s of SKINS) {
-    for (const key of REQUIRED_TOKEN_KEYS) {
-      assert.ok(typeof s.tokens[key] === 'string', s.id + ' 缺少 token: ' + key)
-      assert.ok((s.tokens[key] ?? '').length > 0, s.id + ' token ' + key + ' 不能为空')
-    }
+    assert.match(s.backgroundImage, /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/, s.id + ' 背景必须是 JPEG data URL')
+    assert.ok(s.backgroundImage.length > 50_000, s.id + ' 背景 data URL 体积异常，可能只剩占位符')
+    backgrounds.add(s.backgroundImage)
   }
+  assert.equal(backgrounds.size, SKINS.length, '每套主题必须使用不同背景图')
 })
 
 test('SKINS 的 labelKey 全部命中 zh/en 双语字典', () => {

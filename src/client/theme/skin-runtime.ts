@@ -98,6 +98,9 @@ export type WallpaperFit = 'cover' | 'contain' | 'stretch' | 'tile'
 
 export const WALLPAPER_FITS: readonly WallpaperFit[] = ['cover', 'contain', 'stretch', 'tile']
 
+/** 壁纸来源：主题默认背景，或用户主动选择的自定义壁纸。 */
+export type WallpaperSource = 'skin' | 'custom'
+
 /** 用户态快照（订阅者使用）。 */
 export interface SkinState {
   /**
@@ -110,6 +113,8 @@ export interface SkinState {
   accent: string | null
   /** 当前壁纸地址（http(s)/data）；未选为 null。 */
   wallpaper: string | null
+  /** 当前壁纸来源：主题背景会随皮肤切换，自定义壁纸覆盖主题默认值。 */
+  wallpaperSource: WallpaperSource
   /** 遮罩浓度 0..1（保留 0..1 不动）。 */
   opacity: number
   /** 模糊 px（0..24）。 */
@@ -136,7 +141,7 @@ export interface SkinRuntimeApi {
   applySkin(id: string | null): boolean
   /** 强调色：hex 形如 #rrggbb；非法或 null 清除叠加层。 */
   setAccent(hex: string | null): boolean
-  /** 壁纸：地址或 null。校验格式与大小。返回 false 表示未生效。 */
+  /** 自定义壁纸：地址或 null；传 null 回退到当前主题背景。返回 false 表示未生效。 */
   setWallpaper(url: string | null): boolean
   setWallpaperOpacity(opacity: number): void
   setWallpaperBlur(blur: number): void
@@ -215,6 +220,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     skinId: null,
     accent: null,
     wallpaper: null,
+    wallpaperSource: 'skin',
     opacity: DEFAULT_WALLPAPER_OPACITY,
     blur: DEFAULT_WALLPAPER_BLUR,
     fit: DEFAULT_WALLPAPER_FIT,
@@ -237,6 +243,14 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   }
   const savedSkin = readStorage(KEY_SKIN)
   if (savedSkin !== null && findSkin(savedSkin) !== undefined) desiredSkinId = savedSkin
+  const savedWallpaper = readStorage(KEY_WALLPAPER)
+  if (savedWallpaper !== null && savedWallpaper.length > 0) {
+    state.wallpaperSource = 'custom'
+    state.wallpaper = savedWallpaper
+  } else if (desiredSkinId !== null) {
+    // 内置背景不写入 localStorage，只由已持久化的主题选择推导出来。
+    state.wallpaper = findSkin(desiredSkinId)?.backgroundImage ?? null
+  }
   const releaseThemeLease = themeSvc === undefined ? undefined : acquireThemeLease(themeSvc)
 
   /** 读取官方 runtime 当前激活的内置皮肤 id；system/light/dark 返回 null。 */
@@ -257,8 +271,18 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     if (nextId !== state.skinId) state.skinId = nextId
   }
 
+  /** 主题未被用户壁纸覆盖时，按当前皮肤切换默认背景。 */
+  function syncSkinWallpaper(): void {
+    if (state.wallpaperSource !== 'skin') return
+    const next = state.skinId === null ? null : (findSkin(state.skinId)?.backgroundImage ?? null)
+    if (state.wallpaper === next) return
+    state.wallpaper = next
+    whenBodyReady(applyWallpaper)
+  }
+
   function bump(): void {
     syncFromTheme()
+    syncSkinWallpaper()
     state.revision += 1
     // 关键：推给订阅者的是浅拷贝快照，绝不是可变的 state 本体。
     // React 的 useState setter 对 Object.is 相同的引用会直接跳过重渲染，
@@ -324,6 +348,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
   function updateWallpaperEl(): void {
     const el = ensureWallpaperEl()
     if (el === null) return
+    el.style.backgroundRepeat = 'no-repeat'
     if (state.wallpaper === null) {
       el.style.backgroundImage = ''
       el.style.filter = ''
@@ -447,8 +472,6 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     if (Number.isFinite(bl) && bl >= 0 && bl <= 24) state.blur = bl
     const fit = readStorage(KEY_WALLPAPER_FIT)
     if (fit !== null && (WALLPAPER_FITS as readonly string[]).includes(fit)) state.fit = fit as WallpaperFit
-    const wp = readStorage(KEY_WALLPAPER)
-    if (wp !== null && wp.length > 0) state.wallpaper = wp
   }
 
   /** 监听主题变更：同步 state + 必要时重铺壁纸遮罩。 */
@@ -456,6 +479,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     const off = ctx.on('theme/change', () => {
       const prevSkinId = state.skinId
       syncFromTheme()
+      syncSkinWallpaper()
       if (state.wallpaper !== null) applyWallpaperShade()
       // 模型选择或设置刷新导致回到 system 时，重新应用本地持久化皮肤。
       if (!applyingTheme && desiredSkinId !== null && activeSkinId() !== desiredSkinId) scheduleSkinRestore()
@@ -520,7 +544,10 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
 
   function setWallpaper(url: string | null): boolean {
     if (url === null) {
+      // 清除用户壁纸后回到当前主题的默认背景，而不是让主题永久变成无背景。
+      state.wallpaperSource = 'skin'
       state.wallpaper = null
+      syncSkinWallpaper()
       if (!writeStorage(KEY_WALLPAPER, null)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
       state.error = undefined
       whenBodyReady(applyWallpaper)
@@ -528,6 +555,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
       return true
     }
     if (!isValidWallpaperUrl(url)) return false
+    state.wallpaperSource = 'custom'
     state.wallpaper = url
     if (!writeStorage(KEY_WALLPAPER, url)) { state.error = 'localStorage 写入失败（配额已满或浏览器策略禁用）'; bump(); return false }
     state.error = undefined

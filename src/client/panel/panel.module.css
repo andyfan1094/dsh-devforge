@@ -446,7 +446,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
   gap: 4px;
   border: 1px solid rgba(0, 0, 0, .06);
 }
-.skinSwatchBg { position: absolute; inset: 0; }
+.skinSwatchBg { position: absolute; inset: 0; background-position: center; background-size: cover; filter: saturate(.88) contrast(.96); }
 .skinSwatchDot {
   position: relative;
   display: inline-flex;
