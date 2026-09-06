@@ -13,6 +13,8 @@ import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src
 import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText } from '../src/memory/sediment.ts'
 import { buildMemoryQuery, messageText, MemoryInjectionService, RELATIVE_KEEP_RATIO, renderMemoryContext, renderNativeContext, stripBoilerplate } from '../src/memory/inject.ts'
 import { MemoryStatsStore } from '../src/memory/stats.ts'
+import { NativeMemoryStore } from '../src/memory/native.ts'
+import { RagStore } from '../src/rag/rag-store.ts'
 import { closeDb } from '../src/store/db.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
 import type { RagDocument, RagSearchHit } from '../src/rag/protocol.ts'
@@ -271,6 +273,24 @@ describe('记忆主动注入', () => {
     assert.ok(RELATIVE_KEEP_RATIO > 0.3 && RELATIVE_KEEP_RATIO < 1)
     assert.ok(text !== undefined && text.includes('内容1'))
     assert.ok(!text.includes('内容2'))
+  })
+  test('decide 常驻记忆：检索零命中仍注入常驻块，且常驻条目不重复', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-pinned-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      native.create({ content: '未经辉哥再次确认不得重启生产环境', importance: 4, pinned: true }, 'rule-1')
+      const rag = fakeRag({ search: async () => [] })
+      const injection = new MemoryInjectionService(rag, () => SETTINGS, native)
+      const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: '帮我看看今天的直播数据' }] }])
+      assert.equal(detail.reason, undefined, '常驻记忆存在时即使检索零命中也必须注入')
+      assert.ok(detail.text?.includes('常驻记忆'))
+      assert.ok(detail.text?.includes('未经辉哥再次确认不得重启生产环境'))
+      // 常驻条目同时命中检索时只在常驻块出现一次（去重）。
+      native.create({ content: '直播数据看板地址是 live.example.com', importance: 3, pinned: true }, 'pin-1')
+      const detail2 = await injection.decideDetailed([{ content: [{ type: 'text', text: '直播数据看板地址是 live.example.com' }] }])
+      const occurrences = (detail2.text?.match(/live\.example\.com/g) ?? []).length
+      assert.equal(occurrences, 1, '常驻条目不得在检索块重复出现')
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
   })
 })
 

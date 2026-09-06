@@ -49,6 +49,25 @@ test('内置记忆：检索分词门槛（中文二元组命中、单词误伤�
   assert.equal(store.search('setsid nohup')[0]?.id, 'pit-1')
 })
 
+test('内置记忆：钉选常驻（仅显式 pinned，critical 不自动常驻）', () => {
+  const store = makeStore()
+  store.create({ content: '辉哥偏好紧凑排版', importance: 3 }, 'pref-1')
+  const pinned = store.create({ content: '辉哥偏好鼠标跟随演示模式', importance: 3, pinned: true }, 'pin-1')
+  assert.equal(pinned.pinned, true)
+  // importance=5 不自动常驻：沉淀模型的 critical 会通膨，常驻必须显式钉选。
+  store.create({ content: '未经辉哥再次确认不得重启生产', importance: 5 }, 'rule-1')
+  assert.deepEqual(store.listPinned().map((entry) => entry.id), ['pin-1'])
+  // patch 传 pinned:false 取消钉选后退出常驻清单。
+  store.update('rule-1', { pinned: true })
+  assert.deepEqual(store.listPinned().map((entry) => entry.id).sort(), ['pin-1', 'rule-1'])
+  store.update('pin-1', { pinned: false })
+  assert.equal(store.get('pin-1')?.pinned, undefined)
+  assert.deepEqual(store.listPinned().map((entry) => entry.id), ['rule-1'])
+  // 常驻清单默认上限 6 条，防止无限膨胀。
+  for (let index = 0; index < 8; index += 1) store.create({ content: '钉选条目 ' + index, pinned: true }, 'bulk-' + index)
+  assert.equal(store.listPinned().length, 6)
+})
+
 test('内置记忆：migrationKey 重复导入只更新不重复', () => {
   const store = makeStore()
   const first = store.migrate([{ content: '原始决策', category: 'decision', source: 'hindsight', migrationKey: 'h:1' }])

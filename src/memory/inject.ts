@@ -85,6 +85,26 @@ export function renderNativeContext(entries: NativeMemoryEntry[], maxChars: numb
   return text.length > maxChars ? text.slice(0, maxChars) : text
 }
 
+/** 常驻记忆条数上限：与检索注入相互独立，防止常驻层无限膨胀挤占上下文。 */
+export const PINNED_MAX_ENTRIES = 6
+
+/** 常驻记忆字符预算（独立于检索注入预算；超出截断最旧条目内容）。 */
+export const PINNED_MAX_CHARS = 600
+
+/** 渲染常驻记忆块（每轮固定加载，不参与检索相关性过滤；导出供单测）。
+ * 常驻资格由 NativeMemoryStore.listPinned 决定：仅显式钉选（pinned）。
+ * 这与用户身份卡同哲学——「每轮必须知道」的红线与长期约定，不能指望检索
+ * 每次都召回；也不做 importance 自动常驻（critical 会通膨，会把噪音焊死在每轮）。 */
+export function renderPinnedContext(entries: NativeMemoryEntry[], maxChars: number): string {
+  if (entries.length === 0) return ''
+  const lines: string[] = ['[常驻记忆] 以下是每轮固定加载的记忆（钉选条目，必须遵守）：']
+  for (const entry of entries) {
+    lines.push('[' + entry.source + ' · ' + entry.category + '] ' + entry.content)
+  }
+  const text = lines.join('\n')
+  return text.length > maxChars ? text.slice(0, maxChars) : text
+}
+
 /** 注入决策明细：text 为空时 reason 说明跳过原因，供可观测统计区分"未启用/无命中"。 */
 export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit' }
 
@@ -123,13 +143,27 @@ export class MemoryInjectionService {
     const topScore = hits.reduce((max, hit) => Math.max(max, hit.score), 0)
     const floor = Math.max(settings.threshold, 0.01, topScore * RELATIVE_KEEP_RATIO)
     const good = hits.filter((hit) => hit.score >= floor)
+    // 常驻记忆：仅显式钉选（pinned），每轮固定注入、独立预算，不参与任何检索
+    // 相关性过滤（「每轮必须知道」的内容不能指望检索召回）。
+    let pinnedEntries: NativeMemoryEntry[] = []
+    try { pinnedEntries = this.native?.listPinned({ limit: PINNED_MAX_ENTRIES }) ?? [] } catch { /* 常驻清单失败不影响检索注入 */ }
     // 内置长期记忆与 RAG 检索并联：两边都取，拼合后统一限长；全部为空才不注入。
     let nativeEntries: NativeMemoryEntry[] = []
     try { nativeEntries = this.native?.search(query, { limit: settings.topK }) ?? [] } catch { /* 内置检索失败不影响 RAG 注入 */ }
-    if (good.length === 0 && nativeEntries.length === 0) return { reason: 'no-hit' }
-    const ragText = renderMemoryContext(good, settings.maxChars)
-    const nativeText = renderNativeContext(nativeEntries, Math.max(0, settings.maxChars - ragText.length))
-    const combined = [ragText, nativeText].filter((part) => part !== '').join('\n---\n')
+    // 检索内置块去重：常驻条目已在常驻块出现，不再重复占用检索块预算。
+    if (pinnedEntries.length > 0) {
+      const pinnedIds = new Set(pinnedEntries.map((entry) => entry.id))
+      nativeEntries = nativeEntries.filter((entry) => !pinnedIds.has(entry.id))
+    }
+    if (pinnedEntries.length === 0 && good.length === 0 && nativeEntries.length === 0) return { reason: 'no-hit' }
+    // 预算分配：常驻块独立预算优先，剩余给 RAG 与检索内置块（保持原统一限长语义）。
+    let remaining = settings.maxChars
+    const pinnedText = renderPinnedContext(pinnedEntries, Math.min(PINNED_MAX_CHARS, remaining))
+    remaining = Math.max(0, remaining - pinnedText.length)
+    const ragText = renderMemoryContext(good, remaining)
+    remaining = Math.max(0, remaining - ragText.length)
+    const nativeText = renderNativeContext(nativeEntries, remaining)
+    const combined = [pinnedText, ragText, nativeText].filter((part) => part !== '').join('\n---\n')
     return combined === '' ? { reason: 'no-hit' } : { text: combined }
   }
 

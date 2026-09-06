@@ -54,6 +54,7 @@ function asEntry(data: unknown, id: string): NativeMemoryEntry | undefined {
     createdAt: value.createdAt,
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : value.createdAt,
     ...(typeof value.migrationKey === 'string' && value.migrationKey !== '' ? { migrationKey: value.migrationKey } : {}),
+    ...(value.pinned === true ? { pinned: true } : {}),
   }
 }
 
@@ -84,6 +85,21 @@ export class NativeMemoryStore {
   list(options?: { limit?: number; category?: NativeMemoryCategory }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 100)))
     return this.all().filter((entry) => options?.category === undefined || entry.category === options.category).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+  }
+
+  /**
+   * 常驻记忆清单：仅手动钉选（pinned），每轮固定注入。
+   * 召回式检索覆盖不了「每轮必须知道」的红线与长期约定（与用户身份卡同哲学）；
+   * 不引入 importance 自动常驻——沉淀模型的 critical 会通膨（实测把一次性状态
+   * 也标成 critical），自动常驻会把噪音焊死在每轮上下文里；钉选必须显式操作，
+   * 可控可审计。按更新时间新到旧、条数有上限，防止常驻层无限膨胀。
+   */
+  listPinned(options?: { limit?: number }): NativeMemoryEntry[] {
+    const limit = Math.max(1, Math.min(20, Math.floor(options?.limit ?? 6)))
+    return this.all()
+      .filter((entry) => entry.pinned === true)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit)
   }
 
   get(id: string): NativeMemoryEntry | undefined {
@@ -163,7 +179,7 @@ export class NativeMemoryStore {
     const source = input.source === undefined ? 'native' : cleanText(input.source, 'source', 120)
     const sourceId = input.sourceId === undefined ? undefined : cleanText(input.sourceId, 'sourceId', 300)
     const migrationKey = input.migrationKey === undefined ? undefined : cleanText(input.migrationKey, 'migrationKey', 300)
-    return { id, content, category, tags, source, ...(sourceId === undefined ? {} : { sourceId }), importance: cleanImportance(input.importance), createdAt, updatedAt, ...(migrationKey === undefined ? {} : { migrationKey }) }
+    return { id, content, category, tags, source, ...(sourceId === undefined ? {} : { sourceId }), importance: cleanImportance(input.importance), createdAt, updatedAt, ...(migrationKey === undefined ? {} : { migrationKey }), ...(input.pinned === true ? { pinned: true } : {}) }
   }
 
   private validId(id: string): boolean { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/u.test(id) }

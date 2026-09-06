@@ -92,6 +92,8 @@ export interface NativeMemoryEntry {
   updatedAt: number
   /** 外部迁移幂等键；同一来源重复导入只更新。 */
   migrationKey?: string
+  /** 常驻钉选：true 时每轮固定注入，不参与检索相关性过滤（显式钉选，可控可审计）。 */
+  pinned?: boolean
 }
 
 /** 内置记忆写入输入。 */
@@ -103,6 +105,8 @@ export interface NativeMemoryInput {
   sourceId?: string
   importance?: number
   migrationKey?: string
+  /** 常驻钉选（缺省 false）。 */
+  pinned?: boolean
 }
 
 /** 内置记忆更新补丁。 */
@@ -113,6 +117,8 @@ export interface NativeMemoryPatch {
   source?: string
   sourceId?: string
   importance?: number
+  /** 传 false 取消钉选。 */
+  pinned?: boolean
 }
 
 /** 批量迁移输入项。 */
