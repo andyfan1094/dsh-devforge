@@ -281,6 +281,12 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .metricRow strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
 .metricRow strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 
+/* 智谱 Key 池：主/附加徽标与行内操作按钮。 */
+.keyBadge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 1.6; vertical-align: 1px; }
+.keyBadge[data-kind="primary"] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 30%, transparent); }
+.keyBadge[data-kind="extra"] { color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-bg-layer-2, #f3f4f6); border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); }
+.keyActions { display: flex; flex: none; gap: 6px; align-items: center; }
+
 /* ---- 控制面板总览：三家套餐用量并排 ---- */
 .overviewWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }
 .overviewGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: var(--dv-grid-gap); align-items: stretch; }

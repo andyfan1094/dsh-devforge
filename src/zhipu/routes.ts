@@ -1,7 +1,8 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from '../loopback.ts'
 import { ZHIPU_API, type ZhipuUsageWindow } from './protocol.ts'
-import { ZhipuCodingPlanService, ZhipuServiceError } from './service.ts'
+import { ZhipuCodingPlanService } from './service.ts'
+import { ZhipuServiceError } from './errors.ts'
 
 /** 输出不可缓存的 JSON。 */
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
@@ -68,11 +69,13 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         const url = new URL(req.url ?? '/', 'http://localhost')
         const window: ZhipuUsageWindow = url.searchParams.get('window') === 'week' ? 'week' : 'day'
+        // key 参数：按指定 Key 查看用量；省略时由服务按池序自动切换。
+        const keyParam = url.searchParams.get('key') ?? ''
         const controller = new AbortController()
         const abort = (): void => controller.abort()
         req.once('aborted', abort)
         res.once('close', abort)
-        try { writeJson(res, 200, { ok: true, dashboard: await service.dashboard(window, controller.signal) }) } catch (error) {
+        try { writeJson(res, 200, { ok: true, dashboard: await service.dashboard(window, controller.signal, keyParam === '' ? undefined : keyParam) }) } catch (error) {
           if (!controller.signal.aborted && !res.writableEnded) writeError(res, error)
         } finally {
           req.off('aborted', abort)
@@ -101,5 +104,35 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
         } catch (error) { writeError(res, error) }
       },
     },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.setPrimary,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const env = typeof body.env === 'string' ? body.env.trim() : ''
+          if (env === '') { writeJson(res, 400, { ok: false, error: 'env 不能为空。' }); return }
+          writeJson(res, 200, { ok: true, status: await service.setPrimaryKey(env) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
   ]
+}
+
+/** 读取请求体为 JSON（设主 Key 只需要引用名，体积很小）。 */
+async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{ env?: unknown }> {
+  const chunks: Buffer[] = []
+  let total = 0
+  const maxBytes = 8 * 1024
+  for await (const chunk of req) {
+    total += (chunk as Buffer).length
+    if (total > maxBytes) throw new ZhipuServiceError('请求体超过 8 KiB 上限。', 400)
+    chunks.push(chunk as Buffer)
+  }
+  if (total === 0) throw new ZhipuServiceError('请求体为空。', 400)
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as { env?: unknown } } catch {
+    throw new ZhipuServiceError('请求体不是合法 JSON。', 400)
+  }
 }

@@ -184,3 +184,8 @@ export function putCredentialMirror(db: DatabaseSync, ref: string, value: string
 export function listCredentialMirrorRefs(db: DatabaseSync): string[] {
   return db.prepare('SELECT ref FROM credential ORDER BY ref').all().map(row => String(row['ref']))
 }
+
+/** 删除一个凭据镜像（与 yaml 主存删除配套；不存在为无操作）。 */
+export function removeCredentialMirror(db: DatabaseSync, ref: string): void {
+  db.prepare('DELETE FROM credential WHERE ref = ?').run(ref)
+}

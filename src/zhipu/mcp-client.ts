@@ -1,4 +1,5 @@
 /** 智谱官方 MCP Server 轻量客户端（Streamable HTTP，官方协议直连，无第三方依赖）。 */
+import { isKeySwitchableStatus } from './key-pool.ts'
 import type { ZhipuMcpToolDescriptor } from './protocol.ts'
 
 /** MCP 调用失败（消息已脱敏，可直接返回给模型）。 */
@@ -9,6 +10,17 @@ export class ZhipuMcpError extends Error {
     super(message)
     this.name = 'ZhipuMcpError'
     this.status = status
+  }
+}
+
+/** Key 池已用尽的内部哨兵：调用循环捕获后优先呈现最后一次官方错误。 */
+class KeyExhausted extends Error {
+  /** 解析层的原始失败（如「池内 N 把 Key 均不可用」）。 */
+  readonly reason: unknown
+
+  constructor(reason: unknown) {
+    super('key pool exhausted')
+    this.reason = reason
   }
 }
 
@@ -30,16 +42,18 @@ export interface ZhipuMcpCallResult {
 export class ZhipuMcpClient {
   /** 官方 MCP 端点。 */
   private endpoint: string
-  /** 每次请求重新解析受管凭据，Key 更新无需重启。 */
-  private resolveApiKey: () => Promise<string>
+  /** 按档位解析受管凭据（档位即 Key 池顺序下标），Key 更新无需重启。 */
+  private resolveApiKey: (attempt: number) => Promise<string>
   /** 单请求超时（毫秒）。 */
   private timeoutMs: number
   /** 当前 MCP 会话 id（initialize 响应头下发）。 */
   private sessionId: string | undefined
   /** JSON-RPC 请求 id 自增。 */
   private nextId = 1
+  /** 最近一次成功使用的 Key 档位：后续调用从它开始，避免重复撞已失效的 Key。 */
+  private keyAttempt = 0
 
-  constructor(endpoint: string, resolveApiKey: () => Promise<string>, timeoutMs = 30000) {
+  constructor(endpoint: string, resolveApiKey: (attempt: number) => Promise<string>, timeoutMs = 30000) {
     this.endpoint = endpoint
     this.resolveApiKey = resolveApiKey
     this.timeoutMs = timeoutMs
@@ -60,26 +74,65 @@ export class ZhipuMcpClient {
     })).filter((tool: ZhipuMcpToolDescriptor) => tool.name !== '')
   }
 
-  /** 调用一个工具；会话失效自动重建并重试一次。 */
+  /**
+   * 调用一个工具；会话失效自动重建并重试一次；401/403/429 自动换下一把池内 Key。
+   * 换 Key 必须重置会话（MCP 会话与 Authorization 绑定），由 useKeyAttempt 统一处理。
+   */
   async call(rawName: string, args: Record<string, unknown>): Promise<ZhipuMcpCallResult> {
+    let lastError: ZhipuMcpError | undefined
+    for (let attempt = this.keyAttempt; ; attempt += 1) {
+      this.useKeyAttempt(attempt)
+      try {
+        return await this.callOnce(rawName, args)
+      } catch (error) {
+        if (error instanceof KeyExhausted) {
+          // 池已用尽：回到第一把重新记账，并把更有信息量的官方错误抛给调用方。
+          this.keyAttempt = 0
+          throw lastError ?? error.reason
+        }
+        if (error instanceof ZhipuMcpError && isKeySwitchableStatus(error.status)) {
+          lastError = error
+          continue
+        }
+        throw error
+      }
+    }
+  }
+
+  /** 单次 tools/call（不含换 Key 重试；404 视为会话过期，重建后重试一次）。 */
+  private async callOnce(rawName: string, args: Record<string, unknown>): Promise<ZhipuMcpCallResult> {
+    let result: any
     try {
-      return await this.callOnce(rawName, args)
+      result = await this.rpc('tools/call', { name: rawName, arguments: args })
     } catch (error) {
       // 会话过期在官方实现上表现为 404；重置会话重试一次。
       if (error instanceof ZhipuMcpError && error.status === 404) {
         this.reset()
-        return await this.callOnce(rawName, args)
+        result = await this.rpc('tools/call', { name: rawName, arguments: args })
+      } else {
+        throw error
       }
-      throw error
     }
-  }
-
-  /** 单次 tools/call（不含重试）。 */
-  private async callOnce(rawName: string, args: Record<string, unknown>): Promise<ZhipuMcpCallResult> {
-    const result = await this.rpc('tools/call', { name: rawName, arguments: args })
     const blocks = Array.isArray(result?.content) ? result.content : []
     const text = blocks.map((block: { type?: unknown; text?: unknown }) => (block.type === 'text' && typeof block.text === 'string' ? block.text : '')).filter((part: string) => part !== '').join('\n')
     return { isError: result?.isError === true, text }
+  }
+
+  /** 切换 Key 档位；档位变化时丢弃旧会话（旧会话对新区间无效）。 */
+  private useKeyAttempt(attempt: number): void {
+    if (this.keyAttempt === attempt) return
+    this.keyAttempt = attempt
+    this.reset()
+  }
+
+  /** 取当前档位的 Key；池已用尽（解析层非 MCP 错误）转为内部哨兵，让调用循环优先呈现官方错误。 */
+  private async currentKey(): Promise<string> {
+    try {
+      return await this.resolveApiKey(this.keyAttempt)
+    } catch (error) {
+      if (error instanceof ZhipuMcpError) throw error
+      throw new KeyExhausted(error)
+    }
   }
 
   /** JSON-RPC 请求：缺会话先 initialize，再发业务方法。 */
@@ -114,7 +167,7 @@ export class ZhipuMcpClient {
 
   /** POST 一个 JSON-RPC 消息。 */
   private async post(body: Record<string, unknown>, sessionId: string | undefined): Promise<Response> {
-    const apiKey = await this.resolveApiKey()
+    const apiKey = await this.currentKey()
     let response: Response
     try {
       response = await fetch(this.endpoint, {

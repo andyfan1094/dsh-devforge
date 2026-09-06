@@ -107,7 +107,7 @@ test('智谱 MCP 客户端：JSON-RPC 错误转中文异常且不含 Key', async
 })
 
 test('官方工具定义：5 个工具名与参数齐备', () => {
-  const clients = makeZhipuMcpClients({ enabled: true, apiKeyEnv: 'X', timeoutMs: 1000 }, keyProvider)
+  const clients = makeZhipuMcpClients({ enabled: true, timeoutMs: 1000 }, keyProvider)
   const tools = makeZhipuMcpToolDefinitions(clients)
   assert.deepEqual(tools.map((tool) => tool.name), ['zhipu_web_search', 'zhipu_web_reader', 'zhipu_zread_search', 'zhipu_zread_read_file', 'zhipu_zread_repo_structure'])
   for (const tool of tools) assert.equal(typeof tool.description, 'string')
