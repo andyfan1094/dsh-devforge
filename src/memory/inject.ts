@@ -2,8 +2,8 @@
  * 会话记忆主动注入 —— agent/pre-step 驱动的每轮首步上下文增强。
  *
  * - 只在 step===1（用户消息刚进来的第一步）注入一次，避免每步重复嵌入计费；
- * - 用本轮用户消息拼查询 → 在「记忆类知识库」（source=memory / mirror）做混合检索，
- *   阈值过滤后以 plugin snapshot 用户消息追加进本轮（仿 dsh-time-context 模式）；
+ * - 用最后一条用户消息正文构造查询（见 buildMemoryQuery）→ 在「记忆类知识库」
+ *   （source=memory / mirror）做混合检索，双重阈值过滤后以 plugin snapshot 用户消息追加；
  * - 任何失败都返回原 decision（绝不阻塞会话），全部调用走 AbortSignal。
  */
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -23,10 +23,49 @@ export function messageText(message: unknown): string {
   }).join('')
 }
 
+/** 检索相关性兜底比例：低于「本次最高分 × 该比例」的命中视为弱相关丢弃。
+ * 混合检索的分数只代表「话题相近」，尾部低分命中往往只是沾边；用相对线砍掉
+ * 长尾，比单靠绝对阈值更能保证注入的记忆与本轮问题强相关。 */
+export const RELATIVE_KEEP_RATIO = 0.55
+
+/** 剔除消息文本里的 harness 样板段（导出供单测）：
+ * - <system-reminder>…</system-reminder> 整块（技能目录、运行时上下文等）；
+ * - 记忆注入段（[记忆中枢自动注入] / [内置长期记忆] 开头的段落）。
+ * 这些文本与用户意图无关，混进检索查询会把关键词带偏（例如英文样板词把
+ * 一堆含 DSH 的无关记忆全部命中），是「注入不相关」的最大来源。 */
+export function stripBoilerplate(text: string): string {
+  const withoutReminders = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gu, '')
+  return withoutReminders
+    .split(/\n---\n/)
+    .filter((segment) => {
+      const head = segment.slice(0, 40)
+      return !head.includes('自动注入') && !head.includes('长期记忆')
+    })
+    .join('\n---\n')
+}
+
+/** 从本轮消息构造记忆检索查询（导出供单测）：
+ * - 只取最后一条「用户发出的非插件消息」：插件注入的记忆快照不是用户意图；
+ * - 先剔除样板段再取前 600 字：用户的问题通常在消息开头，取头部比取整包
+ *   尾部更贴近「当前问题」。 */
+export function buildMemoryQuery(messages: readonly unknown[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as { role?: unknown; source?: unknown } | null
+    if (message === null || typeof message !== 'object') continue
+    if (message.role !== undefined && message.role !== 'user') continue
+    const source = message.source as { kind?: unknown } | null
+    if (source !== null && typeof source === 'object' && source.kind === 'plugin') continue
+    const cleaned = stripBoilerplate(messageText(message)).trim()
+    if (cleaned === '') continue
+    return cleaned.slice(0, 600)
+  }
+  return ''
+}
+
 /** 渲染注入快照（导出供单测校验格式与截断）。 */
 export function renderMemoryContext(hits: RagSearchHit[], maxChars: number): string {
   if (hits.length === 0) return ''
-  const lines: string[] = ['[记忆中枢自动注入] 以下是与当前问题相关的历史记忆，供参考（并非当前用户输入）：']
+  const lines: string[] = ['[记忆中枢自动注入] 以下是检索到的历史记忆候选，可能与当前问题无关，请自行取舍（并非当前用户输入）：']
   for (const hit of hits) {
     const source = hit.headingPath !== '' ? hit.fileName + ' · ' + hit.headingPath : hit.fileName
     lines.push('[' + source + '] ' + hit.text)
@@ -38,7 +77,7 @@ export function renderMemoryContext(hits: RagSearchHit[], maxChars: number): str
 /** 渲染内置记忆条目快照（与 RAG 快照拼接，统一截断）。 */
 export function renderNativeContext(entries: NativeMemoryEntry[], maxChars: number): string {
   if (entries.length === 0) return ''
-  const lines: string[] = ['[内置长期记忆] 以下是与当前问题相关的长期记忆条目，供参考：']
+  const lines: string[] = ['[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关，请自行取舍：']
   for (const entry of entries) {
     lines.push('[' + entry.source + ' · ' + entry.category + '] ' + entry.content)
   }
@@ -74,12 +113,16 @@ export class MemoryInjectionService {
   async decideDetailed(messages: readonly unknown[]): Promise<InjectDecision> {
     const settings = this.config()
     if (!settings.enabled || !settings.autoInject) return { reason: 'disabled' }
-    const query = messages.map((message) => messageText(message)).join(' ').trim().slice(-600)
+    const query = buildMemoryQuery(messages)
     if (query === '') return { reason: 'no-hit' }
     const kbIds = this.memoryKbIds()
     if (kbIds.length === 0) return { reason: 'no-hit' }
     const hits = await this.rag.search({ query, kbIds, topK: settings.topK, vectorWeight: 0.5 })
-    const good = hits.filter((hit) => hit.score >= Math.max(settings.threshold, 0.01))
+    // 双重阈值：绝对线（settings.threshold）兜底，相对线砍掉与本次最高分差距过大的弱命中，
+    // 避免话题只是沾边的记忆以低分混进注入块（见 RELATIVE_KEEP_RATIO 注释）。
+    const topScore = hits.reduce((max, hit) => Math.max(max, hit.score), 0)
+    const floor = Math.max(settings.threshold, 0.01, topScore * RELATIVE_KEEP_RATIO)
+    const good = hits.filter((hit) => hit.score >= floor)
     // 内置长期记忆与 RAG 检索并联：两边都取，拼合后统一限长；全部为空才不注入。
     let nativeEntries: NativeMemoryEntry[] = []
     try { nativeEntries = this.native?.search(query, { limit: settings.topK }) ?? [] } catch { /* 内置检索失败不影响 RAG 注入 */ }

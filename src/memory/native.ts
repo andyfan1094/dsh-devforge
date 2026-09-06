@@ -57,6 +57,24 @@ function asEntry(data: unknown, id: string): NativeMemoryEntry | undefined {
   }
 }
 
+/**
+ * 检索分词（导出供单测）：拉丁/数字连续段取词（长度 ≥ 2），中文按二元组（bigram）切分。
+ * 中文没有空格分隔，旧的「整段子串包含」匹配对中文查询几乎永远落空、对英文样板
+ * 查询又过于宽松；词元 + 二元组是零依赖下「中文能命中、英文有门槛」的折中。
+ */
+export function tokenizeForMatch(text: string): string[] {
+  const lowered = text.toLocaleLowerCase()
+  const tokens: string[] = []
+  for (const word of lowered.match(/[a-z0-9][a-z0-9.+#-]*/gu) ?? []) {
+    if (word.length >= 2) tokens.push(word)
+  }
+  for (const run of lowered.match(/[\u4e00-\u9fff]+/gu) ?? []) {
+    if (run.length === 1) { tokens.push(run); continue }
+    for (let index = 0; index < run.length - 1; index += 1) tokens.push(run.slice(index, index + 2))
+  }
+  return [...new Set(tokens)]
+}
+
 /** 内置记忆 CRUD 与关键词检索门面。 */
 export class NativeMemoryStore {
   private readonly rag: RagStore
@@ -96,15 +114,20 @@ export class NativeMemoryStore {
   }
 
   search(query: string, options?: { limit?: number; category?: NativeMemoryCategory }): NativeMemoryEntry[] {
-    const text = cleanText(query, 'query', 500).toLocaleLowerCase()
-    const terms = text.split(/\s+/u).filter(Boolean)
+    // 空查询直接返回空清单（不再抛错）：面板与注入层的调用都更省心。
+    if (typeof query !== 'string' || query.trim() === '') return []
+    const terms = tokenizeForMatch(cleanText(query, 'query', 500))
+    if (terms.length === 0) return []
+    // 相关性门槛：至少命中 2 个不同词元（查询本身只有一个词元时命中 1 个即可）。
+    // 旧实现「沾一个词就入围」，英文样板查询里的 DSH 之类常见词会把无关记忆全带进注入。
+    const minHits = Math.min(2, terms.length)
     return this.list({ limit: 200, category: options?.category })
       .map((entry) => {
         const haystack = (entry.content + ' ' + entry.tags.join(' ') + ' ' + entry.category).toLocaleLowerCase()
         const hits = terms.filter((term) => haystack.includes(term)).length
-        return { entry, score: hits / Math.max(1, terms.length) + entry.importance * 0.001 }
+        return { entry, hits, score: hits / terms.length + entry.importance * 0.001 }
       })
-      .filter((item) => item.score > 0)
+      .filter((item) => item.hits >= minHits)
       .sort((a, b) => b.score - a.score || b.entry.updatedAt - a.entry.updatedAt)
       .slice(0, Math.max(1, Math.min(100, Math.floor(options?.limit ?? 20))))
       .map((item) => item.entry)

@@ -397,3 +397,38 @@ export function defaultProjectName(inputPath: string): string {
     return ''
   }
 }
+
+/** 智能体按路径登记项目的入参（devforge_project 的 register 动作）。 */
+export interface RegisterProjectInput { path: string; name?: string; description?: string }
+
+/**
+ * 按本机路径登记（或幂等更新）项目：
+ * - 自动检测 Git 元数据（远端、分支、托管类型）回填仓库登记；
+ * - 同路径已登记时更新原条目，绝不产生重复登记（重复触发无重复副作用）；
+ * - 返回 ok 与人读消息，供工具与面板直接展示。
+ */
+export function registerProjectFromPath(input: RegisterProjectInput): { ok: boolean; message: string } {
+  const projectPath = typeof input.path === 'string' ? input.path.trim() : ''
+  if (projectPath === '') return { ok: false, message: 'path 不能为空' }
+  if (!isAbsolute(projectPath)) return { ok: false, message: 'path 必须是绝对路径' }
+  const detect = detectProjectGit(projectPath)
+  if (!detect.exists) return { ok: false, message: detect.error ?? '路径不存在或不是目录：' + projectPath }
+  const existing = listProjects().find((entry) => entry.path === projectPath)
+  const origin = detect.remotes[0]
+  const payload = {
+    ...(existing !== undefined ? { id: existing.id } : {}),
+    name: typeof input.name === 'string' && input.name.trim() !== '' ? input.name.trim() : defaultProjectName(projectPath),
+    path: projectPath,
+    description: typeof input.description === 'string' ? input.description : (existing?.description ?? ''),
+    repoKind: origin !== undefined ? origin.kind : ('none' as const),
+    repoUrl: origin?.url ?? '',
+    repoBranch: detect.branch ?? '',
+  }
+  const invalid = validateProjectPayload(payload)
+  if (invalid !== undefined) return { ok: false, message: invalid }
+  const entry = saveProject(payload)
+  const repo = entry.repoUrl !== ''
+    ? '，仓库：' + entry.repoKind + ' ' + entry.repoUrl + (entry.repoBranch !== '' ? ' @ ' + entry.repoBranch : '')
+    : '，未关联 Git 仓库'
+  return { ok: true, message: (existing !== undefined ? '已更新登记：' : '已登记项目：') + entry.name + '（' + entry.path + '）' + repo }
+}

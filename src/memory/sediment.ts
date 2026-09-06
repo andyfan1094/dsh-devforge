@@ -56,6 +56,11 @@ export function normalizeMemoryText(text: string): string {
   return text.replace(/\s+/gu, ' ').trim()
 }
 
+/** 强临时状态信号：命中即视为「一次性任务进度」，不沉淀。
+ * 这类条目（未提交/未推送/待验收等）很快过期，却会在之后的每轮检索里反复被
+ * 命中注入，是「注入不相关」的高发来源；宁可漏存也不存噪音（提示词约束之外的双保险）。 */
+const TRANSIENT_STATE_PATTERN = /(未提交|尚未提交|暂未提交|未推送|暂未推送|尚未推送|待验收|稍后继续|下次继续|回头再)/u
+
 /** 会话记忆沉淀服务。 */
 export class MemorySedimentService {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -138,7 +143,7 @@ export class MemorySedimentService {
     if (!Array.isArray(events)) return 0
     const window = extractLastTurnWindow(events)
     if (window.userText.trim() === '' || window.assistantText.trim().length < 50) return 0
-    const system = '你是记忆管理员。从对话里提炼值得长期保存的记忆条目（用户偏好、项目决策、环境事实、踩坑教训）。跳过：寒暄、一次性任务进度、问题本身、原始代码、密钥。最多 5 条，每条一句独立中文陈述。只输出 JSON，不输出解释。'
+    const system = '你是记忆管理员。从对话里提炼值得长期保存的记忆条目（用户偏好、项目决策、环境事实、踩坑教训）。跳过：寒暄、一次性任务进度、问题本身、原始代码、密钥；「工作区有未提交改动、尚未推送、待验收、稍后继续」这类很快过期的临时状态一律不要保存。最多 5 条，每条一句独立中文陈述。只输出 JSON，不输出解释。'
     const user = '对话窗口：\n【用户】' + window.userText + '\n【助手】' + window.assistantText + '\n\n返回 JSON：{"items":[{"content":"...","importance":"critical|normal|low"}]}'
     let raw: string
     try { raw = await this.generate(system, user) } catch { return 0 }
@@ -155,6 +160,8 @@ export class MemorySedimentService {
     let stored = 0
     for (const candidate of candidates.slice(0, 5)) {
       const content = normalizeMemoryText(candidate.content)
+      // 临时状态硬过滤：见 TRANSIENT_STATE_PATTERN 注释（提示词约束之外的双保险）。
+      if (TRANSIENT_STATE_PATTERN.test(content)) continue
       const key = createHash('sha256').update(content).digest('hex')
       if (keys.has(key)) continue
       let duplicated = false

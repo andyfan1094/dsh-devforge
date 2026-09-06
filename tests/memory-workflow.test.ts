@@ -11,7 +11,7 @@ import { collectFiles, ProjectIndexer } from '../src/rag/project-indexer.ts'
 import { collectPageRefs, listMnemonMarkdowns, mnemonDataRoot, readHindsightConfig, resolveBankId } from '../src/rag/mirror.ts'
 import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src/rag/rerank.ts'
 import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText } from '../src/memory/sediment.ts'
-import { messageText, MemoryInjectionService, renderMemoryContext } from '../src/memory/inject.ts'
+import { buildMemoryQuery, messageText, MemoryInjectionService, RELATIVE_KEEP_RATIO, renderMemoryContext, renderNativeContext, stripBoilerplate } from '../src/memory/inject.ts'
 import { MemoryStatsStore } from '../src/memory/stats.ts'
 import { closeDb } from '../src/store/db.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
@@ -203,6 +203,23 @@ describe('会话记忆沉淀', () => {
     assert.equal(stored.length, 1)
     assert.equal(normalizeMemoryText(' a  b '), 'a b')
   })
+  test('提炼过滤：未提交/未推送等临时状态不入库', async () => {
+    const stored: string[] = []
+    const rag = fakeRag({
+      listDocs: () => [],
+      listChunks: () => [],
+      ingestText: async (_kb: string, _name: string, text: string) => { stored.push(text); return { id: 'x', kbId: 'kb1', fileName: 'x', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 } as RagDocument },
+    })
+    const session = { id: 's2', events: [
+      { type: 'user/message', data: { content: [{ type: 'text', text: '先改到这里' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '当前工作区包含未提交的改动，尚未执行推送。这一句是测试构造的足够长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
+      { type: 'turn/end', data: { turn: 1 } },
+    ] }
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async () => '{"items":[{"content":"当前工作区包含未提交的改动，尚未执行推送","importance":"normal"}]}', () => SETTINGS)
+    const storedCount = await sediment.process(session, 's2', 1)
+    assert.equal(storedCount, 0, '临时状态条目必须被硬过滤，不入库')
+    assert.equal(stored.length, 0)
+  })
 })
 
 describe('记忆主动注入', () => {
@@ -210,7 +227,33 @@ describe('记忆主动注入', () => {
     assert.equal(messageText({ content: [{ type: 'text', text: '问题' }] }), '问题')
     const rendered = renderMemoryContext([hit('1', 0.9, '关键事实')], 50)
     assert.ok(rendered.includes('记忆中枢自动注入'))
+    // 措辞降级：不再承诺「与当前问题相关」，改为候选 + 自行取舍。
+    assert.ok(rendered.includes('可能与当前问题无关'))
+    const nativeRendered = renderNativeContext([{ id: 'n1', content: '关键事实', category: 'general', tags: [], source: 'session', importance: 3, createdAt: 0, updatedAt: 0 }], 500)
+    assert.ok(nativeRendered.includes('可能与当前问题无关'))
     assert.ok(rendered.length <= 50 + 1)
+  })
+  test('stripBoilerplate：剔除 system-reminder 块与记忆注入段', () => {
+    const text = '<system-reminder>技能目录与运行时上下文样板</system-reminder>\n[记忆中枢自动注入] 候选\n---\n真正的问题'
+    const cleaned = stripBoilerplate(text)
+    assert.ok(!cleaned.includes('样板'))
+    assert.ok(!cleaned.includes('自动注入'))
+    assert.ok(cleaned.includes('真正的问题'))
+  })
+  test('buildMemoryQuery：取最后一条用户消息、跳过插件快照并剔除样板段', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: '<system-reminder>技能目录样板</system-reminder>旧问题：上一轮问过部署' }] },
+      { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge' }, content: [{ type: 'text', text: '[记忆中枢自动注入] 检索候选' }] },
+      { role: 'user', content: [{ type: 'text', text: '[内置长期记忆] 候选段\n---\n记忆注入的相关性到底怎么判断？' }] },
+    ]
+    const query = buildMemoryQuery(messages)
+    assert.ok(query.startsWith('记忆注入的相关性到底怎么判断'))
+    assert.ok(!query.includes('样板'))
+    assert.ok(!query.includes('旧问题'))
+    assert.ok(!query.includes('自动注入'))
+    // 只剩插件快照时返回空串 → 本轮判定 no-hit，不注入。
+    assert.equal(buildMemoryQuery([{ role: 'user', source: { kind: 'plugin' }, content: [{ type: 'text', text: '[记忆中枢自动注入] 候选' }] }]), '')
+    assert.equal(buildMemoryQuery([]), '')
   })
   test('decide 阈值过滤与来源库过滤', async () => {
     const rag = fakeRag({ search: async () => [hit('1', 0.2), hit('2', 0.8)] })
@@ -219,6 +262,15 @@ describe('记忆主动注入', () => {
     assert.ok(text !== undefined)
     assert.ok(text.includes('f.md'))
     assert.ok(!text.includes('内容1'))
+  })
+  test('decide 动态阈值：与最高分差距过大的弱命中被丢弃', async () => {
+    const rag = fakeRag({ search: async () => [hit('1', 0.5), hit('2', 0.2)] })
+    const injection = new MemoryInjectionService(rag, () => SETTINGS)
+    const text = await injection.decide([{ content: [{ type: 'text', text: '服务器地址是什么' }] }])
+    // 相对线 = 0.5 × RELATIVE_KEEP_RATIO < 绝对线 0.3，取 0.3：0.5 保留、0.2 丢弃。
+    assert.ok(RELATIVE_KEEP_RATIO > 0.3 && RELATIVE_KEEP_RATIO < 1)
+    assert.ok(text !== undefined && text.includes('内容1'))
+    assert.ok(!text.includes('内容2'))
   })
 })
 

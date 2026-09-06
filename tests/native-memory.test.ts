@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RagStore } from '../src/rag/rag-store.ts'
-import { NativeMemoryStore } from '../src/memory/native.ts'
+import { NativeMemoryStore, tokenizeForMatch } from '../src/memory/native.ts'
 
 function makeStore(): NativeMemoryStore {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-native-memory-'))
@@ -30,6 +30,23 @@ test('内置记忆：关键词检索按命中与重要度排序', () => {
   store.create({ content: '普通项目记录', importance: 1 }, 'other-1')
   const hits = store.search('硅基流动')
   assert.equal(hits[0]?.id, 'rag-1')
+})
+
+test('内置记忆：检索分词门槛（中文二元组命中、单词误伤拦截）', () => {
+  const store = makeStore()
+  store.create({ content: 'macOS 上 setsid 不存在，后台启动进程需用 nohup 加 disown', importance: 3 }, 'pit-1')
+  store.create({ content: '记忆注入的查询只取用户消息正文', importance: 5 }, 'mem-1')
+  // 分词器：拉丁词（长度≥2）+ 中文二元组。
+  assert.ok(tokenizeForMatch('记忆中枢注入').includes('记忆'))
+  assert.ok(tokenizeForMatch('DSH file').includes('dsh'))
+  // 中文整句无空格：按二元组切分后仍能命中（记忆/注入 至少两个词元）。
+  assert.equal(store.search('记忆中枢注入的相关性')[0]?.id, 'mem-1')
+  // 英文样板查询只沾一个词（dsh）不再命中：门槛要求至少 2 个词元。
+  assert.deepEqual(store.search('dsh file policy approval sandbox'), [])
+  // 空查询返回空清单而不抛错。
+  assert.deepEqual(store.search('   '), [])
+  // 两个词元齐备则正常命中，且重要度只影响排序不影响入围。
+  assert.equal(store.search('setsid nohup')[0]?.id, 'pit-1')
 })
 
 test('内置记忆：migrationKey 重复导入只更新不重复', () => {
