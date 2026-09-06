@@ -10,7 +10,7 @@ import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
-import { ZHIPU_API, type ZhipuDashboard, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
+import { ZHIPU_API, type ZhipuDashboard, type ZhipuKeyUsage, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
@@ -543,7 +543,46 @@ export class DevforgeApi {
     return data.dashboard
   }
 
-  /** 把某把池内 Key 设为主 Key（改写聊天路由 zai-coding-cn 的凭据引用，下一请求生效）。 */
+  /** 按 Key 批量读取智谱官方用量：池内每把已配置 Key 独立一张卡片数据。 */
+  async getZhipuDashboards(window: ZhipuUsageWindow, signal?: AbortSignal): Promise<ZhipuKeyUsage[]> {
+    const data = await readJson<{ usages: ZhipuKeyUsage[] }>(await fetch(ZHIPU_API.dashboards + '?window=' + encodeURIComponent(window), { signal }))
+    return data.usages
+  }
+
+  /** 新增一把 Key：自定义名称 + Key 明文；第一把自动成为主 Key。 */
+  async addZhipuKey(input: { label: string; value: string; ref?: string }, signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.keysAdd, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 删除一把附加 Key（主 Key 不允许删除）。 */
+  async removeZhipuKey(id: string, signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.keysRemove, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 重命名一把池内 Key（只改显示名称）。 */
+  async renameZhipuKey(id: string, label: string, signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.keysRename, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, label }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 把某把池内 Key 设为主 Key（改写聊天路由 zai-coding-cn 的凭据引用，下一请求生效；池成员不变）。 */
   async setZhipuPrimaryKey(env: string, signal?: AbortSignal): Promise<ZhipuStatus> {
     const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.setPrimary, {
       method: 'POST',

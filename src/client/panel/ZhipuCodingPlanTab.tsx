@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { ZhipuDashboard, ZhipuPoolKey, ZhipuQuotaLimit, ZhipuStatus, ZhipuUsageWindow } from '../../zhipu/protocol.ts'
+import type { ZhipuKeyUsage, ZhipuPoolKey, ZhipuQuotaLimit, ZhipuStatus, ZhipuUsageWindow } from '../../zhipu/protocol.ts'
 import css from './panel.module.css'
 import { ResetBadge } from './reset-badge.tsx'
 import { resolveZhipuReset } from './reset-countdown.ts'
@@ -8,7 +8,7 @@ import { resolveZhipuReset } from './reset-countdown.ts'
 /** 智谱页签属性。 */
 export interface ZhipuCodingPlanTabProps {
   api: DevforgeApi
-  /** 当前生效的受管凭据引用名（用于面板展示）。 */
+  /** 默认受管凭据引用名（主 Key 缺省位，用于兜底展示）。 */
   apiKeyEnv: string
   /** 统一 Coding Plan 页面内的内容区域。 */
   section?: 'config' | 'usage'
@@ -31,22 +31,31 @@ function quotaLabel(kind: ZhipuQuotaLimit['kind']): string {
   return '其他额度'
 }
 
-/** 智谱 Coding Plan 模型与官方用量面板（支持多 Key 池）。 */
+/** 计算一条额度的已用百分比（缺失字段按 0 处理）。 */
+function usedPercentOf(limit: ZhipuQuotaLimit): number {
+  const raw = limit.usedPercent ?? (limit.used !== undefined && limit.total !== undefined && limit.total > 0 ? limit.used / limit.total * 100 : 0)
+  return Math.max(0, Math.min(100, raw))
+}
+
+/** 智谱 Coding Plan 模型与官方用量面板（自定义命名 Key 池，用量按 Key 多卡片展示）。 */
 export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded = false, onStatusChange }: ZhipuCodingPlanTabProps): JSX.Element {
   const isConfig = section === 'config'
   const isUsage = section === 'usage'
   const [status, setStatus] = useState<ZhipuStatus | null>(null)
-  const [dashboard, setDashboard] = useState<ZhipuDashboard | null>(null)
+  const [usages, setUsages] = useState<ZhipuKeyUsage[] | null>(null)
   const [usageWindow, setUsageWindow] = useState<ZhipuUsageWindow>('day')
-  /** 用量查看选择的 Key 引用名；空串表示自动（主 Key 优先，失败自动切换）。 */
-  const [usageKey, setUsageKey] = useState('')
   const [loading, setLoading] = useState(true)
   const [settingUp, setSettingUp] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [savingKey, setSavingKey] = useState(false)
-  /** 「设为主 Key」「删除 Key」的进行中引用名（同一时刻只允许一个 Key 操作）。 */
-  const [keyBusyEnv, setKeyBusyEnv] = useState('')
+  /** 「设为主 Key」「删除 Key」「重命名」的进行中条目 id（同一时刻只允许一个操作）。 */
+  const [keyBusyId, setKeyBusyId] = useState('')
+  /** 新 Key 表单：名称与 Key 明文。 */
+  const [labelDraft, setLabelDraft] = useState('')
   const [keyDraft, setKeyDraft] = useState('')
+  /** 行内重命名状态：正在编辑的条目 id 与草稿。 */
+  const [editingId, setEditingId] = useState('')
+  const [renameDraft, setRenameDraft] = useState('')
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -57,7 +66,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
   const fetchController = useRef<AbortController | null>(null)
   const keyController = useRef<AbortController | null>(null)
 
-  /** 同时读取脱敏状态和官方用量；Key 永不进入浏览器。 */
+  /** 同时读取脱敏状态和按 Key 用量；Key 永不进入浏览器。 */
   const refresh = useCallback(async (): Promise<void> => {
     const generation = refreshGeneration.current + 1
     refreshGeneration.current = generation
@@ -68,22 +77,20 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     setError('')
     try {
       const nextStatus = await api.getZhipuStatus(controller.signal)
-      // 选择的 Key 已不在池内（被删除）时回落到自动模式。
-      const selectedKey = usageKey !== '' && nextStatus.keys.some((key) => key.env === usageKey) ? usageKey : ''
-      const nextDashboard = isUsage && nextStatus.keys.some((key) => key.configured)
-        ? await api.getZhipuDashboard(usageWindow, controller.signal, selectedKey === '' ? undefined : selectedKey)
+      const nextUsages = isUsage && nextStatus.keys.some((key) => key.configured)
+        ? await api.getZhipuDashboards(usageWindow, controller.signal)
         : null
       if (!mounted.current || refreshGeneration.current !== generation) return
       setStatus(nextStatus)
       onStatusChange?.(nextStatus)
-      setDashboard(nextDashboard)
+      setUsages(nextUsages)
     } catch (cause) {
       if (controller.signal.aborted || !mounted.current || refreshGeneration.current !== generation) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (mounted.current && refreshGeneration.current === generation) setLoading(false)
     }
-  }, [api, isUsage, onStatusChange, usageKey, usageWindow])
+  }, [api, isUsage, onStatusChange, usageWindow])
 
   useEffect(() => {
     mounted.current = true
@@ -101,6 +108,25 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+
+  /** 统一的 Key 操作执行器：串行防抖 + 通知呈现 + 用量页跟随刷新。 */
+  const runKeyAction = useCallback(async (id: string, action: (signal: AbortSignal) => Promise<ZhipuStatus>, successText: string): Promise<void> => {
+    if (keyBusyId !== '') return
+    setKeyBusyId(id)
+    setError('')
+    const controller = new AbortController()
+    keyController.current = controller
+    try {
+      const nextStatus = await action(controller.signal)
+      if (mounted.current) setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
+      if (mounted.current) setNotice({ kind: 'success', text: successText })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setKeyBusyId('')
+    }
+  }, [onStatusChange])
 
   /** 一键补齐 provider 和硬编码的 GLM-5.3/Flash（用于初次接入）。 */
   const setupModels = async (): Promise<void> => {
@@ -142,9 +168,11 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     }
   }
 
-  /** 把输入框的 Key 写入指定受管凭据槽位；写入成功后仅刷新状态，不在面板显示明文。 */
-  const saveKey = async (env: string): Promise<void> => {
+  /** 添加一把新 Key（第一把自动成为主 Key）。 */
+  const addKey = async (): Promise<void> => {
+    const label = labelDraft.trim()
     const value = keyDraft.trim()
+    if (label === '') { setNotice({ kind: 'error', text: '请先给这把 Key 起个名字。' }); return }
     if (value === '') { setNotice({ kind: 'error', text: 'API Key 不能为空。' }); return }
     keyController.current?.abort()
     const controller = new AbortController()
@@ -152,9 +180,33 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     setSavingKey(true)
     setError('')
     try {
-      await api.setCredential(env, value)
-      setKeyDraft('')
-      if (mounted.current) setNotice({ kind: 'success', text: 'API Key 已保存到 ' + env + '。' })
+      const nextStatus = await api.addZhipuKey({ label, value }, controller.signal)
+      if (mounted.current) { setLabelDraft(''); setKeyDraft('') }
+      if (mounted.current) setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
+      if (mounted.current) setNotice({ kind: 'success', text: 'Key「' + label + '」已加入 Key 池。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setSavingKey(false)
+    }
+  }
+
+  /** 把输入框的 Key 明文更新到主 Key（轮换主 Key 值时使用）。 */
+  const updatePrimaryValue = async (): Promise<void> => {
+    const value = keyDraft.trim()
+    if (value === '') { setNotice({ kind: 'error', text: 'API Key 不能为空。' }); return }
+    const primary = status?.keys.find((key) => key.primary)
+    const targetRef = primary?.ref ?? apiKeyEnv
+    keyController.current?.abort()
+    const controller = new AbortController()
+    keyController.current = controller
+    setSavingKey(true)
+    setError('')
+    try {
+      await api.setCredential(targetRef, value)
+      if (mounted.current) setKeyDraft('')
+      if (mounted.current) setNotice({ kind: 'success', text: '主 Key（' + targetRef + '）已更新。' })
       await refresh()
     } catch (cause) {
       if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
@@ -163,67 +215,114 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     }
   }
 
-  /** 把某把已配置 Key 设为主 Key：聊天路由 zai-coding-cn 的下一请求即改用该 Key。 */
-  const setPrimary = async (env: string): Promise<void> => {
-    if (keyBusyEnv !== '') return
-    setKeyBusyEnv(env)
-    setError('')
-    try {
-      const nextStatus = await api.setZhipuPrimaryKey(env)
-      if (mounted.current) setStatus(nextStatus)
-      onStatusChange?.(nextStatus)
-      if (mounted.current) setNotice({ kind: 'success', text: '主 Key 已切换为 ' + env + '，聊天模型路由即将生效。' })
-    } catch (cause) {
-      if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
-    } finally {
-      if (mounted.current) setKeyBusyEnv('')
-    }
-  }
-
-  /** 删除一把附加 Key（主 Key 不允许删除；删除后该槽位退出 Key 池）。 */
-  const removeKey = async (env: string): Promise<void> => {
-    if (keyBusyEnv !== '') return
-    if (!window.confirm('删除 Key ' + env + '？删除后该 Key 退出 Key 池，正在使用它的官方调用将切换到其他 Key。')) return
-    setKeyBusyEnv(env)
-    setError('')
-    try {
-      await api.removeCredential(env)
-      if (mounted.current) setNotice({ kind: 'success', text: '已删除 ' + env + '。' })
-      await refresh()
-    } catch (cause) {
-      if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
-    } finally {
-      if (mounted.current) setKeyBusyEnv('')
-    }
-  }
-
-  /** Key 池清单（主 Key 在前）与统计。 */
+  /** Key 池清单与统计。 */
   const keys = useMemo(() => status?.keys ?? [], [status])
   const primaryKey = useMemo(() => keys.find((key) => key.primary), [keys])
   const configuredCount = useMemo(() => keys.filter((key) => key.configured).length, [keys])
-  /** 第一个未配置的附加槽位：添加 Key 的落位。 */
-  const nextSlot = useMemo(() => keys.find((key) => !key.primary && !key.configured), [keys])
   const modelsReady = useMemo(() => status?.providerConfigured === true && status.models.length > 0 && status.models.every((model) => model.configured), [status])
 
-  /** Key 池一行：名称、主/附加徽标、状态与操作。 */
-  const renderKeyRow = (key: ZhipuPoolKey): JSX.Element => (
-    <div key={key.env} className={css['metricRow']}>
-      <span>
-        {key.env}
-        <span className={css['keyBadge']} data-kind={key.primary ? 'primary' : 'extra'}>{key.primary ? '主 Key' : '附加'}</span>
-      </span>
-      <strong data-state={key.configured ? 'ok' : 'pending'}>{key.configured ? '已配置' : '空槽位'}</strong>
-      <span className={css['keyActions']}>
-        {key.configured && !key.primary && (
-          <button type="button" className={css['ghostButton']} disabled={keyBusyEnv !== ''} onClick={() => { void setPrimary(key.env) }}>
-            {keyBusyEnv === key.env ? '切换中…' : '设为主 Key'}
-          </button>
-        )}
-        {key.configured && !key.primary && (
-          <button type="button" className={css['ghostButton']} disabled={keyBusyEnv !== ''} onClick={() => { void removeKey(key.env) }}>删除</button>
-        )}
-      </span>
-    </div>
+  /** 提交行内重命名。 */
+  const commitRename = (key: ZhipuPoolKey): void => {
+    const label = renameDraft.trim()
+    if (label === '') { setNotice({ kind: 'error', text: 'Key 名称不能为空。' }); return }
+    void runKeyAction(key.id, (signal) => api.renameZhipuKey(key.id, label, signal), '已重命名为「' + label + '」。').then(() => setEditingId(''))
+  }
+
+  /** Key 池一行：自定义名称（可行内改名）、引用、主/附加徽标与操作。 */
+  const renderKeyRow = (key: ZhipuPoolKey): JSX.Element => {
+    const editing = editingId === key.id
+    return (
+      <div key={key.id} className={css['metricRow']}>
+        <span>
+          {editing ? (
+            <input
+              className={css['keyInput']}
+              style={{ minWidth: 140, fontFamily: 'inherit' }}
+              value={renameDraft}
+              autoFocus
+              onChange={(event) => setRenameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commitRename(key)
+                if (event.key === 'Escape') setEditingId('')
+              }}
+              spellCheck={false}
+            />
+          ) : (
+            <>
+              {key.label}
+              <span className={css['keyBadge']} data-kind={key.primary ? 'primary' : 'extra'}>{key.primary ? '主 Key' : '附加'}</span>
+              <span style={{ marginLeft: 8, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', opacity: 0.75 }}>{key.ref}</span>
+            </>
+          )}
+        </span>
+        <strong data-state={key.configured ? 'ok' : 'pending'}>{key.configured ? '已配置' : '未配置'}</strong>
+        <span className={css['keyActions']}>
+          {editing ? (
+            <>
+              <button type="button" className={css['ghostButton']} disabled={keyBusyId !== '' || renameDraft.trim() === ''} onClick={() => commitRename(key)}>保存</button>
+              <button type="button" className={css['ghostButton']} onClick={() => setEditingId('')}>取消</button>
+            </>
+          ) : (
+            <>
+              {key.configured && !key.primary && (
+                <button type="button" className={css['ghostButton']} disabled={keyBusyId !== ''} onClick={() => { void runKeyAction(key.id, (signal) => api.setZhipuPrimaryKey(key.ref, signal), '主 Key 已切换为「' + key.label + '」，池成员不变，聊天路由即将生效。') }}>
+                  {keyBusyId === key.id ? '切换中…' : '设为主 Key'}
+                </button>
+              )}
+              <button type="button" className={css['ghostButton']} disabled={keyBusyId !== ''} onClick={() => { setEditingId(key.id); setRenameDraft(key.label) }}>重命名</button>
+              {key.configured && !key.primary && (
+                <button type="button" className={css['ghostButton']} disabled={keyBusyId !== ''} onClick={() => { if (window.confirm('删除 Key「' + key.label + '」（' + key.ref + '）？将同时删除其受管凭据。')) { void runKeyAction(key.id, (signal) => api.removeZhipuKey(key.id, signal), '已删除「' + key.label + '」。') } }}>删除</button>
+              )}
+            </>
+          )}
+        </span>
+      </div>
+    )
+  }
+
+  /** 按 Key 用量卡片：每把已配置 Key 独立展示额度窗口与重置倒计时。 */
+  const renderUsageCard = (usage: ZhipuKeyUsage): JSX.Element => (
+    <section key={usage.id} className={css['usageSection']}>
+      <h3 className={css['sectionTitle']} style={{ margin: 0 }}>
+        {usage.label}
+        <span className={css['keyBadge']} data-kind={usage.primary ? 'primary' : 'extra'}>{usage.primary ? '主 Key' : '附加'}</span>
+      </h3>
+      <div className={css['metricRow']}>
+        <span>凭据引用</span>
+        <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>{usage.ref}</strong>
+      </div>
+      {!usage.ok && <div className={css['banner']} data-kind="error">{usage.error ?? '该 Key 查询失败。'}</div>}
+      {usage.ok && usage.dashboard !== undefined && (
+        <>
+          {usage.dashboard.limits.map((limit, index) => {
+            const usedPercent = usedPercentOf(limit)
+            return (
+              <div key={limit.kind + '-' + index}>
+                <div className={css['metricRow']}>
+                  <span>{quotaLabel(limit.kind)}</span>
+                  <strong>{usedPercent.toFixed(1)}% 已用 · {(100 - usedPercent).toFixed(1)}% 剩余</strong>
+                </div>
+                <div className={css['progressTrack']} role="progressbar" aria-label={quotaLabel(limit.kind)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent}>
+                  <span className={css['progressFill']} data-level={usedPercent >= 95 ? 'danger' : usedPercent >= 80 ? 'warning' : 'normal'} style={{ width: usedPercent + '%' }} />
+                </div>
+                <div className={css['metricRow']}>
+                  <span>重置</span>
+                  <ResetBadge view={resolveZhipuReset(limit.nextResetTime, now, limit.kind)} />
+                </div>
+              </div>
+            )
+          })}
+          <div className={css['metricRow']}>
+            <span>近 {usage.dashboard.window === 'day' ? '24 小时' : '7 天'}模型调用</span>
+            <strong>{formatNumber(usage.dashboard.modelUsage.totalCalls)} 次 · {formatNumber(usage.dashboard.modelUsage.totalTokens)} tok</strong>
+          </div>
+          <div className={css['metricRow']}>
+            <span>查询时间</span>
+            <strong>{new Date(usage.dashboard.fetchedAt).toLocaleTimeString('zh-CN')}</strong>
+          </div>
+        </>
+      )}
+    </section>
   )
 
   return (
@@ -240,26 +339,35 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
-      {loading && status === null && <div className={css['empty']} data-loading="">正在读取智谱{isUsage ? '官方额度' : '配置状态'}…</div>}
+      {loading && status === null && <div className={css['empty']} data-loading="">正在读取智谱{isUsage ? '按 Key 用量' : '配置状态'}…</div>}
 
       {isConfig && <>
       <section className={css['usageSection']}>
         <h3 className={css['sectionTitle']}>API Key 池</h3>
         <p className={css['sectionHint']}>
-          主 Key 用于聊天模型路由（{primaryKey?.env ?? apiKeyEnv}）；官方 MCP 工具、额度看板等调用按池序自动切换——Key 失效、限流或额度耗尽时自动换下一把。
+          每把 Key 自定义命名、独立凭据引用；主 Key 是聊天模型路由当前使用的 Key，切换主 Key 不会增删池成员。官方 MCP 工具、额度看板等调用按「主 Key → 附加」顺序自动切换——Key 失效、限流或额度耗尽时自动换下一把。
         </p>
         {keys.length > 0 && keys.map((key) => renderKeyRow(key))}
         <div className={css['keyInputRow']}>
           <input
+            type="text"
+            className={css['keyInput']}
+            style={{ flex: '0 1 170px', fontFamily: 'inherit' }}
+            placeholder="Key 名称（如 主力号）"
+            value={labelDraft}
+            onChange={(event) => { setLabelDraft(event.target.value); setNotice(null) }}
+            spellCheck={false}
+          />
+          <input
             type="password" autoComplete="new-password"
             className={css['keyInput']}
-            placeholder={configuredCount > 0 ? '已配置 ' + configuredCount + ' 把 · 粘贴新 Key 可追加或覆盖' : '粘贴智谱 Coding Plan API Key'}
+            placeholder="粘贴智谱 Coding Plan API Key"
             value={keyDraft}
             onChange={(event) => { setKeyDraft(event.target.value); setNotice(null) }}
             spellCheck={false}
           />
-          <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === '' || primaryKey === undefined} title={'保存到主 Key（' + (primaryKey?.env ?? apiKeyEnv) + '）'} onClick={() => { void saveKey(primaryKey?.env ?? apiKeyEnv) }}>{savingKey ? '保存中…' : '存为主 Key'}</button>
-          <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === '' || nextSlot === undefined} title={nextSlot !== undefined ? '保存到附加槽位（' + nextSlot.env + '）' : '附加槽位已满（最多 5 把）'} onClick={() => { if (nextSlot !== undefined) void saveKey(nextSlot.env) }}>{savingKey ? '保存中…' : '存为附加 Key'}</button>
+          <button type="button" className={css['ghostButton']} disabled={savingKey || labelDraft.trim() === '' || keyDraft.trim() === ''} title="加入 Key 池（第一把自动成为主 Key）" onClick={() => { void addKey() }}>{savingKey ? '保存中…' : '添加 Key'}</button>
+          <button type="button" className={css['ghostButton']} disabled={savingKey || keyDraft.trim() === ''} title={'覆盖主 Key 的凭据值（' + (primaryKey?.ref ?? apiKeyEnv) + '）'} onClick={() => { void updatePrimaryValue() }}>{savingKey ? '保存中…' : '更新主 Key 值'}</button>
         </div>
       </section>
 
@@ -280,66 +388,22 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
         )}
       </section>
 
-      {status !== null && configuredCount === 0 && <div className={css['banner']} data-kind="warning">请先在上方 API Key 池保存至少一把 Key。</div>}
+      {status !== null && configuredCount === 0 && <div className={css['banner']} data-kind="warning">请先在上方添加至少一把 Key。</div>}
       </>}
 
-      {isUsage && status !== null && configuredCount === 0 && <div className={css['banner']} data-kind="warning">尚未配置 API Key，请切换到“使用配置”保存。</div>}
+      {isUsage && status !== null && configuredCount === 0 && <div className={css['banner']} data-kind="warning">尚未配置 API Key，请切换到“使用配置”添加。</div>}
 
-      {isUsage && dashboard !== null && (
+      {isUsage && usages !== null && (
         <>
-          {dashboard.warnings.map((warning) => <div key={warning} className={css['banner']} data-kind="warning">{warning}</div>)}
-          <div className={css['quotaHeader']}>
-            <div><span className={css['sectionHint']}>当前套餐</span><strong>{dashboard.level?.toUpperCase() ?? '未知'}</strong></div>
-            <span className={css['toolbarSpacer']} />
-            <span className={css['sectionHint']}>Key：{dashboard.keyEnv ?? primaryKey?.env ?? '自动'} · 更新于 {new Date(dashboard.fetchedAt).toLocaleTimeString('zh-CN')}</span>
-          </div>
-
-          {keys.some((key) => key.configured) && <div className={css['segmented']} role="group" aria-label="用量查看的 Key">
-            <button type="button" data-active={usageKey === '' ? '' : undefined} onClick={() => setUsageKey('')}>自动切换</button>
-            {keys.filter((key) => key.configured).map((key) => (
-              <button key={key.env} type="button" data-active={usageKey === key.env ? '' : undefined} onClick={() => setUsageKey(key.env)}>{key.primary ? '主 Key' : key.env.slice(apiKeyEnv.length + 1)}</button>
-            ))}
-          </div>}
-
-          <div className={css['quotaList']}>
-            {dashboard.limits.map((limit, index) => {
-              const usedPercent = Math.max(0, Math.min(100, limit.usedPercent ?? (limit.used !== undefined && limit.total !== undefined && limit.total > 0 ? limit.used / limit.total * 100 : 0)))
-              return (
-                <div key={limit.kind + '-' + index} className={css['quotaRow']}>
-                  <div className={css['quotaMeta']}>
-                    <strong>{quotaLabel(limit.kind)}</strong>
-                    <span>{usedPercent.toFixed(1)}% 已用 · {(100 - usedPercent).toFixed(1)}% 剩余</span>
-                  </div>
-                  <div className={css['progressTrack']} role="progressbar" aria-label={quotaLabel(limit.kind)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent}>
-                    <span className={css['progressFill']} data-level={usedPercent >= 95 ? 'danger' : usedPercent >= 80 ? 'warning' : 'normal'} style={{ width: usedPercent + '%' }} />
-                  </div>
-                  <ResetBadge view={resolveZhipuReset(limit.nextResetTime, now, limit.kind)} />
-                </div>
-              )
-            })}
-          </div>
-
           <div className={css['usageToolbar']}>
-            <h3 className={css['sectionTitle']}>官方用量</h3>
+            <h3 className={css['sectionTitle']}>按 Key 用量</h3>
             <div className={css['segmented']} role="group" aria-label="用量时间范围">
               <button type="button" data-active={usageWindow === 'day' ? '' : undefined} onClick={() => setUsageWindow('day')}>近 24 小时</button>
               <button type="button" data-active={usageWindow === 'week' ? '' : undefined} onClick={() => setUsageWindow('week')}>近 7 天</button>
             </div>
           </div>
-
           <div className={css['usageGrid']}>
-            <section className={css['usageSection']}>
-              <h3 className={css['sectionTitle']}>模型调用</h3>
-              <div className={css['metricRow']}><span>调用次数</span><strong>{formatNumber(dashboard.modelUsage.totalCalls)}</strong></div>
-              <div className={css['metricRow']}><span>Token 总量</span><strong>{formatNumber(dashboard.modelUsage.totalTokens)}</strong></div>
-              {dashboard.modelUsage.models.map((model) => <div key={model.name} className={css['metricRow']}><span>{model.name}</span><strong>{formatNumber(model.tokens)}</strong></div>)}
-            </section>
-            <section className={css['usageSection']}>
-              <h3 className={css['sectionTitle']}>MCP 工具</h3>
-              <div className={css['metricRow']}><span>联网搜索</span><strong>{formatNumber(dashboard.toolUsage.networkSearch)}</strong></div>
-              <div className={css['metricRow']}><span>网页读取</span><strong>{formatNumber(dashboard.toolUsage.webRead)}</strong></div>
-              <div className={css['metricRow']}><span>Zread</span><strong>{formatNumber(dashboard.toolUsage.zread)}</strong></div>
-            </section>
+            {usages.map((usage) => renderUsageCard(usage))}
           </div>
         </>
       )}

@@ -106,6 +106,70 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: ZHIPU_API.dashboards,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const window: ZhipuUsageWindow = url.searchParams.get('window') === 'week' ? 'week' : 'day'
+        const controller = new AbortController()
+        const abort = (): void => controller.abort()
+        req.once('aborted', abort)
+        res.once('close', abort)
+        try { writeJson(res, 200, { ok: true, usages: await service.dashboards(window, controller.signal) }) } catch (error) {
+          if (!controller.signal.aborted && !res.writableEnded) writeError(res, error)
+        } finally {
+          req.off('aborted', abort)
+          res.off('close', abort)
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.keysAdd,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const label = typeof body.label === 'string' ? body.label : ''
+          const value = typeof body.value === 'string' ? body.value : ''
+          const ref = typeof body.ref === 'string' ? body.ref : undefined
+          writeJson(res, 200, { ok: true, status: await service.addKey({ label, value, ref }) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.keysRemove,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const id = typeof body.id === 'string' ? body.id.trim() : ''
+          if (id === '') { writeJson(res, 400, { ok: false, error: 'id 不能为空。' }); return }
+          writeJson(res, 200, { ok: true, status: await service.removeKey(id) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.keysRename,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const id = typeof body.id === 'string' ? body.id.trim() : ''
+          const label = typeof body.label === 'string' ? body.label : ''
+          if (id === '') { writeJson(res, 400, { ok: false, error: 'id 不能为空。' }); return }
+          writeJson(res, 200, { ok: true, status: await service.renameKey(id, label) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
       path: ZHIPU_API.setPrimary,
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
@@ -121,8 +185,8 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
   ]
 }
 
-/** 读取请求体为 JSON（设主 Key 只需要引用名，体积很小）。 */
-async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{ env?: unknown }> {
+/** 读取请求体为 JSON（Key 管理只传名称/引用/明文 Key，体积很小）。 */
+async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{ [key: string]: unknown }> {
   const chunks: Buffer[] = []
   let total = 0
   const maxBytes = 8 * 1024
@@ -132,7 +196,7 @@ async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{
     chunks.push(chunk as Buffer)
   }
   if (total === 0) throw new ZhipuServiceError('请求体为空。', 400)
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as { env?: unknown } } catch {
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as { [key: string]: unknown } } catch {
     throw new ZhipuServiceError('请求体不是合法 JSON。', 400)
   }
 }

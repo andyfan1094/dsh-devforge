@@ -4,9 +4,14 @@
 export const ZHIPU_API = {
   status: '/api/dsh-devforge/zhipu/status',
   dashboard: '/api/dsh-devforge/zhipu/dashboard',
+  /** 按 Key 批量查询用量：一次请求返回池内每把已配置 Key 的独立卡片数据。 */
+  dashboards: '/api/dsh-devforge/zhipu/dashboards',
   setup: '/api/dsh-devforge/zhipu/setup',
   fetchModels: '/api/dsh-devforge/zhipu/fetch-models',
   setPrimary: '/api/dsh-devforge/zhipu/set-primary',
+  keysAdd: '/api/dsh-devforge/zhipu/keys/add',
+  keysRemove: '/api/dsh-devforge/zhipu/keys/remove',
+  keysRename: '/api/dsh-devforge/zhipu/keys/rename',
 } as const
 
 /** 用量查询窗口。 */
@@ -61,14 +66,39 @@ export interface ZhipuMcpToolDescriptor {
   description: string
 }
 
-/** 一把池内 Key 的脱敏描述（与 key-pool 保持同一形状）。 */
+/** 一把池内 Key 的脱敏描述。
+ * Key 池是用户维护的独立命名列表：名称（label）由用户自定义，
+ * 引用名（ref）指向受管凭据；主 Key 只是列表中的一个标记
+ * （聊天模型路由 zai-coding-cn 当前指向它），切换主 Key 不会增删池成员。 */
 export interface ZhipuPoolKey {
+  /** 池内稳定 id（存储主键，前端操作按 id 定位）。 */
+  id: string
+  /** 用户自定义名称（如「主力号」「备用号A」）。 */
+  label: string
   /** 受管凭据引用名。 */
-  env: string
+  ref: string
   /** 是否已配置（可参与解析与切换）。 */
   configured: boolean
   /** 是否为主 Key（聊天模型路由当前使用的引用）。 */
   primary: boolean
+}
+
+/** 按 Key 查询的用量卡片数据（单把 Key 独立成功或失败，互不影响）。 */
+export interface ZhipuKeyUsage {
+  /** 池条目 id（与 ZhipuPoolKey.id 对应）。 */
+  id: string
+  /** 用户自定义名称。 */
+  label: string
+  /** 受管凭据引用名。 */
+  ref: string
+  /** 是否为主 Key。 */
+  primary: boolean
+  /** 该把 Key 的官方查询是否成功。 */
+  ok: boolean
+  /** 失败时的可读错误（不含 Key 明文）。 */
+  error?: string
+  /** 成功时的完整看板（keyEnv 恒等于本条 ref）。 */
+  dashboard?: ZhipuDashboard
 }
 
 /** 模型路由和凭据的脱敏状态。 */
@@ -80,6 +110,6 @@ export interface ZhipuStatus {
   models: Array<{ id: string; configured: boolean }>
   /** 官方 MCP 工具（联网搜索/网页读取/Zread）是否启用。 */
   mcpTools: boolean
-  /** Key 池清单：主 Key 在前，附加槽位按序跟随（含未配置槽位，供面板管理）。 */
+  /** Key 池清单（用户命名列表；主 Key 在前，其余按维护顺序）。 */
   keys: ZhipuPoolKey[]
 }

@@ -7,7 +7,7 @@
 1. **通用开发规范库**：版本化 Markdown 规范存放于 `standards/`，通过系统提示和 `devforge_standards` 工具提供给 Agent；创建服务时按模板注入生成子代理。
 2. **一键生成服务**：`devforge_jobs` 工具和“新建服务”页创建独立子代理。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。
 3. **服务工厂操作台**：侧边栏“服务工厂”入口提供开发规范、智谱 Coding Plan、生成任务、新建服务、记忆中枢、记忆工作台、工作流、远程运维、项目、代码仓库、飞书、插件更新和皮肤换肤能力。
-4. **智谱 Coding Plan**：复用 DSH 受管凭据 `ZAI_CODING_CN_API_KEY`，一键补齐 `zai-coding-cn` 的 GLM-5.3 与 GLM-5.3-Flash；Host 直连智谱官方监控接口，展示 5 小时、周额度、重置倒计时、近 24 小时／7 天模型和 MCP 用量。支持多把 Key 池：主 Key 用于聊天模型路由，附加槽位 `ZAI_CODING_CN_API_KEY_2…_6` 承担容灾；MCP 工具、额度看板、官方模型拉取在 401/403/429 时自动切换下一把 Key，用量页可按 Key 分别查看，RAG 向量化/精排取池内第一把已配置 Key。Key 不进入浏览器、日志或普通配置。
+4. **智谱 Coding Plan**：复用 DSH 受管凭据 `ZAI_CODING_CN_API_KEY`，一键补齐 `zai-coding-cn` 的 GLM-5.3 与 GLM-5.3-Flash；Host 直连智谱官方监控接口，展示 5 小时、周额度、重置倒计时、近 24 小时／7 天模型和 MCP 用量。支持自定义命名的 Key 池：每把 Key 独立凭据引用并可自行起名，主 Key 只是聊天模型路由当前指向（切换不增删池成员），官方调用（MCP 工具、额度看板、模型拉取）在 401/403/429 时自动切换下一把 Key，用量页按 Key 独立出卡片展示；旧版派生槽位 `_2…_6` 中已配置的 Key 升级时自动并入池。Key 不进入浏览器、日志或普通配置。
 5. **火山方舟 Agent Plan**：使用 Plan Key 调用官方套餐模型并同步推理档位；用受管控制面 AK/SK 经火山 OpenAPI V4 签名查询 Agent Plan/Coding Plan 的 5 小时、周、月额度。操作步骤见[火山方舟用量看板教程](docs/火山方舟用量看板教程.md)。
 6. **OpenAI 兼容中转站**：在 Coding Plan 页配置中转站地址和受管 API Key，通过 `GET /v1/models` 获取模型并注册为 `openai-gateway` 聊天路由；可从模型目录指定全局 `generate_image` 的生图模型，生成结果写入工作区并在聊天中内联展示。旧 `dsh-sub2api` 的 OpenAI 地址、凭据引用、模型元数据和生图模型会自动迁移，Key 明文不会被读取或复制。
 7. **本机 DSH 重启**：操作台“重启 DSH”按钮和 `devforge_restart` 工具仅在用户明确要求时使用。重启接口要求 loopback 与同源请求，复用现有启动参数，启动日志写入 `$DSH_HOME/logs/dsh-web-restart.log`。

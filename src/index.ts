@@ -70,7 +70,7 @@ import type { BrowserRoutesService } from './browser/service.ts'
 import { makeZhipuRoutes } from './zhipu/routes.ts'
 import { ZhipuCodingPlanService, resolveZhipuPrimaryKeyName, type ZhipuCapabilityConfig } from './zhipu/service.ts'
 import { activateZhipuMcpTools } from './zhipu/mcp-tools.ts'
-import { ZhipuKeyPool } from './zhipu/key-pool.ts'
+import { ZhipuKeyPool, type ZhipuKeyEntry } from './zhipu/key-pool.ts'
 import { makeMiniMaxRoutes } from './minimax/routes.ts'
 import { MiniMaxService, type MiniMaxCapabilityConfig } from './minimax/service.ts'
 import { activateMiniMaxTools, activateMiniMaxHubTools } from './minimax/tools.ts'
@@ -402,11 +402,15 @@ export function apply(ctx: Context, config?: Config): void {
   }
 
   // ---- 常驻套餐能力服务：路由与启动自动补齐共用同一实例。----
-  // 智谱 Key 池：主 Key 取聊天路由 provider.apiKeyEnv（回落插件配置），附加槽位固定命名 _2…_6。
+  // 智谱 Key 池：独立命名列表持久化在 store.db 设置域（随 CNB 备份）；
+  // 主 Key 仅是聊天路由 provider.apiKeyEnv 当前指向，切换主 Key 不增删池成员。
   const zhipuKeys = new ZhipuKeyPool(ctx.credentials, async () => {
     const section = ctx.settings.get(settingsNamespace('llm-pi-ai')) as { providers?: Record<string, { apiKeyEnv?: unknown }> } | undefined
     return resolveZhipuPrimaryKeyName(section, zhipuConfig.apiKeyEnv)
-  })
+  }, {
+    load: () => getSettings<{ keys: ZhipuKeyEntry[] }>(getDb(), 'zhipu-key-pool')?.keys,
+    save: (entries) => putSettings(getDb(), 'zhipu-key-pool', { keys: entries }),
+  }, [zhipuConfig.apiKeyEnv])
   const zhipuService = new ZhipuCodingPlanService(ctx, zhipuConfig, zhipuKeys)
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
