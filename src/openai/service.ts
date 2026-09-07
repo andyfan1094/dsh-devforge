@@ -88,8 +88,8 @@ function normalizeApiKeyEnv(value: string): string {
 /** 校验端点聊天协议；缺省返回 undefined 表示沿用 openai-responses。 */
 function normalizeEndpointApi(value: unknown): OpenAiEndpointApi | undefined {
   if (value === undefined || value === null || value === '') return undefined
-  if (value === 'openai-responses' || value === 'anthropic-messages') return value
-  throw new OpenAiServiceError('端点聊天协议只支持 openai-responses 或 anthropic-messages。', 400)
+  if (value === 'openai-responses' || value === 'openai-completions' || value === 'anthropic-messages') return value
+  throw new OpenAiServiceError('端点聊天协议只支持 openai-responses、openai-completions 或 anthropic-messages。', 400)
 }
 
 /** Anthropic provider 的 baseURL：裸主机根路径，剥掉误填的 /v1 尾缀避免 SDK 拼出 /v1/v1/messages。 */
@@ -180,21 +180,25 @@ export function syncOpenAiModels(existing: Array<Record<string, unknown>>, disco
   return { models, removedIds }
 }
 
-/** 构造端点 provider：openai-responses 走 /v1 根，anthropic-messages 走裸主机（SDK 自行拼接 /v1/messages）。 */
+/** 构造端点 provider：三种协议分别交给 pi-ai 的原生适配器。 */
 export function buildOpenAiEndpointProvider(endpoint: OpenAiGatewayEndpointConfig, models: Array<Record<string, unknown>>, existing?: Record<string, unknown>, displayName = 'OpenAI 中转'): Record<string, unknown> {
-  const anthropic = endpoint.api === 'anthropic-messages'
+  const api = endpoint.api ?? 'openai-responses'
+  const anthropic = api === 'anthropic-messages'
+  const completions = api === 'openai-completions'
   return {
     ...(existing ?? {}),
     apiKeyEnv: endpoint.apiKeyEnv,
     displayName,
-    api: anthropic ? 'anthropic-messages' : 'openai-responses',
-    baseURL: anthropic ? anthropicBaseURL(endpoint.baseURL) : openAiApiRoot(endpoint.baseURL),
+    api,
+    baseURL: anthropic ? anthropicBaseURL(endpoint.baseURL) : api === 'openai-responses' ? openAiApiRoot(endpoint.baseURL) : normalizeOpenAiBaseURL(endpoint.baseURL),
     models,
     defaultContextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : 1_000_000,
     defaultMaxTokens: anthropic ? ANTHROPIC_MAX_TOKENS : 128_000,
     defaultInput: ['text'],
     // Anthropic OAuth 订阅通道对无缓存命中的大请求首字节可达 1~4 分钟，空闲超时放宽到 10 分钟避免 300s 误判超时后循环重试。
     ...(anthropic ? { streamIdleTimeoutMs: 600_000 } : {}),
+    // 智谱 Coding Plan 使用 OpenAI Chat Completions；保留原生协议名让 pi-ai 发送 /chat/completions。
+    ...(completions ? { compat: { ...(existing?.compat !== undefined && typeof existing.compat === 'object' && existing.compat !== null ? existing.compat : {}) } } : {}),
     retryPolicy: {
       mode: 'normal',
       maxRetries: 5,
@@ -399,8 +403,11 @@ export class OpenAiGatewayService {
     return value
   }
 
-  /** 创建指定端点的无状态 HTTP 客户端。 */
-  private client(endpoint: OpenAiGatewayEndpointConfig): OpenAiGatewayClient { return new OpenAiGatewayClient(endpoint.baseURL, () => this.resolveApiKey(endpoint.apiKeyEnv), this.config.timeoutMs) }
+  /** 创建指定端点的无状态 HTTP 客户端；模型发现与生图只使用 OpenAI 兼容路径。 */
+  private client(endpoint: OpenAiGatewayEndpointConfig): OpenAiGatewayClient {
+    const api = endpoint.api === 'openai-completions' ? 'openai-completions' : 'openai-responses'
+    return new OpenAiGatewayClient(endpoint.baseURL, () => this.resolveApiKey(endpoint.apiKeyEnv), this.config.timeoutMs, api)
+  }
 
   /** 把旧 llm-sub2api 或其 llm-pi-ai Provider 映射到天工造梦；不读取或复制 Key 明文。 */
   private readLegacyConfig(): { provider?: Record<string, unknown>; changed: boolean } {

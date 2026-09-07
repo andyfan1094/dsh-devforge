@@ -386,11 +386,19 @@ test('端点协议字段：合法值保留、缺省不写、非法值拒绝', ()
     { id: 'main', name: '主站', baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY' },
     { id: 'claude', name: 'Claude 端点', baseURL: 'https://two.example.com/v1', apiKeyEnv: 'TWO_KEY', api: 'anthropic-messages' },
     { id: 'explicit', name: '显式默认', baseURL: 'https://three.example.com', apiKeyEnv: 'THREE_KEY', api: 'openai-responses' },
+    { id: 'zhipu', name: '智谱 Coding Plan', baseURL: 'https://relay.example.com/api/coding/paas/v4', apiKeyEnv: 'ZHIPU_KEY', api: 'openai-completions' },
   ] })
   assert.equal(endpoints[0]?.api, undefined)
   assert.equal(endpoints[1]?.api, 'anthropic-messages')
   assert.equal(endpoints[2]?.api, 'openai-responses')
+  assert.equal(endpoints[3]?.api, 'openai-completions')
   assert.throws(() => normalizeOpenAiEndpoints({ ...config, endpoints: [{ id: 'bad', name: '坏协议', baseURL: 'https://four.example.com', apiKeyEnv: 'FOUR_KEY', api: 'chat-completions' as never }] }), OpenAiServiceError)
+})
+
+test('OpenAI Chat Completions 端点 provider：保留智谱 Coding Plan 的 API 根路径', () => {
+  const provider = buildOpenAiEndpointProvider({ id: 'zhipu', name: '智谱 Coding Plan', baseURL: 'https://gw.example.com/api/coding/paas/v4', apiKeyEnv: 'ZHIPU_KEY', api: 'openai-completions' }, [{ id: 'glm-5.3-flash' }])
+  assert.equal(provider.api, 'openai-completions')
+  assert.equal(provider.baseURL, 'https://gw.example.com/api/coding/paas/v4')
 })
 
 test('Anthropic 端点 provider：anthropic-messages 协议、裸主机 baseURL、200K 窗口与 32K 输出', () => {

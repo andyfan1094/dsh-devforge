@@ -118,8 +118,9 @@ export class OpenAiGatewayClient {
   private readonly resolveApiKey: () => Promise<string>
   private readonly timeoutMs: number
 
-  constructor(baseURL: string, resolveApiKey: () => Promise<string>, timeoutMs: number) {
-    this.baseURL = openAiApiRoot(baseURL)
+  constructor(baseURL: string, resolveApiKey: () => Promise<string>, timeoutMs: number, api: 'openai-responses' | 'openai-completions' = 'openai-responses') {
+    // Chat Completions 的 Base URL 应保留端点路径（如智谱 /api/coding/paas/v4），SDK 再拼接 /chat/completions。
+    this.baseURL = api === 'openai-completions' ? normalizeOpenAiBaseURL(baseURL) : openAiApiRoot(baseURL)
     this.resolveApiKey = resolveApiKey
     this.timeoutMs = timeoutMs
   }

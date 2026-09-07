@@ -237,11 +237,12 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
             <div className={css['fieldGrid']}>
               <label className={css['compactField']}><span className={css['fieldLabel']}>显示名称</span><input className={css['input']} value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} /></label>
               <label className={css['compactField']}><span className={css['fieldLabel']}>稳定 ID</span><input className={css['input']} value={selected.id} onChange={(event) => updateSelected({ id: event.target.value })} spellCheck={false} /></label>
-              <label className={css['compactField']}><span className={css['fieldLabel']}>中转地址</span><input className={css['input']} type="url" placeholder="https://gateway.example.com 或 …/v1" value={selected.baseURL} onChange={(event) => updateSelected({ baseURL: event.target.value })} spellCheck={false} /></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>中转地址</span><input className={css['input']} type="url" placeholder="裸主机、/v1 或智谱 /api/coding/paas/v4" value={selected.baseURL} onChange={(event) => updateSelected({ baseURL: event.target.value })} spellCheck={false} /></label>
               <label className={css['compactField']}><span className={css['fieldLabel']}>受管凭据引用</span><input className={css['input']} value={selected.apiKeyEnv} onChange={(event) => updateSelected({ apiKeyEnv: event.target.value })} spellCheck={false} /></label>
               <label className={css['compactField']}><span className={css['fieldLabel']}>聊天协议</span><select className={css['input']} value={selected.api ?? 'openai-responses'} onChange={(event) => updateSelected({ api: event.target.value as OpenAiGatewayEndpointConfig['api'] })}>
-                <option value="openai-responses">OpenAI Responses（默认）</option>
-                <option value="anthropic-messages">Anthropic Messages（Claude /v1/messages）</option>
+                <option value="openai-responses">OpenAI Responses（/v1/responses）</option>
+                <option value="openai-completions">OpenAI Chat Completions（智谱 Coding Plan）</option>
+                <option value="anthropic-messages">Anthropic Messages（/v1/messages）</option>
               </select></label>
             </div>
             <div className={css['keyInputRow']}>

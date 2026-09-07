@@ -8,8 +8,8 @@ export const OPENAI_GATEWAY_API = {
   fetchModels: '/api/dsh-devforge/openai/fetch-models',
 } as const
 
-/** 端点聊天协议：OpenAI Responses（默认，走 /v1 聊天路由）或 Anthropic Messages（Claude 原生 /v1/messages）。 */
-export type OpenAiEndpointApi = 'openai-responses' | 'anthropic-messages'
+/** 端点聊天协议：OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages。 */
+export type OpenAiEndpointApi = 'openai-responses' | 'openai-completions' | 'anthropic-messages'
 
 /** 一个 OpenAI 兼容中转端点（Key 只保存引用名，不保存明文）。 */
 export interface OpenAiGatewayEndpointConfig {
