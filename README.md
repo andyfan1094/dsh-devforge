@@ -2,7 +2,7 @@
 
 `dsh-devforge` 是面向 DeepSeek Harness（DSH）的规范驱动服务工厂与本机智能体工作台。它同时提供 Host 能力和 Web 面板：Host 负责路由、工具、凭据、SQLite 持久化、子代理和外部服务；浏览器侧负责操作台、配置页和可视化状态。
 
-当前源码版本：`0.23.0`。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
+当前源码版本：`0.23.1`。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
 
 - [中文用户手册](docs/用户手册.md)：14 个顶层页签、重要子页、Agent 工具、数据与安全边界。
 - [发布与开源指南](docs/发布与开源指南.md)：官网、GitHub、CNB、Awesome DSH Plugin 与 dsh-market 的关系和操作步骤。

@@ -109,6 +109,15 @@ test('planHarnessUpgrade：按入口路径特征推测 npm / pnpm 并生成含�
   assert.equal(unknownPlan.command, 'npm install -g @deepseek-ai/dsh@0.1.2-rc.1')
 })
 
+test('planHarnessUpgrade：Windows 反斜杠路径也能识别 npm / pnpm 全局安装', () => {
+  const npmPlan = planHarnessUpgrade('C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', '0.1.2-rc.1')
+  assert.equal(npmPlan.manager, 'npm')
+  assert.equal(npmPlan.command, 'npm install -g @deepseek-ai/dsh@0.1.2-rc.1')
+  const pnpmPlan = planHarnessUpgrade('C:\\Users\\Administrator\\AppData\\Local\\pnpm\\global\\5\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.2\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', '0.1.2-rc.1')
+  assert.equal(pnpmPlan.manager, 'pnpm')
+  assert.equal(pnpmPlan.command, 'pnpm add -g @deepseek-ai/dsh@0.1.2-rc.1')
+})
+
 /** 构造可注入的本体检查依赖。 */
 function deps(overrides?: { installed?: string; tags?: Array<{ name: string }>; fail?: boolean }) {
   return {

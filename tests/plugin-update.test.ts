@@ -14,11 +14,33 @@ import {
   type UpdateSource,
 } from '../src/plugin-update.ts'
 
-test('buildDshPluginAddCommand：Windows 经 cmd.exe 启动并对含空格路径加引号', () => {
-  const command = buildDshPluginAddCommand('win32', 'web', 'C:\\Temp dir\\x.tgz')
-  assert.equal(command.file, 'cmd.exe')
-  assert.deepEqual(command.args, ['/d', '/s', '/c', 'dsh plugin --profile web add "C:\\Temp dir\\x.tgz"'])
+test('buildDshPluginAddCommand：Windows 优先直启当前 DSH Node 入口，绕过 .cmd 与 PATH', () => {
+  const entryPath = 'C:\\Program Files\\nodejs\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js'
+  const nodePath = 'C:\\Program Files\\nodejs\\node.exe'
+  const command = buildDshPluginAddCommand('win32', 'web', 'C:\\Temp dir\\x.tgz', {
+    entryPath,
+    nodePath,
+    execArgv: ['--import', 'tsx/esm'],
+  })
+  assert.equal(command.file, nodePath)
+  assert.deepEqual(command.args, ['--import', 'tsx/esm', entryPath, 'plugin', '--profile', 'web', 'add', 'C:\\Temp dir\\x.tgz'])
+  assert.equal(command.verbatim, false)
+})
+
+test('buildDshPluginAddCommand：Windows 无标准入口时经 ComSpec 启动并完整引用参数', () => {
+  const command = buildDshPluginAddCommand('win32', 'web', 'C:\\Temp dir\\x.tgz', { comSpec: 'C:\\Windows\\System32\\cmd.exe' })
+  assert.equal(command.file, 'C:\\Windows\\System32\\cmd.exe')
+  assert.deepEqual(command.args, ['/d', '/s', '/c', '"dsh plugin --profile web add "C:\\Temp dir\\x.tgz""'])
   assert.equal(command.verbatim, true)
+})
+
+test('buildDshPluginAddCommand：Windows 对 cmd 元字符统一加引号', () => {
+  const command = buildDshPluginAddCommand('win32', 'web profile', 'C:\\Temp (safe)&drop\\x.tgz', { comSpec: 'cmd.exe' })
+  assert.deepEqual(command.args, ['/d', '/s', '/c', '"dsh plugin --profile "web profile" add "C:\\Temp (safe)&drop\\x.tgz""'])
+})
+
+test('buildDshPluginAddCommand：Windows 无 Node 入口时拒绝变量展开字符', () => {
+  assert.throws(() => buildDshPluginAddCommand('win32', 'web%profile', 'C:\\Temp\\x.tgz', { comSpec: 'cmd.exe' }), /变量展开字符/)
 })
 
 test('buildDshPluginAddCommand：POSIX 直接执行 dsh', () => {
