@@ -240,10 +240,11 @@ export function planHarnessUpgrade(entryPath: string, version: string): HarnessU
     // 入口路径解析失败时按原样判断，不影响命令生成。
   }
   const pkg = '@deepseek-ai/dsh@' + version
-  if (real.includes('node_modules/.pnpm/')) {
+  const normalized = real.replace(/\\/g, '/').toLowerCase()
+  if (normalized.includes('node_modules/.pnpm/')) {
     return { manager: 'pnpm', command: 'pnpm add -g ' + pkg, evidence: '入口路径位于 pnpm 全局目录' }
   }
-  if (real.includes('node_modules/')) {
+  if (normalized.includes('node_modules/')) {
     return { manager: 'npm', command: 'npm install -g ' + pkg, evidence: '入口路径位于 npm 全局目录' }
   }
   return { manager: 'unknown', command: 'npm install -g ' + pkg, evidence: '未能识别安装方式，默认按官方 npm 渠道给出命令' }

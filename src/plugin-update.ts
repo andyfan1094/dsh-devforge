@@ -230,21 +230,58 @@ export async function downloadTgz(url: string, packageName: string, version: str
 }
 
 /**
+ * dsh plugin add 的启动参数；Windows 先尝试复用当前 DSH 的 Node 入口，避免依赖 PATH 中的 .cmd 垫片。
+ */
+export interface DshPluginAddCommandOptions {
+  /** 当前 DSH CLI 的 Node 入口（通常是 lib/bin.js 或 bin.ts）。 */
+  entryPath?: string
+  /** 启动 DSH 的 Node 可执行文件；缺省使用当前进程 Node。 */
+  nodePath?: string
+  /** 当前 Node 进程的启动参数（例如 tsx/esm loader）。 */
+  execArgv?: readonly string[]
+  /** Windows 命令解释器路径；测试和特殊宿主可注入。 */
+  comSpec?: string
+}
+
+/** 可安全直接复用的 DSH CLI 入口形态。 */
+const DSH_ENTRY_RE = /[\\/](?:bin\.(?:js|ts)|dsh)$/
+
+/** cmd 会在引号内展开的变量字符；没有 Node 入口时拒绝这类输入，避免语义被改写。 */
+const CMD_EXPANSION_RE = /[%!]/
+
+/**
  * 构造 `dsh plugin add` 的启动命令。
  *
- * Windows 上 `dsh` 是 npm 生成的 .cmd 垫片：Node 出于安全限制不允许不经 shell
- * 直接执行 .cmd（裸 spawn/execFile 报 spawn dsh ENOENT），必须经 cmd.exe 启动，
- * 由 cmd 按 PATHEXT 自行解析 dsh.cmd；/d 忽略 AutoRun、/s 规整引号剥离，
- * 配合 windowsVerbatimArguments 把整行按原样交给 cmd（与 dshmarket 同款方案）。
- * POSIX 无垫片问题，保持直接 execFile。
+ * Windows 优先直接执行当前 DSH 的 Node 入口：运行中的宿主已经拥有真实入口与
+ * Node 路径，复用它不会再经过 dsh.cmd/dsh.ps1，也不依赖 GUI 进程是否继承 npm PATH。
+ * 只有入口不是标准 DSH CLI 时才退回 ComSpec；退回路径逐 token 引用，并拒绝
+ * cmd 的变量展开字符。POSIX 保持原有直接执行 dsh 的行为。
  */
-export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: string, tgzPath: string): { file: string; args: string[]; verbatim: boolean } {
+export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: string, tgzPath: string, options: DshPluginAddCommandOptions = {}): { file: string; args: string[]; verbatim: boolean } {
   if (platform === 'win32') {
-    // cmd.exe /s /c 之后整行按原样解析：参数含空格时手工加引号即可（本路径均为本机生成的临时 tgz 与 profile 名，不含引号字符）。
-    const quote = (value: string): string => (value.includes(' ') ? '"' + value + '"' : value)
+    const entryPath = options.entryPath?.trim() ?? ''
+    if (entryPath !== '' && DSH_ENTRY_RE.test(entryPath)) {
+      return {
+        file: options.nodePath?.trim() || process.execPath,
+        args: [...(options.execArgv ?? []), entryPath, 'plugin', '--profile', profile, 'add', tgzPath],
+        verbatim: false,
+      }
+    }
+    if (CMD_EXPANSION_RE.test(profile) || CMD_EXPANSION_RE.test(tgzPath)) {
+      throw new Error('Windows 更新缺少可复用的 DSH 入口，且 profile 或临时包路径含 cmd 变量展开字符；请从终端启动 DSH 后重试')
+    }
+    // cmd.exe 会重新解析整行，不能只按空格补引号；括号、百分号和管道符等
+    // 也会改变命令含义。这里沿用 dshmarket 的安全边界，逐个 token 转义后再交给
+    // /d /s /c，并保持 windowsVerbatimArguments，避免 Node 再次改写反斜杠。
+    const cmdMetaCharacters = /[\s"&|<>^()%!]/
+    const quoteCmdArg = (value: string): string => {
+      if (!cmdMetaCharacters.test(value)) return value
+      return '"' + value.replace(/"/g, '""') + '"'
+    }
+    const commandLine = ['dsh', 'plugin', '--profile', profile, 'add', tgzPath].map(quoteCmdArg).join(' ')
     return {
-      file: 'cmd.exe',
-      args: ['/d', '/s', '/c', ['dsh', 'plugin', '--profile', quote(profile), 'add', quote(tgzPath)].join(' ')],
+      file: options.comSpec?.trim() || process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', '"' + commandLine + '"'],
       verbatim: true,
     }
   }
@@ -254,8 +291,19 @@ export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: str
 /** 执行 dsh plugin add（默认实现；测试可注入）。 */
 export function runPluginAdd(profile: string, tgzPath: string, timeoutMs = 180000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const command = buildDshPluginAddCommand(process.platform, profile, tgzPath)
-    execFile(command.file, command.args, { timeout: timeoutMs, encoding: 'utf8', windowsVerbatimArguments: command.verbatim, windowsHide: true }, (error, stdout, stderr) => {
+    const command = buildDshPluginAddCommand(process.platform, profile, tgzPath, {
+      entryPath: process.argv[1],
+      nodePath: process.execPath,
+      execArgv: process.execArgv,
+    })
+    execFile(command.file, command.args, {
+      timeout: timeoutMs,
+      encoding: 'utf8',
+      windowsVerbatimArguments: command.verbatim,
+      windowsHide: true,
+      // 更新动作没有交互式终端；避免 pnpm 在无 TTY 时等待确认或直接中止。
+      env: { ...process.env, CI: 'true' },
+    }, (error, stdout, stderr) => {
       if (error) {
         const detail = (stderr || stdout || error.message).toString().slice(-400)
         reject(new Error('dsh plugin add 失败：' + detail))

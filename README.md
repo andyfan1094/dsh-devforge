@@ -1,8 +1,8 @@
-# dsh-devforge 服务工厂
+# dsh-devforge 天工造梦
 
-面向 DeepSeek Harness 的规范驱动服务生成插件，采用 Host 与浏览器双面架构：Host 提供规范注入、子代理服务生成、版本管理和本机重启能力；浏览器侧提供“服务工厂”操作台。
+`dsh-devforge` 是面向 DeepSeek Harness（DSH）的规范驱动服务工厂与本机智能体工作台。它同时提供 Host 能力和 Web 面板：Host 负责路由、工具、凭据、SQLite 持久化、子代理和外部服务；浏览器侧负责操作台、配置页和可视化状态。
 
-## 主要能力
+当前源码版本：`0.23.1`。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
 
 1. **通用开发规范库**：版本化 Markdown 规范存放于 `standards/`，通过系统提示和 `devforge_standards` 工具提供给 Agent；创建服务时按模板注入生成子代理。
 2. **一键生成服务**：`devforge_jobs` 工具和“新建服务”页创建独立子代理。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。
@@ -17,57 +17,83 @@
 11. **插件更新**：操作台「插件更新」页签对比官网（modagentai.com）版本清单检查更新源登记表里的插件（默认登记 dsh-devforge 自己，可在设置里加包名→官网清单或 GitHub 仓库），一键升级走下载 tgz（官网渠道强制 sha256 校验）→ `dsh plugin add` 的同一条人工验证路径；升级后提示重启 DSH 生效（重启仍需用户确认）。
 12. **DSH 全 GUI 换肤**：操作台「皮肤」页签基于官方 `ctx.theme.register/overrideTokens` 一等 API 提供 14 套内置主题（7 浅 7 深，含 4 套紫色：薰衣草、雾紫、星紫夜、水晶紫夜；以及晨雾蓝、樱花粉、纸感暖、森林绿、蜜柑橙、午夜蓝、石墨黑、松林夜、墨玉青、中国红）+ 8 色强调色 + 可选壁纸（本地图片/http(s)/data URL，配遮罩浓度/模糊/显示方式）。选择持久化到 localStorage 跨重启自动跟随，深浅色与 GUI 自带模式自动联动；针对 ThemeRuntime 持久化偏好 schema 不接受第三方皮肤 id 的限制，引导期做 4 次 200ms 重试兜底，状态真相源切换为 `ctx.theme.getTheme().active.id` 保证 active 高亮与 GUI 实际着色始终一致；写入失败时 UI 顶部 banner 提示。
 
-## 可见运营浏览器
+推荐阅读：
 
-- `browser_open`：每次为调用智能体新建独立标签页，返回的元素引用自动绑定标签身份与快照代次。
-- `browser_tabs`：列出、新建、选择或关闭同一个前台 Chrome 中的标签页。
-- `browser_snapshot`、`browser_click`、`browser_type`：使用 `t<标签>g<代次>:<元素>` 作用域引用；操作前自动切回所属标签页，引用失效时直接拒绝，不会猜测或落到其它页面。
-- `browser_upload`：在引用所属标签页内原子完成点击上传、文件校验、暂存上传和快照刷新。
-- 同一个登录档案只启动一个 Playwright MCP 进程；所有智能体共享 Host 级操作队列，因此单次操作会短暂排队，但各自标签页和页面状态相互隔离。
-- 登录、退出和切换账号属于全局档案状态变更，操作时仍必须暂停其它任务。
+- [中文用户手册](docs/用户手册.md)：14 个顶层页签、重要子页、Agent 工具、数据与安全边界。
+- [发布与开源指南](docs/发布与开源指南.md)：官网、GitHub、CNB、Awesome DSH Plugin 与 dsh-market 的关系和操作步骤。
+- [暂存环境测试约束](docs/插件暂存环境测试约束.md)：隔离 HOME、3081 端口、禁用桌面宠物/飞书桥以及生产重启红线。
 
-## 闲鱼运营助手
+## 能力概览
 
-- `xianyu_messages_list`：读取当前账号的会话列表、最后一条消息、时间和未读状态。
-- `xianyu_conversation_read`：按联系人显示名打开并读取完整对话；打开未读会话会触发闲鱼自身的已读状态。
-- `xianyu_reply`：真实发送前必须由用户确认联系人和完整正文，并传入绑定具体联系人的确认短语，例如“确认发送给‘张三’”。同一联系人和内容五分钟内不会重复发送。
-- `xianyu_publish`：上传商品图片、把标题写入描述首行、填写价格并点击发布；必须传入“确认发布”，且只有跳转到 `/item?id=` 商品详情页才报告成功。平台要求手机认证时停止并提示用户在前台完成。
-- 发布页和消息页使用独立标签页，统一复用一个可见 Chrome 和持久登录档案；闲鱼登录、认证、切换账号由用户在前台完成。插件不读取、保存或输出密码、Cookie 和令牌。
+| 领域 | 能力 |
+| --- | --- |
+| 开发工厂 | 版本化开发规范、`devforge_jobs` 一键生成服务、规范注入、项目上下文和产出目录公约 |
+| 模型接入 | 智谱 GLM、MiniMax、火山方舟、硅基流动、OpenAI 兼容中转站、模型目录和用量看板 |
+| 知识与记忆 | RAG 知识库、中文全文+向量混合检索、精排、项目索引、会话自动沉淀、主动注入、知识图谱 |
+| 工作流 | 查询改写、检索、精排、生成、自评重试、运行记录和来源耗时 |
+| 代码托管 | CNB 与 GitHub 账号、仓库、Clone/Pull/Status/Commit/Push；推送默认关闭 |
+| 远程运维 | SSH、WinRM、批量执行、PTY/SFTP、端口隧道、Windows 进程和服务管理 |
+| 可见自动化 | 前台 Chrome 多标签页、无障碍快照、稳定引用、图片上传、闲鱼/小红书操作 |
+| 协作与备份 | 飞书长连接、独立会话、完成通知、CNB 加密备份、跨机预览/同步/恢复 |
+| 维护与外观 | 插件更新、DSH 本体版本检查、14 套主题、强调色、壁纸、插件能力总览注入 |
+| 直播侧栏 | 抖音直播间连接、弹幕/礼物/点赞/进场等消息筛选、伴侣跟随和语音播报 |
 
-## 开发
+![天工造梦教程页](docs/assets/screenshots/guide.png)
 
-```sh
-pnpm install
-pnpm run typecheck
-pnpm test
-pnpm run build
-```
+## 安装
 
-源仓库不依赖任何机器的绝对路径。`pnpm-workspace.yaml` 不允许提交本机 DSH 的 `link:` 覆盖；依赖必须可由发布版本解析。
+### 官网预构建包
 
-## 从 GitHub 安装
-
-方式一（推荐，Release 直链免构建，其他电脑一条命令）：
+官网包不需要在目标机重新构建：
 
 ```sh
-dsh plugin --profile web add https://github.com/andyfan1094/dsh-devforge/releases/latest/download/dsh-devforge-0.13.0.tgz
+dsh plugin --profile web add https://modagentai.com/downloads/dsh-devforge-latest.tgz
 ```
 
-每次发版 tgz 文件名带版本号，新版本请到 [Releases 页](https://github.com/andyfan1094/dsh-devforge/releases) 复制对应直链替换；装完重启 DSH Web Host 生效。已装好的机器也可以直接在「天工造梦 → 插件更新」页签一键检查并升级。
+安装后重启 DSH Web Host 才能让 Host 半边生效。已经安装的机器可以进入「天工造梦 → 插件更新」页检查官网清单；官网渠道会校验 `sha256`。
 
-方式二（源码安装，目标机执行 `prepare` 构建）：
+### GitHub 源码
+
+仓库公开后可从 GitHub 安装：
 
 ```sh
 dsh plugin --profile web add github:andyfan1094/dsh-devforge#main
 ```
 
-源码安装会执行 `prepare` 构建。安装完成后，确认 web profile 的 `package.json` 依赖项和 `dsh.profile.bundles` 均包含 `dsh-devforge`，再重启 DSH Web Host。
+源码安装会执行 `prepare`/构建流程。需要稳定、免构建的安装体验时，使用 GitHub Release 中的预构建 `.tgz` 或官网包。
 
-## 规范文件
+### CNB 镜像
 
-- `standards/v1/common.zh.md`：职责边界、注释、可读性、复用、开源依赖、日志、安全、验证和版本管理。
-- `standards/v1/api.zh.md`：Api、Bll/BAL、Dal、Model、Utility/Utils 的单向分层与后端安全边界。
-- `standards/v1/web-service.zh.md`：Web 后端工程结构、日志、健康检查和交付验证。
-- `standards/v1/frontend.zh.md`：页面层职责、API 客户端边界、可读性和复用要求。
+CNB 用于国内镜像、代码协作和加密备份；dsh-market 的精选目录要求使用 GitHub 仓库地址，因此市场条目的主链接仍应指向 GitHub，CNB 作为同步镜像维护。CNB 的账号、Clone、Pull、Commit 和 Push 见 [CNB/GitHub 发布说明](docs/发布与开源指南.md)。
 
-新增规范时，在 `standards/vN/` 下增加带一级标题和 `tags:` 行的 Markdown 文件；重启或重新加载插件后生效。
+## 开发与验证
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm run build
+```
+
+源码不依赖任何机器的绝对路径；`pnpm-workspace.yaml` 不应提交本机 `link:` 覆盖。插件改动在生产前必须按隔离暂存流程验收，生产实例不要直接试验。
+
+## 项目结构
+
+```text
+src/index.ts                 Host 入口、配置、路由、工具和生命周期
+src/client/                  Web 入口、侧栏入口、面板和主题运行时
+src/client/panel/            14 个顶层页签与各工作台子页
+src/*/protocol.ts            Host/Client/API 数据契约
+standards/                   版本化开发规范
+docs/                        中文手册、发布说明、暂存约束和截图
+screenshots.json             dsh-market 使用的精选截图清单
+cordis.patch.yml             DSH bundle 注册
+```
+
+## 截图
+
+完整截图索引在 [中文用户手册](docs/用户手册.md) 中。市场详情页使用仓库根目录的 `screenshots.json`，截图文件存放在 `docs/assets/screenshots/`，不包含 API Key、Token 或 Secret。
+
+## 许可证
+
+项目代码使用 `MIT AND Apache-2.0`；第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，许可证文件见 `LICENSE` 与 `LICENSES/`。
