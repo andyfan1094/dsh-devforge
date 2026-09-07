@@ -46,6 +46,7 @@ import { MemorySedimentService } from './memory/sediment.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { NativeMemoryStore } from './memory/native.ts'
+import { memoryManageTool } from './memory/tools.ts'
 import { UserProfileInjectionService, DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './memory/profile.ts'
 import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
 import { WorkflowEngine } from './workflow/engine.ts'
@@ -633,7 +634,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), devforgeProjectTool(), devforgeWorkspaceTool()]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), memoryManageTool(nativeMemory), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
