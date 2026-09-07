@@ -23,11 +23,12 @@ interface StubCtx {
   credentials: {
     describe: () => Promise<{ configured: boolean; writable: boolean }>
     resolve: () => Promise<{ value: string } | undefined>
+    set: (ref: unknown, value: string) => Promise<void>
   }
 }
 
-/** 构造假 ctx；onMutate 用于观察写入次数，resolve 可注入已配置凭据。 */
-function makeStubCtx(options: { onMutate?: () => void; resolveValue?: string } = {}): StubCtx {
+/** 构造假 ctx；onMutate/onSet 用于观察写入次数，resolveValue 可注入已配置凭据。 */
+function makeStubCtx(options: { onMutate?: () => void; onSet?: (value: string) => void; resolveValue?: string } = {}): StubCtx {
   const stored: { providers: Record<string, unknown> } = { providers: {} }
   return {
     settings: {
@@ -41,6 +42,7 @@ function makeStubCtx(options: { onMutate?: () => void; resolveValue?: string } =
     credentials: {
       describe: async () => ({ configured: false, writable: true }),
       resolve: async () => options.resolveValue === undefined ? undefined : { value: options.resolveValue },
+      set: async (_ref: unknown, value: string) => { options.onSet?.(value) },
     },
   }
 }
@@ -128,10 +130,14 @@ test('官方 Key 保存：验证通过后写入受管凭据', async () => {
       JSON.stringify({ data: [{ id: 'glm-5.3-flash' }, { id: 'glm-5.2' }] }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     )) as typeof fetch, async () => {
-      const service = new ZhipuCodingPlanService(makeStubCtx() as never, officialConfig(), {} as never)
+      const setValues: string[] = []
+      const ctx = makeStubCtx({ onSet: (value) => { setValues.push(value) } })
+      const service = new ZhipuCodingPlanService(ctx as never, officialConfig(), {} as never)
       const status = await service.saveOfficialKey({ value: 'good-key' })
       assert.equal(status.credentialEnv, 'ZHIPU_OFFICIAL_API_KEY')
-      assert.ok((await listCredentialRefs()).includes('ZHIPU_OFFICIAL_API_KEY'), '验证通过后应写入受管凭据')
+      assert.deepEqual(setValues, ['good-key'], '验证通过后应经凭据服务写入')
+      // 兜底同步也会落直读文件，供其它直读 .credentials.yaml 的链路使用。
+      assert.ok((await listCredentialRefs()).includes('ZHIPU_OFFICIAL_API_KEY'), '直读文件应同步写入')
       const raw = await readFile(join(home, '.credentials.yaml'), 'utf8')
       assert.match(raw, /ZHIPU_OFFICIAL_API_KEY: good-key/)
     })

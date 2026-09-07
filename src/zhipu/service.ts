@@ -164,14 +164,17 @@ export class ZhipuCodingPlanService {
     if (value === '') throw new ZhipuServiceError('API Key 不能为空。', 400)
     if (value.length > 4096) throw new ZhipuServiceError('API Key 长度超过安全上限。', 400)
     await this.fetchOfficialModelList(value)
-    // 引用名合法性由 officialReference 统一把关；写入用原始引用名（credentials-writer 只收字符串）。
+    // 引用名合法性由 officialReference 统一把关。
     this.officialReference()
     const env = this.officialEnv()
+    // 优先走凭据服务 API：写入即时生效，面板保存后状态立即可见（直写文件有监听延迟）。
     try {
-      await setCredential(env, value)
+      await this.ctx.credentials.set(credentialRef(env), value)
     } catch (error) {
       throw new ZhipuServiceError('凭据写入失败：' + (error instanceof Error ? error.message : String(error)), 400)
     }
+    // 同步直读文件与备份镜像（尽力而为）：保持其它直读 .credentials.yaml 的链路与备份一致。
+    try { await setCredential(env, value) } catch { /* 服务已写入，文件同步失败不阻塞 */ }
     try { putCredentialMirror(getDb(), env, value) } catch { /* 镜像失败不阻塞主流程 */ }
     return await this.officialStatus()
   }
