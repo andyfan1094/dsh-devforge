@@ -182,6 +182,39 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
         } catch (error) { writeError(res, error) }
       },
     },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.officialSetup,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { writeJson(res, 200, { ok: true, status: await service.ensureOfficialModels() }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.officialKeySave,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          writeJson(res, 200, { ok: true, status: await service.saveOfficialKey({ value: typeof body.value === 'string' ? body.value : '' }) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.officialFetchModels,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const result = await service.fetchOfficialModels()
+          writeJson(res, 200, { ok: true, status: result.status, added: result.added, kept: result.kept, total: result.total })
+        } catch (error) { writeError(res, error) }
+      },
+    },
   ]
 }
 

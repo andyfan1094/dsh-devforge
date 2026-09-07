@@ -8,7 +8,8 @@ import { getDb, putCredentialMirror, removeCredentialMirror } from '../store/db.
 import { parseQuotaLimits } from './quota.ts'
 import { ZhipuKeyPool, firstSuccessful, newKeyId, nextKeyRef } from './key-pool.ts'
 import { ZhipuServiceError } from './errors.ts'
-import type { ZhipuDashboard, ZhipuKeyUsage, ZhipuModelUsage, ZhipuStatus, ZhipuToolUsage, ZhipuUsageWindow } from './protocol.ts'
+import { ZHIPU_OFFICIAL_BASE_URL, ZHIPU_OFFICIAL_PROVIDER_ID } from './protocol.ts'
+import type { ZhipuDashboard, ZhipuKeyUsage, ZhipuModelUsage, ZhipuOfficialStatus, ZhipuStatus, ZhipuToolUsage, ZhipuUsageWindow } from './protocol.ts'
 
 /** 兼容既有导入方（routes/tests）：错误类本体在 errors.ts。 */
 export { ZhipuServiceError }
@@ -20,6 +21,14 @@ const MODELS = [
   { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high', max: 'max' } },
 ] as const
 
+/** 官方开放平台默认模型池：GLM-5.3-Flash 原生多模态（1M 上下文，文字+图片输入），参数与官方文档一致。 */
+export const ZHIPU_OFFICIAL_DEFAULT_MODELS = [
+  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high', max: 'max' } },
+] as const
+
+/** 官方 API Key 的兜底受管凭据引用名（配置未指定时使用）。 */
+export const ZHIPU_OFFICIAL_DEFAULT_KEY_ENV = 'ZHIPU_OFFICIAL_API_KEY'
+
 /** 合并 zai-coding-cn 配置：只补缺失模型和凭据引用，保留用户显式字段。 */
 export function mergeZhipuProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
@@ -28,6 +37,22 @@ export function mergeZhipuProvider(provider: Record<string, unknown> | undefined
   return {
     ...(provider ?? {}),
     apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
+    models: [...existing, ...additions],
+  }
+}
+
+/** 合并官方开放平台 provider：端点强制固定官方地址，只补缺失模型和凭据引用，保留用户显式字段。 */
+export function mergeZhipuOfficialProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
+  const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
+  const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+  const additions = ZHIPU_OFFICIAL_DEFAULT_MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  return {
+    ...(provider ?? {}),
+    displayName: typeof provider?.displayName === 'string' ? provider.displayName : '智谱开放平台',
+    apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
+    api: typeof provider?.api === 'string' ? provider.api : 'openai-completions',
+    // baseURL 无条件覆盖：官方 Key 只允许发往智谱开放平台，防止配置漂移把 Key 带去未知端点。
+    baseURL: ZHIPU_OFFICIAL_BASE_URL,
     models: [...existing, ...additions],
   }
 }
@@ -53,6 +78,8 @@ export interface ZhipuCapabilityConfig {
   timeoutMs: number
   /** 官方 MCP 工具开关。 */
   mcpTools: boolean
+  /** 官方 API 直调（开放平台）Key 的受管凭据引用；缺省用 ZHIPU_OFFICIAL_API_KEY。 */
+  officialApiKeyEnv?: string
 }
 
 /** 智谱官方模型与监控接口服务。 */
@@ -94,7 +121,159 @@ export class ZhipuCodingPlanService {
       models: displayIds.map((id) => ({ id, configured: configuredIds.has(id) })),
       mcpTools: this.config.mcpTools,
       keys: await this.pool.list(),
+      official: await this.officialStatus(),
     }
+  }
+
+  /** 官方 API 直调（开放平台）Key 的受管凭据引用名。 */
+  private officialEnv(): string {
+    return this.config.officialApiKeyEnv ?? ZHIPU_OFFICIAL_DEFAULT_KEY_ENV
+  }
+
+  /** 官方 API 直调的凭据引用（状态上报与保存入口共用）。 */
+  private officialReference(): ReturnType<typeof credentialRef> {
+    const env = this.officialEnv()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(env)) throw new ZhipuServiceError('智谱官方凭据引用格式无效。', 400)
+    return credentialRef(env)
+  }
+
+  /** 读取官方 API 直调（开放平台）的脱敏状态：凭据、provider 与模型清单。 */
+  async officialStatus(): Promise<ZhipuOfficialStatus> {
+    const credential = await this.ctx.credentials.describe(this.officialReference())
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const provider = section?.providers?.[ZHIPU_OFFICIAL_PROVIDER_ID]
+    const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
+    const configuredIds = new Set(liveIds)
+    /** 优先展示 settings 中实际配置的模型，未配置任何模型时回退到内置常量。 */
+    const displayIds = liveIds.length > 0 ? liveIds : ZHIPU_OFFICIAL_DEFAULT_MODELS.map((model) => model.id)
+    return {
+      credentialEnv: this.officialEnv(),
+      credentialConfigured: credential.configured,
+      providerConfigured: provider !== undefined,
+      baseURL: ZHIPU_OFFICIAL_BASE_URL,
+      models: displayIds.map((id) => ({ id, configured: configuredIds.has(id) })),
+    }
+  }
+
+  /**
+   * 保存官方 API Key：先调官方 models 接口验证，通过后才写入受管凭据。
+   * 验证失败不落盘，避免把无效 Key 留在路由里造成后续调用全部失败。
+   */
+  async saveOfficialKey(input: { value: string }): Promise<ZhipuOfficialStatus> {
+    const value = typeof input.value === 'string' ? input.value.trim() : ''
+    if (value === '') throw new ZhipuServiceError('API Key 不能为空。', 400)
+    if (value.length > 4096) throw new ZhipuServiceError('API Key 长度超过安全上限。', 400)
+    await this.fetchOfficialModelList(value)
+    // 引用名合法性由 officialReference 统一把关；写入用原始引用名（credentials-writer 只收字符串）。
+    this.officialReference()
+    const env = this.officialEnv()
+    try {
+      await setCredential(env, value)
+    } catch (error) {
+      throw new ZhipuServiceError('凭据写入失败：' + (error instanceof Error ? error.message : String(error)), 400)
+    }
+    try { putCredentialMirror(getDb(), env, value) } catch { /* 镜像失败不阻塞主流程 */ }
+    return await this.officialStatus()
+  }
+
+  /** 补齐官方开放平台 provider 与默认模型，不覆盖用户显式字段；无变化时不产生写入。 */
+  async ensureOfficialModels(): Promise<ZhipuOfficialStatus> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
+      const provider = current?.providers?.[ZHIPU_OFFICIAL_PROVIDER_ID]
+      const merged = mergeZhipuOfficialProvider(provider, this.officialEnv())
+      if (deepEqualJson(merged, provider)) return await this.officialStatus()
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
+          op: 'set',
+          path: ['providers', ZHIPU_OFFICIAL_PROVIDER_ID],
+          value: merged,
+        }], descriptor.revision)
+        return await this.officialStatus()
+      } catch (error) {
+        if (error instanceof SettingsConflictError) {
+          if (attempt === 1) throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+          continue
+        }
+        throw error
+      }
+    }
+    throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /** 用官方 API Key 从开放平台拉取最新模型清单，合并进官方 provider（只增不改不删）。 */
+  async fetchOfficialModels(): Promise<{ status: ZhipuOfficialStatus; added: string[]; kept: string[]; total: number }> {
+    const credential = await this.ctx.credentials.resolve(this.officialReference())
+    const apiKey = credential?.value.trim() ?? ''
+    if (apiKey === '') throw new ZhipuServiceError('尚未配置官方 API Key，请先保存。', 400)
+    const official = await this.fetchOfficialModelList(apiKey)
+    if (official.length === 0) throw new ZhipuServiceError('智谱开放平台 models 接口未返回有效数据。', 502)
+    return await this.mergeOfficialModels(official)
+  }
+
+  /**
+   * 调官方开放平台 /api/paas/v4/models 并规整模型清单。
+   * 同时充当 Key 验证入口：401/403 判定 Key 无效，网络失败按不可达处理。
+   */
+  private async fetchOfficialModelList(apiKey: string): Promise<Array<Record<string, unknown>>> {
+    const controller = new AbortController()
+    const timer = setTimeout(controller.abort.bind(controller), this.config.timeoutMs)
+    let response: Response
+    try {
+      response = await fetch(ZHIPU_OFFICIAL_BASE_URL + '/models', {
+        headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+        signal: controller.signal,
+      })
+    } catch (error) {
+      throw new ZhipuServiceError('无法连接智谱开放平台：' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      clearTimeout(timer)
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new ZhipuServiceError('官方 API Key 无效或没有模型访问权限，未保存。', 401)
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new ZhipuServiceError('智谱开放平台 models 接口 HTTP ' + response.status + '：' + text.slice(0, 200), 502)
+    }
+    const payload = await response.json().catch(() => null) as unknown
+    return parseZhipuModelList(payload)
+  }
+
+  /** 把官方模型清单合并进官方 provider；写 settings 复用并发重试。 */
+  private async mergeOfficialModels(official: Array<Record<string, unknown>>): Promise<{ status: ZhipuOfficialStatus; added: string[]; kept: string[]; total: number }> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
+      const provider = current?.providers?.[ZHIPU_OFFICIAL_PROVIDER_ID]
+      const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
+      const existingIds = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+      const additions = official.filter((model) => {
+        const id = typeof model.id === 'string' ? model.id : ''
+        return id !== '' && !existingIds.has(id)
+      })
+      const merged = [...existing, ...additions]
+      const added = additions.map((model) => typeof model.id === 'string' ? model.id : '').filter((id) => id !== '')
+      const kept = existing.map((model) => typeof model.id === 'string' ? model.id : '').filter((id) => id !== '')
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
+          op: 'set',
+          path: ['providers', ZHIPU_OFFICIAL_PROVIDER_ID, 'models'],
+          value: merged,
+        }], descriptor.revision)
+        return { status: await this.officialStatus(), added, kept, total: merged.length }
+      } catch (error) {
+        if (error instanceof SettingsConflictError) {
+          if (attempt === 1) throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+          continue
+        }
+        throw error
+      }
+    }
+    throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
   }
 
   /** 调官方 /api/paas/v4/models 拉取在售模型清单，合并进 provider；Key 失效或限流自动切换。 */

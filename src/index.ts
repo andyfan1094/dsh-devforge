@@ -210,6 +210,7 @@ export const Config = z.object({
     apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
     mcpTools: z.boolean().default(true).description('官方 MCP 工具：联网搜索/网页读取/Zread'),
+    officialApiKeyEnv: z.string().default('ZHIPU_OFFICIAL_API_KEY').description('智谱官方 API（开放平台直调）受管凭据引用'),
   }).description('智谱 Coding Plan 配置'),
   minimax: z.object({
     enabled: z.boolean().default(true).description('MiniMax Coding Plan 模型路由与官方工具'),
@@ -320,6 +321,7 @@ export function apply(ctx: Context, config?: Config): void {
         apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
         timeoutMs: value.zhipu?.timeoutMs ?? 15000,
         mcpTools: value.zhipu?.mcpTools !== false,
+        officialApiKeyEnv: value.zhipu?.officialApiKeyEnv ?? 'ZHIPU_OFFICIAL_API_KEY',
       },
       minimax: {
         enabled: value.minimax?.enabled ?? true,
@@ -375,7 +377,7 @@ export function apply(ctx: Context, config?: Config): void {
   ctx.effect(() => () => { engine.dispose() }, 'dsh-devforge: engine')
 
   // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
-  const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true }
+  const zhipuConfig = { enabled: true, apiKeyEnv: 'ZAI_CODING_CN_API_KEY', timeoutMs: 15000, mcpTools: true, officialApiKeyEnv: 'ZHIPU_OFFICIAL_API_KEY' }
   const minimaxConfig = { enabled: true, apiKeyEnv: 'MINIMAX_CN_API_KEY', timeoutMs: 30000, tools: true }
   const arkConfig: ArkCapabilityConfig = { enabled: true, apiKeyEnv: 'ARK_CODING_PLAN_API_KEY', usageAccessKeyEnv: 'VOLC_ACCESS_KEY', usageSecretKeyEnv: 'VOLC_SECRET_KEY', usageTimeoutMs: 15000 }
   const openAiConfig: OpenAiCapabilityConfig = { enabled: true, baseURL: '', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: '', timeoutMs: 300000 }
@@ -430,6 +432,7 @@ export function apply(ctx: Context, config?: Config): void {
         () => openAiService.ensureProvider(),
         () => arkService.ensureModels(),
         () => zhipuService.ensureModels(),
+        () => zhipuService.ensureOfficialModels(),
         () => minimaxService.ensureModels(),
         () => siliconFlowService.ensureModels(),
       ]
@@ -835,7 +838,7 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null } }
+        const value = raw() as Config & { remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
@@ -856,6 +859,7 @@ export function apply(ctx: Context, config?: Config): void {
             apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
             timeoutMs: value.zhipu?.timeoutMs ?? 15000,
             mcpTools: value.zhipu?.mcpTools !== false,
+            officialApiKeyEnv: value.zhipu?.officialApiKeyEnv ?? 'ZHIPU_OFFICIAL_API_KEY',
           },
           minimax: {
             enabled: value.minimax?.enabled !== false,

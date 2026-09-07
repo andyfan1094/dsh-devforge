@@ -12,7 +12,19 @@ export const ZHIPU_API = {
   keysAdd: '/api/dsh-devforge/zhipu/keys/add',
   keysRemove: '/api/dsh-devforge/zhipu/keys/remove',
   keysRename: '/api/dsh-devforge/zhipu/keys/rename',
+  /** 官方 API 直调（开放平台）：补齐 provider 与默认模型。 */
+  officialSetup: '/api/dsh-devforge/zhipu/official/setup',
+  /** 官方 API 直调（开放平台）：先验证后保存官方 API Key。 */
+  officialKeySave: '/api/dsh-devforge/zhipu/official/key',
+  /** 官方 API 直调（开放平台）：从官方拉取最新模型清单合并进 provider。 */
+  officialFetchModels: '/api/dsh-devforge/zhipu/official/fetch-models',
 } as const
+
+/** 智谱官方开放平台（按量付费）聊天路由 provider id。 */
+export const ZHIPU_OFFICIAL_PROVIDER_ID = 'zhipu-official'
+
+/** 智谱官方开放平台固定数据面端点：绝不随配置漂移，避免 Key 被引到未知地址。 */
+export const ZHIPU_OFFICIAL_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
 
 /** 用量查询窗口。 */
 export type ZhipuUsageWindow = 'day' | 'week'
@@ -101,6 +113,20 @@ export interface ZhipuKeyUsage {
   dashboard?: ZhipuDashboard
 }
 
+/** 官方 API 直调（开放平台）的脱敏状态：与 Coding Plan Key 池相互独立。 */
+export interface ZhipuOfficialStatus {
+  /** 官方 API Key 的受管凭据引用名。 */
+  credentialEnv: string
+  /** 官方 API Key 是否已配置。 */
+  credentialConfigured: boolean
+  /** 官方 provider 是否已写入模型路由。 */
+  providerConfigured: boolean
+  /** 固定官方接入端点（信息展示用）。 */
+  baseURL: string
+  /** 官方 provider 模型清单。 */
+  models: Array<{ id: string; configured: boolean }>
+}
+
 /** 模型路由和凭据的脱敏状态。 */
 export interface ZhipuStatus {
   enabled: boolean
@@ -112,4 +138,6 @@ export interface ZhipuStatus {
   mcpTools: boolean
   /** Key 池清单（用户命名列表；主 Key 在前，其余按维护顺序）。 */
   keys: ZhipuPoolKey[]
+  /** 官方 API 直调（开放平台按量付费）状态。 */
+  official: ZhipuOfficialStatus
 }

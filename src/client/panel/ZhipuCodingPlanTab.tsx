@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { ZhipuKeyUsage, ZhipuPoolKey, ZhipuQuotaLimit, ZhipuStatus, ZhipuUsageWindow } from '../../zhipu/protocol.ts'
+import type { ZhipuKeyUsage, ZhipuOfficialStatus, ZhipuPoolKey, ZhipuQuotaLimit, ZhipuStatus, ZhipuUsageWindow } from '../../zhipu/protocol.ts'
+import { ZHIPU_OFFICIAL_BASE_URL } from '../../zhipu/protocol.ts'
 import css from './panel.module.css'
 import { ResetBadge } from './reset-badge.tsx'
 import { resolveZhipuReset } from './reset-countdown.ts'
@@ -56,6 +57,10 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
   /** 行内重命名状态：正在编辑的条目 id 与草稿。 */
   const [editingId, setEditingId] = useState('')
   const [renameDraft, setRenameDraft] = useState('')
+  /** 官方 API 直调（开放平台）：Key 草稿与按钮进行中状态（'' / 'setup' / 'fetch'）。 */
+  const [officialDraft, setOfficialDraft] = useState('')
+  const [officialSaving, setOfficialSaving] = useState(false)
+  const [officialBusy, setOfficialBusy] = useState('')
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -168,6 +173,72 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
     }
   }
 
+  /** 用官方区块最新状态合并回完整 status，并回传给统一工作区摘要。 */
+  const applyOfficialStatus = useCallback((official: ZhipuOfficialStatus): void => {
+    if (!mounted.current || status === null) return
+    const merged = { ...status, official }
+    setStatus(merged)
+    onStatusChange?.(merged)
+  }, [status, onStatusChange])
+
+  /** 保存官方 API Key（开放平台）：先验证后落盘，验证失败不写凭据。 */
+  const saveOpenPlatformKey = async (): Promise<void> => {
+    if (officialSaving) return
+    const value = officialDraft.trim()
+    if (value === '') { setNotice({ kind: 'error', text: '请先粘贴智谱开放平台 API Key。' }); return }
+    keyController.current?.abort()
+    const controller = new AbortController()
+    keyController.current = controller
+    setOfficialSaving(true)
+    setError('')
+    try {
+      const official = await api.saveZhipuOfficialKey(value, controller.signal)
+      if (mounted.current) setOfficialDraft('')
+      applyOfficialStatus(official)
+      if (mounted.current) setNotice({ kind: 'success', text: '官方 API Key 验证通过并已保存，模型路由即时生效。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setOfficialSaving(false)
+    }
+  }
+
+  /** 补齐官方开放平台 provider 与默认模型（GLM-5.3-Flash）。 */
+  const setupOpenPlatformModels = async (): Promise<void> => {
+    if (officialBusy !== '') return
+    const controller = new AbortController()
+    keyController.current = controller
+    setOfficialBusy('setup')
+    setError('')
+    try {
+      const official = await api.setupZhipuOfficialModels(controller.signal)
+      applyOfficialStatus(official)
+      if (mounted.current) setNotice({ kind: 'success', text: '官方模型路由已补齐。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setOfficialBusy('')
+    }
+  }
+
+  /** 用官方 Key 拉取开放平台在售模型清单，合并进官方 provider。 */
+  const fetchOpenPlatformModels = async (): Promise<void> => {
+    if (officialBusy !== '') return
+    const controller = new AbortController()
+    keyController.current = controller
+    setOfficialBusy('fetch')
+    setError('')
+    try {
+      const result = await api.fetchZhipuOfficialModels(controller.signal)
+      applyOfficialStatus(result.status)
+      if (mounted.current) setNotice({ kind: 'success', text: '从开放平台拉取成功：新增 ' + result.added.length + '、已有 ' + result.kept.length + '，合计 ' + result.total + '。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setOfficialBusy('')
+    }
+  }
+
   /** 添加一把新 Key（第一把自动成为主 Key）。 */
   const addKey = async (): Promise<void> => {
     const label = labelDraft.trim()
@@ -220,6 +291,12 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
   const primaryKey = useMemo(() => keys.find((key) => key.primary), [keys])
   const configuredCount = useMemo(() => keys.filter((key) => key.configured).length, [keys])
   const modelsReady = useMemo(() => status?.providerConfigured === true && status.models.length > 0 && status.models.every((model) => model.configured), [status])
+  /** 官方 API 直调（开放平台）整体就绪：Key 已配置、provider 已写入、模型全部就位。 */
+  const officialReady = useMemo(
+    () => status?.official.credentialConfigured === true && status?.official.providerConfigured === true
+      && status.official.models.length > 0 && status.official.models.every((model) => model.configured),
+    [status],
+  )
 
   /** 提交行内重命名。 */
   const commitRename = (key: ZhipuPoolKey): void => {
@@ -386,6 +463,44 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
             </div>
           ))
         )}
+      </section>
+
+      <section className={css['usageSection']}>
+        <h3 className={css['sectionTitle']}>
+          官方 API 直调（开放平台）
+          <span className={css['keyBadge']} data-kind={officialReady ? 'primary' : 'extra'}>{officialReady ? '已就绪' : '未配置'}</span>
+        </h3>
+        <p className={css['sectionHint']}>
+          使用智谱开放平台（open.bigmodel.cn）的按量付费 API Key 直调模型，与上方 Coding Plan 套餐路由相互独立、互不影响。
+          默认接入 <a href="https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash" target="_blank" rel="noreferrer">GLM-5.3-Flash</a>（原生多模态，支持文本+图片，1M 上下文）；保存 Key 前会先调官方接口验证，失败不落盘。
+        </p>
+        <div className={css['metricRow']}>
+          <span>凭据引用</span>
+          <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>{status?.official.credentialEnv ?? 'ZHIPU_OFFICIAL_API_KEY'}</strong>
+        </div>
+        <div className={css['metricRow']}>
+          <span>接入端点</span>
+          <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>{status?.official.baseURL ?? ZHIPU_OFFICIAL_BASE_URL}</strong>
+        </div>
+        <div className={css['keyInputRow']}>
+          <input
+            type="password" autoComplete="new-password"
+            className={css['keyInput']}
+            placeholder="粘贴智谱开放平台 API Key"
+            value={officialDraft}
+            onChange={(event) => { setOfficialDraft(event.target.value); setNotice(null) }}
+            spellCheck={false}
+          />
+          <button type="button" className={css['ghostButton']} disabled={officialSaving || officialDraft.trim() === ''} title="先调官方接口验证，通过后写入受管凭据" onClick={() => { void saveOpenPlatformKey() }}>{officialSaving ? '验证保存中…' : '验证并保存'}</button>
+          <button type="button" className={css['ghostButton']} disabled={officialBusy !== ''} title="把官方 provider（zhipu-official）与默认模型写入模型路由" onClick={() => { void setupOpenPlatformModels() }}>{officialBusy === 'setup' ? '配置中…' : '完善模型接入'}</button>
+          <button type="button" className={css['ghostButton']} disabled={officialBusy !== '' || status?.official.credentialConfigured !== true} title="用已保存的官方 Key 拉取开放平台在售模型" onClick={() => { void fetchOpenPlatformModels() }}>{officialBusy === 'fetch' ? '拉取中…' : '从官方拉取模型'}</button>
+        </div>
+        {status !== null && status.official.models.map((model) => (
+          <div key={model.id} className={css['metricRow']}>
+            <span>{model.id}</span>
+            <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
+          </div>
+        ))}
       </section>
 
       {status !== null && configuredCount === 0 && <div className={css['banner']} data-kind="warning">请先在上方添加至少一把 Key。</div>}

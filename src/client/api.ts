@@ -10,7 +10,7 @@ import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
-import { ZHIPU_API, type ZhipuDashboard, type ZhipuKeyUsage, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
+import { ZHIPU_API, type ZhipuDashboard, type ZhipuKeyUsage, type ZhipuOfficialStatus, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
@@ -620,6 +620,28 @@ export class DevforgeApi {
   /** 拉取智谱官方在售模型清单并合并进 provider。 */
   async fetchZhipuModels(signal?: AbortSignal): Promise<{ status: ZhipuStatus; added: string[]; kept: string[]; total: number }> {
     return await readJson(await fetch(ZHIPU_API.fetchModels, { method: 'POST', signal }))
+  }
+
+  /** 补齐智谱官方 API（开放平台）provider 与默认模型。 */
+  async setupZhipuOfficialModels(signal?: AbortSignal): Promise<ZhipuOfficialStatus> {
+    const data = await readJson<{ status: ZhipuOfficialStatus }>(await fetch(ZHIPU_API.officialSetup, { method: 'POST', signal }))
+    return data.status
+  }
+
+  /** 保存智谱官方 API Key（先调官方接口验证，失败不落盘）。 */
+  async saveZhipuOfficialKey(value: string, signal?: AbortSignal): Promise<ZhipuOfficialStatus> {
+    const data = await readJson<{ status: ZhipuOfficialStatus }>(await fetch(ZHIPU_API.officialKeySave, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 用官方 API Key 拉取开放平台最新模型清单并合并进官方 provider。 */
+  async fetchZhipuOfficialModels(signal?: AbortSignal): Promise<{ status: ZhipuOfficialStatus; added: string[]; kept: string[]; total: number }> {
+    return await readJson(await fetch(ZHIPU_API.officialFetchModels, { method: 'POST', signal }))
   }
 
   /** 拉取 MiniMax 官方在售模型清单并合并进 provider。 */
