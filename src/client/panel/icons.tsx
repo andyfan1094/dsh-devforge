@@ -154,3 +154,20 @@ export function IconMcp({ size }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** 主脑路由：中心枢纽向四周分发（主模型指挥、工人模型执行的委派拓扑）。 */
+export function IconBrainRouter({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="5.5" r="1.9" />
+      <circle cx="19" cy="5.5" r="1.9" />
+      <circle cx="5" cy="18.5" r="1.9" />
+      <circle cx="19" cy="18.5" r="1.9" />
+      <path d="M6.6 6.9l3.6 3.5" />
+      <path d="M17.4 6.9l-3.6 3.5" />
+      <path d="M6.6 17.1l3.6-3.5" />
+      <path d="M17.4 17.1l-3.6-3.5" />
+    </svg>
+  )
+}

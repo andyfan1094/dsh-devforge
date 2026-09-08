@@ -15,12 +15,13 @@ import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
 import { SkinTab } from './SkinTab.tsx'
 import { GuideTab, type GuideDestination } from './GuideTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow, IconSkin, IconGuide, IconMcp } from './icons.tsx'
+import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow, IconSkin, IconGuide, IconMcp, IconBrainRouter } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import { RagTab } from './RagTab.tsx'
 import { MemoryTab } from './MemoryTab.tsx'
 import { WorkflowTab } from './WorkflowTab.tsx'
 import { McpTab } from './McpTab.tsx'
+import { BrainRouterTab } from './BrainRouterTab.tsx'
 import css from './panel.module.css'
 
 /** 面板属性。 */
@@ -34,7 +35,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型。 */
-type Tab = 'guide' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
+type Tab = 'guide' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'brainrouter' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
 export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JSX.Element {
@@ -165,6 +166,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
         <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
         <button type="button" role="tab" aria-selected={tab === 'workflow'} data-active={tab === 'workflow' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('workflow') }}><IconWorkflow />工作流</button>
         <button type="button" role="tab" aria-selected={tab === 'mcp'} data-active={tab === 'mcp' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="外部 MCP 服务器接入：工具以 mcp__<命名空间>__<工具名> 注册给模型" onClick={() => { setTab('mcp') }}><IconMcp />MCP</button>
+        <button type="button" role="tab" aria-selected={tab === 'brainrouter'} data-active={tab === 'brainrouter' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="主脑路由：GPT 系列主模型只当大脑，委派的子代理改道便宜工人模型" onClick={() => { setTab('brainrouter') }}><IconBrainRouter />主脑路由</button>
         <button type="button" role="tab" aria-selected={tab === 'standards'} data-active={tab === 'standards' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('standards') }}><IconStandards />开发规范</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}><IconBrowser />浏览器</button>
         <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}><IconServer />远程运维</button>
@@ -217,6 +219,8 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
         {tab === 'workflow' && <WorkflowTab />}
 
         {tab === 'mcp' && <McpTab api={api} />}
+
+        {tab === 'brainrouter' && <BrainRouterTab api={api} />}
 
         {tab === 'remote' && <RemoteOperationsTab api={api} />}
 

@@ -17,6 +17,7 @@ import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEn
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
+import { BRAIN_ROUTER_API, type BrainRouterCatalogProvider, type BrainRouterSettings, type BrainRouterStatus } from '../brain-router/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
@@ -917,5 +918,28 @@ export class DevforgeApi {
   async reloadMcp(signal?: AbortSignal): Promise<McpRuntimeStatus> {
     const data = await readJson<{ status: McpRuntimeStatus }>(await fetch(MCP_API.reload, { method: 'POST', signal }))
     return data.status
+  }
+
+  /** 主脑路由：读取设置与运行时诊断（含拦截器挂载情况）。 */
+  async getBrainRouter(signal?: AbortSignal): Promise<BrainRouterStatus> {
+    const data = await readJson<BrainRouterStatus>(await fetch(BRAIN_ROUTER_API.status, { signal, cache: 'no-store' }))
+    return data
+  }
+
+  /** 主脑路由：全量保存设置；服务端校验失败（如开启但未选工人模型）会抛 DevforgeApiError。 */
+  async saveBrainRouter(settings: BrainRouterSettings, signal?: AbortSignal): Promise<BrainRouterStatus> {
+    const data = await readJson<BrainRouterStatus>(await fetch(BRAIN_ROUTER_API.status, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ settings }),
+      signal,
+    }))
+    return data
+  }
+
+  /** 主脑路由：读取模型目录（工人模型下拉数据源；provider 失败时其 models 为空数组）。 */
+  async getBrainRouterCatalog(signal?: AbortSignal): Promise<BrainRouterCatalogProvider[]> {
+    const data = await readJson<{ ok: true; providers: BrainRouterCatalogProvider[] }>(await fetch(BRAIN_ROUTER_API.catalog, { signal, cache: 'no-store' }))
+    return data.providers
   }
 }

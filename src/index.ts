@@ -38,6 +38,9 @@ import { backupNowTool, backupStatusTool } from './backup/tools.ts'
 import { HostStore as SshHostStore } from './remote/ssh/store.ts'
 import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
+import { makeBrainRouterRoutes } from './brain-router/routes.ts'
+import { installBrainRouterSection, installBrainRouterWrapper, listBrainRouterCatalog, writeBrainRouterSettings } from './brain-router/service.ts'
+import { BRAIN_ROUTER_DEFAULTS, type BrainRouterSettings } from './brain-router/protocol.ts'
 import { RagService } from './rag/service.ts'
 import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
@@ -623,6 +626,14 @@ export function apply(ctx: Context, config?: Config): void {
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
   }, (input) => generateText({ system: input.system, user: input.user, ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}), ...(input.provider !== undefined ? { provider: input.provider } : {}), ...(input.model !== undefined ? { model: input.model } : {}) }))
 
+  // ---- 主脑路由（0.26.0）：GPT 系列主模型只当大脑，其委派的子代理改道工人模型 ----
+  // 设置节与委派拦截只装一次（拦截器每次委派实时读设置，改面板设置即时生效，
+  // 与 sync 热更新解耦）；safeActivate 兜底保证单点失败不拖垮插件其余能力。
+  let brainRouterRead: () => BrainRouterSettings = () => ({ ...BRAIN_ROUTER_DEFAULTS })
+  let brainRouterWrapperInstalled = false
+  safeActivate(ctx, '主脑路由设置节', () => { brainRouterRead = installBrainRouterSection(ctx) })
+  safeActivate(ctx, '主脑路由拦截', () => { brainRouterWrapperInstalled = installBrainRouterWrapper(ctx, brainRouterRead) })
+
   // ---- 可重挂表面（路由/工具/系统提示）----
   // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
   let remoteActivation: ReturnType<typeof activateRemote> | undefined
@@ -663,6 +674,13 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, dream }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
+    // 主脑路由（0.26.0）：面板读写设置 + 模型目录；委派拦截在 apply 阶段一次性挂载。
+    ...makeBrainRouterRoutes({
+      read: () => brainRouterRead(),
+      write: (value) => writeBrainRouterSettings(ctx, value),
+      catalog: () => listBrainRouterCatalog(ctx),
+      wrapperInstalled: () => brainRouterWrapperInstalled,
+    }),
   ]
   const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), memoryManageTool(nativeMemory), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
