@@ -15,7 +15,7 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
-import { MEMORY_API, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import { MEMORY_API, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
@@ -784,7 +784,7 @@ export class DevforgeApi {
   }
 
   /** 一键迁移外部记忆（Mnemon/Hindsight → 内置，幂等）。 */
-  async migrateExternalMemory(kind: 'mnemon' | 'hindsight', signal?: AbortSignal): Promise<NativeMemoryMigrationResult> {
+  async migrateExternalMemory(kind: 'mnemon' | 'hindsight' | 'mneme', signal?: AbortSignal): Promise<NativeMemoryMigrationResult> {
     const data = await readJson<{ result: NativeMemoryMigrationResult }>(await fetch(MEMORY_API.migrateExternal, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind }), signal }))
     return data.result
   }
@@ -793,6 +793,17 @@ export class DevforgeApi {
   async getMemoryMigrationStatus(signal?: AbortSignal): Promise<{ count: number; migrated: number; lastUpdatedAt: number }> {
     const data = await readJson<{ status: { count: number; migrated: number; lastUpdatedAt: number } }>(await fetch(MEMORY_API.migrationStatus, { signal }))
     return data.status
+  }
+
+  /** 读取记忆做梦整理状态与最近运行记录。 */
+  async getMemoryDreamStatus(signal?: AbortSignal): Promise<MemoryDreamStatus> {
+    const data = await readJson<{ dream: MemoryDreamStatus }>(await fetch(MEMORY_API.dream, { signal }))
+    return data.dream
+  }
+
+  /** 手动触发一轮记忆做梦整理（异步执行，结果经 getMemoryDreamStatus 轮询）。 */
+  async runMemoryDream(signal?: AbortSignal): Promise<{ started: boolean; message: string }> {
+    return await readJson<{ started: boolean; message: string }>(await fetch(MEMORY_API.dreamRun, { method: 'POST', signal }))
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */

@@ -5,13 +5,15 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { dshHome } from '../remote/shared/dsh-home.ts'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from '../loopback.ts'
 import type { RagService } from '../rag/service.ts'
 import { ProjectIndexer } from '../rag/project-indexer.ts'
 import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror, syncMnemonMirror } from '../rag/mirror.ts'
-import { collectHindsightItems, collectMnemonItems } from './migrate.ts'
+import { collectHindsightItems, collectMnemeItems, collectMnemonItems } from './migrate.ts'
 import { buildMemoryGraph } from './graph.ts'
+import type { MemoryDreamService } from './dream.ts'
 import type { MemorySedimentService } from './sediment.ts'
 import type { MemoryStatsStore } from './stats.ts'
 import type { MemoryInjectionService } from './inject.ts'
@@ -31,6 +33,16 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   topK: 4,
   threshold: 0.35,
   maxChars: 1200,
+  // 做梦默认关闭：整理动作由用户显式开启（红线：自动化动库必须用户点头）。
+  dreamEnabled: false,
+  dreamIdleMinutes: 10,
+  dreamMinIntervalHours: 6,
+  // 模型路由缺省跟随会话默认模型；建议配置专用裁决路由（如 minimax-cn + MiniMax-M2.7-highspeed）。
+  dreamProvider: '',
+  dreamModel: '',
+  dreamMaxTokens: 8192,
+  dreamMaxEntries: 300,
+  dreamMaxChars: 240,
 }
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
@@ -59,6 +71,15 @@ function guard(req: import('node:http').IncomingMessage, res: import('node:http'
 export function normalizeMemorySettings(raw: unknown, current: MemorySettings): MemorySettings {
   if (typeof raw !== 'object' || raw === null) return current
   const body = raw as Record<string, unknown>
+  // 数字字段统一「合法则采纳并夹紧，否则保留现值」的口径，脏输入不至于打崩设置。
+  const clampNumber = (value: unknown, min: number, max: number, fallback: number): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+    return Math.max(min, Math.min(max, Math.floor(value)))
+  }
+  const cleanRoute = (value: unknown, fallback: string): string => {
+    if (typeof value !== 'string') return fallback
+    return value.trim().slice(0, 120)
+  }
   return {
     enabled: typeof body.enabled === 'boolean' ? body.enabled : current.enabled,
     autoSediment: typeof body.autoSediment === 'boolean' ? body.autoSediment : current.autoSediment,
@@ -66,6 +87,14 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     topK: typeof body.topK === 'number' && body.topK > 0 ? Math.min(20, Math.floor(body.topK)) : current.topK,
     threshold: typeof body.threshold === 'number' && body.threshold >= 0 && body.threshold <= 1 ? body.threshold : current.threshold,
     maxChars: typeof body.maxChars === 'number' && body.maxChars >= 300 ? Math.min(4000, Math.floor(body.maxChars)) : current.maxChars,
+    dreamEnabled: typeof body.dreamEnabled === 'boolean' ? body.dreamEnabled : current.dreamEnabled,
+    dreamIdleMinutes: clampNumber(body.dreamIdleMinutes, 1, 120, current.dreamIdleMinutes),
+    dreamMinIntervalHours: clampNumber(body.dreamMinIntervalHours, 1, 168, current.dreamMinIntervalHours),
+    dreamProvider: cleanRoute(body.dreamProvider, current.dreamProvider),
+    dreamModel: cleanRoute(body.dreamModel, current.dreamModel),
+    dreamMaxTokens: clampNumber(body.dreamMaxTokens, 1024, 65536, current.dreamMaxTokens),
+    dreamMaxEntries: clampNumber(body.dreamMaxEntries, 20, 1000, current.dreamMaxEntries),
+    dreamMaxChars: clampNumber(body.dreamMaxChars, 60, 2000, current.dreamMaxChars),
   }
 }
 
@@ -82,6 +111,8 @@ export interface MemoryRouteDeps {
   getProfile: () => MemoryUserProfile
   putProfile: (next: MemoryUserProfile) => void
   native: NativeMemoryStore
+  /** 做梦整理服务：状态查询与手动触发入口。 */
+  dream: MemoryDreamService
 }
 
 /** 确保来源知识库存在（按名称查，缺则建）。 */
@@ -92,7 +123,7 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native, injection, stats, getProfile, putProfile } = deps
+  const { rag, sediment, native, injection, stats, getProfile, putProfile, dream } = deps
   return [
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/profile',
@@ -180,9 +211,9 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
         try {
           const body = await readJsonBody(req)
           const kind = typeof body?.kind === 'string' ? body.kind : ''
-          if (kind !== 'mnemon' && kind !== 'hindsight') { writeJson(res, 400, { ok: false, error: 'kind 必须是 mnemon 或 hindsight' }); return }
+          if (kind !== 'mnemon' && kind !== 'hindsight' && kind !== 'mneme') { writeJson(res, 400, { ok: false, error: 'kind 必须是 mnemon、hindsight 或 mneme' }); return }
           // 采集只读外部数据 → 幂等迁移进内置 memory.entry（重复执行只更新）。
-          const items = kind === 'mnemon' ? collectMnemonItems(mnemonDataRoot()) : await collectHindsightItems()
+          const items = kind === 'mnemon' ? collectMnemonItems(mnemonDataRoot()) : kind === 'mneme' ? collectMnemeItems(join(dshHome(), 'memory', 'memory.db')) : await collectHindsightItems()
           const result = native.migrate(items)
           writeJson(res, 200, { ok: true, result, status: native.migrationStatus() })
         } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
@@ -191,6 +222,21 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/migration-status',
       handler: async (req, res) => { if (!guard(req, res)) return; if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }; writeJson(res, 200, { ok: true, status: native.migrationStatus() }) },
+    },
+    {
+      // 做梦状态：开关、在途标记与最近 20 条运行审计（面板做梦卡片数据源）。
+      kind: 'exact', path: '/api/dsh-devforge/memory/dream',
+      handler: async (req, res) => { if (!guard(req, res)) return; if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }; writeJson(res, 200, { ok: true, dream: dream.status() }) },
+    },
+    {
+      // 手动触发一轮做梦：异步执行立即返回，结果经 GET /dream 轮询（裁决约需数十秒）。
+      kind: 'exact', path: '/api/dsh-devforge/memory/dream/run',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { const result = await dream.triggerNow(); writeJson(res, 200, { ok: result.started, ...result }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
     },
     {
       kind: 'exact',
@@ -219,6 +265,10 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               lastInjectAt: stats.read().lastInjectAt,
               lastInjectPreview: stats.read().lastInjectPreview,
               injectNoHit: stats.read().injectNoHit,
+              dreamTotal: stats.read().dreamTotal,
+              lastDreamAt: stats.read().lastDreamAt,
+              lastDreamStatus: stats.read().lastDreamStatus,
+              lastDreamSummary: stats.read().lastDreamSummary,
               mirror: {
                 mnemonRootExists: existsSync(mnemonRoot),
                 hindsightConfigured: hindsight !== undefined,

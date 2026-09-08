@@ -26,11 +26,19 @@ export interface MemoryStats {
   lastInjectPreview: string
   /** 累计"触发了但检索无命中"的注入跳过次数（区分功能失效与正常无命中）。 */
   injectNoHit: number
+  /** 累计做梦整理次数（含失败：便于发现"做梦一直失败"的异常）。 */
+  dreamTotal: number
+  /** 最近一次做梦完成的时间戳（毫秒，0 表示尚未做过）。 */
+  lastDreamAt: number
+  /** 最近一次做梦结果状态（ok/degraded/failed/skipped）。 */
+  lastDreamStatus: string
+  /** 最近一次做梦的一句话摘要（面板展示）。 */
+  lastDreamSummary: string
 }
 
 /** 缺省统计：全部为零值。 */
 export function defaultMemoryStats(): MemoryStats {
-  return { sedimentTotal: 0, injectTotal: 0, lastSedimentAt: 0, lastInjectAt: 0, lastInjectPreview: '', injectNoHit: 0 }
+  return { sedimentTotal: 0, injectTotal: 0, lastSedimentAt: 0, lastInjectAt: 0, lastInjectPreview: '', injectNoHit: 0, dreamTotal: 0, lastDreamAt: 0, lastDreamStatus: '', lastDreamSummary: '' }
 }
 
 /** 统计字段防御式规整：存储里的旧数据/脏数据不至让面板崩掉。 */
@@ -45,6 +53,10 @@ function normalizeStats(raw: unknown): MemoryStats {
     lastInjectAt: typeof record.lastInjectAt === 'number' && record.lastInjectAt >= 0 ? record.lastInjectAt : base.lastInjectAt,
     lastInjectPreview: typeof record.lastInjectPreview === 'string' ? record.lastInjectPreview.slice(0, 200) : base.lastInjectPreview,
     injectNoHit: typeof record.injectNoHit === 'number' && Number.isSafeInteger(record.injectNoHit) && record.injectNoHit >= 0 ? record.injectNoHit : base.injectNoHit,
+    dreamTotal: typeof record.dreamTotal === 'number' && Number.isSafeInteger(record.dreamTotal) && record.dreamTotal >= 0 ? record.dreamTotal : base.dreamTotal,
+    lastDreamAt: typeof record.lastDreamAt === 'number' && record.lastDreamAt >= 0 ? record.lastDreamAt : base.lastDreamAt,
+    lastDreamStatus: typeof record.lastDreamStatus === 'string' ? record.lastDreamStatus : base.lastDreamStatus,
+    lastDreamSummary: typeof record.lastDreamSummary === 'string' ? record.lastDreamSummary.slice(0, 200) : base.lastDreamSummary,
   }
 }
 

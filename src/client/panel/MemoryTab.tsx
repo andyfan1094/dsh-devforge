@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import { type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
+import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
@@ -56,6 +56,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [profile, setProfile] = useState<MemoryUserProfile | null>(null)
   const [habitsText, setHabitsText] = useState('')
+  const [dream, setDream] = useState<MemoryDreamStatus | null>(null)
   const mounted = useRef(true)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -70,7 +71,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         try { previewMap[doc.id] = await api.previewMemoryDoc(doc.id) } catch { /* 回退展示文件名 */ }
       }))
       // 图谱与主存储列表是补充视图：单独失败不拖垮整页，错误以 softError 提示
-      const settled = await Promise.allSettled([api.listNativeMemories(), api.getMemoryGraph(), api.getUserProfile()])
+      const settled = await Promise.allSettled([api.listNativeMemories(), api.getMemoryGraph(), api.getUserProfile(), api.getMemoryDreamStatus()])
       if (!mounted.current) return
       setStatus(nextStatus)
       setSettings(nextSettings)
@@ -78,6 +79,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
       setPreviews(previewMap)
       setNativeEntries(settled[0].status === 'fulfilled' ? settled[0].value : [])
       setGraph(settled[1].status === 'fulfilled' ? settled[1].value : null)
+      setDream(settled[3].status === 'fulfilled' ? settled[3].value : null)
       if (settled[2].status === 'fulfilled') {
         setProfile(settled[2].value)
         setHabitsText(settled[2].value.habits.join('\n'))
@@ -170,13 +172,14 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   })
 
   /** 一键迁移外部记忆到内置主存储（幂等），完成后刷新迁移状态。 */
-  const migrateExternal = (kind: 'mnemon' | 'hindsight'): Promise<void> => run(async () => {
+  const migrateExternal = (kind: 'mnemon' | 'hindsight' | 'mneme'): Promise<void> => run(async () => {
     const result = await api.migrateExternalMemory(kind)
     const status = await api.getMemoryMigrationStatus()
     if (mounted.current) {
       setMigrationStatus(status)
-      setReport((kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 迁移：扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 跳过 ' + result.skipped)
-      setNotice({ kind: 'success', text: (kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 迁移完成：新增 ' + result.added + '，更新 ' + result.updated + '。' })
+      const label = kind === 'mnemon' ? 'Mnemon' : kind === 'mneme' ? 'Mneme' : 'Hindsight'
+      setReport(label + ' 迁移：扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 跳过 ' + result.skipped)
+      setNotice({ kind: 'success', text: label + ' 迁移完成：新增 ' + result.added + '，更新 ' + result.updated + '。' })
       await reload()
     }
   })
@@ -186,6 +189,20 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     setReport((kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 镜像 · 扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 跳过 ' + result.skipped + (result.errors.length > 0 ? ' · 错误 ' + result.errors.length : ''))
     await reload()
     if (mounted.current) setNotice({ kind: 'success', text: (kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 镜像同步完成。' })
+  })
+
+  /** 手动触发一轮做梦整理：裁决在服务端异步执行（数十秒），轮询刷新直到出结果。 */
+  const runDream = (): Promise<void> => run(async () => {
+    const result = await api.runMemoryDream()
+    if (!result.started) throw new Error(result.message)
+    if (mounted.current) setNotice({ kind: 'success', text: result.message })
+    await reload()
+    // 每 20s 补一次刷新（最多 9 次 ≈ 3 分钟），让「整理中」标记与运行记录自动落位。
+    const poll = (attempt: number): void => {
+      if (!mounted.current || attempt > 9) return
+      setTimeout(() => { void reload(); poll(attempt + 1) }, 20_000)
+    }
+    poll(1)
   })
 
   const updateSettings = (patch: Partial<MemorySettings>): void => {
@@ -234,6 +251,11 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
           <span>主动注入</span>
           <strong>{status?.injectCount ?? '—'} 次</strong>
           <small>{settings?.autoInject ? '已开启' : '已关闭'} · 本次运行 +{status?.injectRunCount ?? 0}{status !== null && status.lastInjectAt > 0 ? ' · 最近 ' + fmtTime(status.lastInjectAt) : ''}{status !== null && status.injectNoHit > 0 ? ' · 无命中 ' + status.injectNoHit : ''}{!sourceReady ? ' · 数据源待初始化' : ''}</small>
+        </div>
+        <div className={css['memoryStat']} title={status !== null && status.lastDreamSummary !== '' ? '最近做梦：' + status.lastDreamSummary : '尚未做梦；开启后按静默窗口自动整理'}>
+          <span>做梦整理</span>
+          <strong>{status?.dreamTotal ?? '—'} 次</strong>
+          <small>{settings?.dreamEnabled ? '已开启' : '已关闭'}{status !== null && status.lastDreamAt > 0 ? ' · 最近 ' + fmtTime(status.lastDreamAt) : ''}{status !== null && status.lastDreamStatus !== '' ? ' · ' + status.lastDreamStatus : ''}</small>
         </div>
       </div>
 
@@ -285,9 +307,27 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
                 <label className={css['compactField']}><span className={css['fieldLabel']}>注入条数</span><input className={css['input']} type="number" min={1} max={20} value={settings.topK} onChange={(e) => updateSettings({ topK: Number(e.target.value) || 4 })}/></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>相关度阈值</span><input className={css['input']} type="number" min={0} max={1} step={0.05} value={settings.threshold} onChange={(e) => updateSettings({ threshold: Number(e.target.value) || 0 })}/></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限</span><input className={css['input']} type="number" min={300} max={4000} step={100} value={settings.maxChars} onChange={(e) => updateSettings({ maxChars: Number(e.target.value) || 1200 })}/></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>做梦静默分钟</span><input className={css['input']} type="number" min={1} max={120} value={settings.dreamIdleMinutes} onChange={(e) => updateSettings({ dreamIdleMinutes: Number(e.target.value) || 10 })}/></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>做梦最小间隔（小时）</span><input className={css['input']} type="number" min={1} max={168} value={settings.dreamMinIntervalHours} onChange={(e) => updateSettings({ dreamMinIntervalHours: Number(e.target.value) || 6 })}/></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型 provider（空=跟随默认）</span><input className={css['input']} value={settings.dreamProvider} placeholder="如 minimax-cn" onChange={(e) => updateSettings({ dreamProvider: e.target.value })}/></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型名（空=跟随默认）</span><input className={css['input']} value={settings.dreamModel} placeholder="如 MiniMax-M2.7-highspeed" onChange={(e) => updateSettings({ dreamModel: e.target.value })}/></label>
               </div>
+              <label className={css['toggleRow']}><input type="checkbox" checked={settings.dreamEnabled} onChange={(e) => updateSettings({ dreamEnabled: e.target.checked })}/><span><strong>做梦整理</strong><small>库静默后让模型合并重复、归档过期记忆（软删除，可恢复）；钉选条目绝不触碰。</small></span></label>
               <div className={css['formFooter']}><span className={css['sectionHint']}>设置存入本地 store.db，不依赖外部记忆插件。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveSettings() }}>保存策略</button></div>
             </div>}
+          </section>
+
+          <section className={css['memoryPanel']}>
+            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>记忆做梦整理</h3><p className={css['sectionHint']}>库静默后自动合并重复、归档过期（软删除可恢复）；裁决模型在上方策略里指定，缺省跟随会话默认模型。</p></div><span className={css['badge']} data-kind={settings?.dreamEnabled ? 'success' : 'pending'}>{dream?.running === true ? '整理中…' : settings?.dreamEnabled ? '自动运行' : '已关闭'}</span></div>
+            <div className={css['inlineActions']}><button type="button" className={css['primaryButton']} disabled={busy || dream?.running === true} onClick={() => { void runDream() }}>{dream?.running === true ? '整理中…' : '立即整理一次'}</button></div>
+            {dream !== null && dream.runs.length > 0 ? <div className={css['memoryTable']}>
+              <div className={css['memoryTableHead']}><span>时间</span><span>状态</span><span>结果</span></div>
+              {dream.runs.slice(0, 6).map((run) => <div key={run.id} className={css['memoryTableRow']}>
+                <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
+                <span className={css['categoryBadge']}>{run.status}</span>
+                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
+              </div>)}
+            </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
           </section>
 
           <section className={css['memoryPanel']}>
@@ -303,8 +343,9 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
             {recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => { const preview = (previews[doc.id] ?? '').trim(); return <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={preview !== '' ? preview : memoryTitle(doc)}>{preview !== '' ? preview : memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div> })}</div>}
           </section>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>项目知识索引</h3><p className={css['sectionHint']}>尊重 .gitignore，增量更新到 RAG 知识库。</p></div></div><div className={css['inlineForm']}><input className={css['input']} value={projectPath} placeholder="/Users/andyfan/Documents/ds/项目" onChange={(e) => setProjectPath(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void indexProject() }}>开始索引</button></div></section>
-          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部记忆迁移（幂等）</h3><p className={css['sectionHint']}>迁移进内置主存储：Mnemon 分条入库、Hindsight 整页入库；重复执行只更新不重复。</p></div>{migrationStatus !== null && <span className={css['badge']}>已迁移 {migrationStatus.migrated}/{migrationStatus.count}</span>}</div>
+          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部记忆迁移（幂等）</h3><p className={css['sectionHint']}>迁移进内置主存储：Mneme 活跃记忆整库搬家、Mnemon 分条入库、Hindsight 整页入库；重复执行只更新不重复。</p></div>{migrationStatus !== null && <span className={css['badge']}>已迁移 {migrationStatus.migrated}/{migrationStatus.count}</span>}</div>
             <div className={css['inlineActions']}>
+              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void migrateExternal('mneme') }}>迁移 Mneme 记忆（替代旧插件）</button>
               <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('mnemon') }}>迁移 Mnemon 记忆</button>
               <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('hindsight') }}>迁移 Hindsight 知识</button>
             </div>

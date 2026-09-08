@@ -42,6 +42,7 @@ import { RagService } from './rag/service.ts'
 import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
 import { ZhipuReranker } from './rag/rerank.ts'
+import { MemoryDreamService } from './memory/dream.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
@@ -589,6 +590,32 @@ export function apply(ctx: Context, config?: Config): void {
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
   }, nativeMemory, memoryStats)
 
+  // ---- 记忆库做梦整理：静默窗口触发的合并/归档，审计落 store.db memory.dreamrun 域 ----
+  const dream = new MemoryDreamService({
+    native: nativeMemory,
+    // generateText 已支持 provider/model 覆盖：做梦路由可独立于会话默认模型（裁决不被聊天路由牵连）。
+    generate: generateText,
+    config: () => {
+      const settings = memorySettingsRead()
+      return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
+    },
+    log: (message) => ctx.logger.info(message),
+    listDomain: (domain) => ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
+  })
+  // 运行完成回写持久化统计（面板做梦卡片展示口径；含失败，便于发现"做梦一直失败"）。
+  dream.onRunFinished = (run) => {
+    const summary = run.status === 'failed'
+      ? '失败：' + (run.error ?? '未知原因')
+      : run.status === 'skipped'
+        ? (run.error ?? '未达触发条件')
+        : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length
+    memoryStats.update((prev) => ({ ...prev, dreamTotal: prev.dreamTotal + 1, lastDreamAt: run.finishedAt, lastDreamStatus: run.status, lastDreamSummary: summary.slice(0, 200) }))
+  }
+  dream.start()
+  ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
+
   // ---- 工作流引擎（rag.workflow / rag.workflow_run 域存储 + 默认模型生成）----
   const workflowEngine = new WorkflowEngine(ragService, {
     listDomain: (domain) => ragStore.listDomainDocs(domain),
@@ -633,7 +660,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, dream }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
   ]

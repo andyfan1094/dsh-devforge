@@ -6,9 +6,10 @@
  * - 幂等：migrationKey = 来源 + 内容哈希，重复执行只更新不重复；任何一条失败不中断。
  */
 import { createHash } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import { readFileSync } from 'node:fs'
 import { listMnemonMarkdowns, readHindsightConfig, resolveBankId } from '../rag/mirror.ts'
-import type { NativeMemoryMigrationItem } from './protocol.ts'
+import type { NativeMemoryCategory, NativeMemoryMigrationItem } from './protocol.ts'
 
 /** 单条内容上限（NativeMemoryStore 校验上限 20000，留余量）。 */
 const MAX_CONTENT = 18_000
@@ -88,6 +89,58 @@ export async function collectHindsightItems(overrides?: { apiUrl?: string; apiTo
       if (text.trim() === '') continue
       items.push({ content: clip(text), category: 'context', source: 'hindsight', tags: ['hindsight-page'], migrationKey: 'hindsight:' + hashText(page.name + ':' + text) })
     } catch { /* 单页失败不中断 */ }
+  }
+  return items
+}
+
+/** dsh-mneme 记忆类型 → 内置分类映射（未识别的类型落 general）。 */
+const MNEME_CATEGORY: Record<string, NativeMemoryCategory> = {
+  preference: 'preference',
+  user: 'preference',
+  decision: 'decision',
+  fact: 'fact',
+  project: 'context',
+  history: 'context',
+}
+
+/**
+ * 采集 dsh-mneme 记忆库的活跃条目（只读外部 SQLite，替代 mneme 的数据通道）。
+ * - 只搬活跃记忆（archived=0 且 forgotten=0）：mneme 已判定为垃圾的归档条目不搬家；
+ * - title + content 拼接为单条内容（native 条目无独立标题字段，标题进正文首行）；
+ * - 幂等键 migrationKey = 'mneme:' + 原始 id，重复执行只更新不重复；
+ * - 库不存在/损坏返回空数组，绝不抛错（迁移失败不能影响记忆层主链路）。
+ */
+export function collectMnemeItems(dbPath: string): NativeMemoryMigrationItem[] {
+  let rows: Array<{ id: unknown; type: unknown; title: unknown; content: unknown; tags: unknown; importance: unknown }>
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      rows = db.prepare('SELECT id, type, title, content, tags, importance FROM memories WHERE archived = 0 AND forgotten = 0').all() as typeof rows
+    } finally { db.close() }
+  } catch { return [] }
+  const items: NativeMemoryMigrationItem[] = []
+  for (const row of rows) {
+    if (typeof row.id !== 'string' || row.id === '') continue
+    const title = typeof row.title === 'string' ? row.title.trim() : ''
+    const body = typeof row.content === 'string' ? row.content.trim() : ''
+    const content = clip(title !== '' && body !== '' ? title + '\n' + body : title + body)
+    if (content.length < 6) continue
+    let tags: string[] = []
+    if (typeof row.tags === 'string' && row.tags.trim() !== '') {
+      try {
+        const parsed = JSON.parse(row.tags) as unknown
+        if (Array.isArray(parsed)) tags = parsed.filter((tag): tag is string => typeof tag === 'string').slice(0, 20)
+      } catch { /* 脏 tags 忽略，不影响该条迁移 */ }
+    }
+    const type = typeof row.type === 'string' ? row.type : ''
+    items.push({
+      content,
+      category: MNEME_CATEGORY[type] ?? 'general',
+      ...(tags.length > 0 ? { tags } : {}),
+      source: 'mneme',
+      importance: typeof row.importance === 'number' ? Math.max(1, Math.min(5, Math.round(row.importance))) : 3,
+      migrationKey: 'mneme:' + row.id,
+    })
   }
   return items
 }

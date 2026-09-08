@@ -55,6 +55,7 @@ function asEntry(data: unknown, id: string): NativeMemoryEntry | undefined {
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : value.createdAt,
     ...(typeof value.migrationKey === 'string' && value.migrationKey !== '' ? { migrationKey: value.migrationKey } : {}),
     ...(value.pinned === true ? { pinned: true } : {}),
+    ...(value.archived === true ? { archived: true } : {}),
   }
 }
 
@@ -84,7 +85,8 @@ export class NativeMemoryStore {
 
   list(options?: { limit?: number; category?: NativeMemoryCategory }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 100)))
-    return this.all().filter((entry) => options?.category === undefined || entry.category === options.category).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    // 归档条目（做梦/手动整理的软删除产物）不进常规清单：面板、注入、图谱都只见活跃记忆。
+    return this.all().filter((entry) => entry.archived !== true && (options?.category === undefined || entry.category === options.category)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
   }
 
   /**
@@ -97,7 +99,7 @@ export class NativeMemoryStore {
   listPinned(options?: { limit?: number }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(20, Math.floor(options?.limit ?? 6)))
     return this.all()
-      .filter((entry) => entry.pinned === true)
+      .filter((entry) => entry.pinned === true && entry.archived !== true)
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, limit)
   }
@@ -149,6 +151,31 @@ export class NativeMemoryStore {
       .map((item) => item.entry)
   }
 
+  /** 做梦快照：全部活跃记忆按更新时间新到旧（上限由调用方给定，不受 list 的面板 200 条上限约束）。 */
+  dreamSnapshot(limit: number): NativeMemoryEntry[] {
+    return this.all().filter((entry) => entry.archived !== true).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.floor(limit)))
+  }
+
+  /** 库活跃度指纹（活跃条数 + 最新更新时间）：做梦用同一口径判断「库是否变过」，无变化不重复整理。 */
+  activityFingerprint(): { count: number; maxUpdatedAt: number } {
+    const active = this.all().filter((entry) => entry.archived !== true)
+    return { count: active.length, maxUpdatedAt: active.reduce((max, entry) => Math.max(max, entry.updatedAt), 0) }
+  }
+
+  /** 归档/恢复：true=归档（软删除，可恢复），false=恢复活跃；钉选条目禁止归档（须先取消钉选）。 */
+  archive(id: string, value: boolean): NativeMemoryEntry {
+    const entry = this.get(id)
+    if (entry === undefined) throw new Error('记忆不存在：' + id)
+    if (value === true && entry.pinned === true) throw new Error('钉选条目不可归档，请先取消钉选：' + id)
+    return this.update(id, { archived: value })
+  }
+
+  /** 归档清单（新到旧；面板「已归档」分组与恢复操作使用）。 */
+  listArchived(options?: { limit?: number }): NativeMemoryEntry[] {
+    const limit = Math.max(1, Math.min(500, Math.floor(options?.limit ?? 100)))
+    return this.all().filter((entry) => entry.archived === true).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+  }
+
   /** 批量导入：优先按 migrationKey 幂等匹配，其次按显式 id 匹配。 */
   migrate(items: NativeMemoryMigrationItem[]): NativeMemoryMigrationResult {
     if (!Array.isArray(items)) throw new Error('items 必须是数组')
@@ -179,7 +206,7 @@ export class NativeMemoryStore {
     const source = input.source === undefined ? 'native' : cleanText(input.source, 'source', 120)
     const sourceId = input.sourceId === undefined ? undefined : cleanText(input.sourceId, 'sourceId', 300)
     const migrationKey = input.migrationKey === undefined ? undefined : cleanText(input.migrationKey, 'migrationKey', 300)
-    return { id, content, category, tags, source, ...(sourceId === undefined ? {} : { sourceId }), importance: cleanImportance(input.importance), createdAt, updatedAt, ...(migrationKey === undefined ? {} : { migrationKey }), ...(input.pinned === true ? { pinned: true } : {}) }
+    return { id, content, category, tags, source, ...(sourceId === undefined ? {} : { sourceId }), importance: cleanImportance(input.importance), createdAt, updatedAt, ...(migrationKey === undefined ? {} : { migrationKey }), ...(input.pinned === true ? { pinned: true } : {}), ...(input.archived === true ? { archived: true } : {}) }
   }
 
   private validId(id: string): boolean { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/u.test(id) }
