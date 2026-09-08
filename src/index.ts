@@ -41,6 +41,7 @@ import { makeRoutes } from './routes.ts'
 import { makeBrainRouterRoutes } from './brain-router/routes.ts'
 import { installBrainRouterSection, installBrainRouterWrapper, listBrainRouterCatalog, writeBrainRouterSettings } from './brain-router/service.ts'
 import { BRAIN_ROUTER_DEFAULTS, type BrainRouterSettings } from './brain-router/protocol.ts'
+import { BRAIN_ROUTER_DISCIPLINE_SECTION_NAME, BRAIN_ROUTER_DISCIPLINE_SECTION_ORDER, BRAIN_ROUTER_DISCIPLINE_TEXT } from './brain-router/discipline.ts'
 import { RagService } from './rag/service.ts'
 import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
@@ -633,6 +634,15 @@ export function apply(ctx: Context, config?: Config): void {
   let brainRouterWrapperInstalled = false
   safeActivate(ctx, '主脑路由设置节', () => { brainRouterRead = installBrainRouterSection(ctx) })
   safeActivate(ctx, '主脑路由拦截', () => { brainRouterWrapperInstalled = installBrainRouterWrapper(ctx, brainRouterRead) })
+  // 主脑纪律（0.26.2）：路由启用时注入分工约定——主模型只规划/指挥/验收，
+  // 实现类操作一律委派 subagent。text 动态求值：面板开关路由即时生效，无需重启。
+  safeActivate(ctx, '主脑纪律注入', () => {
+    ctx.systemPrompt.section({
+      name: BRAIN_ROUTER_DISCIPLINE_SECTION_NAME,
+      order: BRAIN_ROUTER_DISCIPLINE_SECTION_ORDER,
+      text: () => (brainRouterRead().enabled ? BRAIN_ROUTER_DISCIPLINE_TEXT : ''),
+    })
+  })
 
   // ---- 可重挂表面（路由/工具/系统提示）----
   // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
