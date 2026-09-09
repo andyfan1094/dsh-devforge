@@ -502,6 +502,69 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
     assert.ok(sediment.lastError.includes('模型超时'))
   })
 
+  test('attach：仅后台通知触发的智能体工作轮次也能沉淀（0.26.5 修正误杀）', async () => {
+    let prompted = ''
+    const stored: string[] = []
+    const rag = fakeRag({
+      listDocs: () => [],
+      listChunks: () => [],
+      ingestText: async (_kb: string, _name: string, text: string) => { stored.push(text); return { id: 'x', kbId: 'kb1', fileName: 'x', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 } as RagDocument },
+    })
+    const ctx = fakeCtx()
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async (_system, user) => { prompted = user; return '{"items":[{"content":"dsh-devforge 0.26.5 修复了通知触发轮次不沉淀的问题","importance":"critical"}]}' }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
+    sediment.attach(ctx)
+    // tool-jobs 通知是 plugin 来源——干活的轮次正是这种形状，不得被误杀。
+    const events = [
+      { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed, exit code: 0].' }] } },
+      { type: 'assistant/message', data: { turn: 10, step: 1, message: { content: [{ type: 'text', text: '抓捕结果：attempt 1 说明管线已经真实跑通并完成判定，这一段是测试构造的足够长答复内容，用于通过沉淀窗口的最小长度过滤判断，避免被当成短寒暄丢弃处理。' }] } } },
+      { type: 'turn/end', data: { turn: 10 } },
+    ]
+    ctx.emit('session/event', hostLikeSession('s-jobs', events), { type: 'turn/end', data: { turn: 10 } })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(sediment.attemptCount, 1, '通知轮必须进入提炼')
+    assert.equal(stored.length, 1)
+    assert.ok(prompted.includes('background job'), '通知文本应作为上下文进入提示词')
+    assert.equal(sediment.lastOutcome, 'stored:1')
+  })
+
+  test('attach：本插件记忆快照仍被排除，不回流（0.26.5 过滤收窄不放松）', async () => {
+    let prompted = ''
+    const stored: string[] = []
+    const rag = fakeRag({
+      listDocs: () => [],
+      listChunks: () => [],
+      ingestText: async (_kb: string, _name: string, text: string) => { stored.push(text); return { id: 'x', kbId: 'kb1', fileName: 'x', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 } as RagDocument },
+    })
+    const ctx = fakeCtx()
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async (_system, user) => { prompted = user; return '{"items":[{"content":"普通偏好记录","importance":"normal"}]}' }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
+    sediment.attach(ctx)
+    const events = [
+      { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: '[内置长期记忆] 旧候选 0.17.1' }] }, content: [{ type: 'text', text: '[内置长期记忆] 旧候选 0.17.1' }] } },
+      { type: 'assistant/message', data: { turn: 11, step: 1, message: { content: [{ type: 'text', text: '收到，本条记忆快照不应进入提炼窗口；这段是测试构造的足够长答复内容，用于通过沉淀窗口的最小长度过滤判断，避免被当成短寒暄丢弃处理。' }] } } },
+      { type: 'turn/end', data: { turn: 11 } },
+    ]
+    ctx.emit('session/event', hostLikeSession('s-snap', events), { type: 'turn/end', data: { turn: 11 } })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.ok(!prompted.includes('0.17.1'), '记忆快照不得回流')
+    assert.ok(prompted.includes('本轮无新用户输入'))
+    assert.equal(stored.length, 1)
+  })
+
+  test('提炼判定可观测：no-candidates 与 window-short 分别可见', async () => {
+    const noCandidates = new MemorySedimentService(fakeRag({ listDocs: () => [], listChunks: () => [], ingestText: async () => { throw new Error('不应写入') } }), () => 'kb1', async () => '{"items":[]}', () => SETTINGS, undefined, undefined, { delayMs: 0 })
+    const session = { id: 's-nc', events: turnEvents(1, '随便聊聊', LONG_REPLY) }
+    await noCandidates.process(session, 's-nc', 1)
+    assert.equal(noCandidates.lastOutcome, 'no-candidates')
+    assert.equal(noCandidates.attemptCount, 1)
+    assert.equal(noCandidates.failureCount, 0)
+
+    const shortWindow = new MemorySedimentService(fakeRag(), () => 'kb1', async () => { throw new Error('不应调用模型') }, () => SETTINGS, undefined, undefined, { delayMs: 0 })
+    const tiny = { id: 's-short', events: turnEvents(1, '嗯', '好的。') }
+    await shortWindow.process(tiny, 's-short', 1)
+    assert.equal(shortWindow.lastOutcome, 'window-short')
+    assert.equal(shortWindow.attemptCount, 1, '窗口过短也计入尝试，链路可观测')
+  })
+
   test('decide：无任何 RAG 库仍注入常驻与内置记忆（旧实现提前 no-hit）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mem-degrade-'))
     try {

@@ -48,16 +48,20 @@ export function sessionEventsOf(session: unknown): readonly unknown[] {
   return Array.isArray(record.events) ? record.events : []
 }
 
-/** 判断事件来源是否为插件/工具注入（这类消息不是用户意图，不得进入提炼窗口）。 */
-function isInjectedSource(data: unknown): boolean {
-  const source = (data as { source?: { kind?: unknown } } | undefined)?.source
+/** 判断事件来源是否为本插件注入的记忆快照（只有这类消息不是用户意图，不得进入提炼窗口）。
+ * 0.26.5 修正：后台任务通知（如 tool-jobs）也是 plugin 来源，但它们承载的正是
+ * 「智能体干活」的轮次——干活的总结恰恰来自这些轮次，不能一刀切排除；
+ * 只排除本插件的记忆快照，防止旧记忆回流再入库。 */
+function isMemorySnapshotSource(data: unknown): boolean {
+  const source = (data as { source?: { kind?: unknown; plugin?: unknown } } | undefined)?.source
   if (source === null || typeof source !== 'object') return false
-  const kind = (source as { kind?: unknown }).kind
-  return kind === 'plugin' || kind === 'tool'
+  const record = source as { kind?: unknown; plugin?: unknown }
+  return record.kind === 'plugin' && record.plugin === 'dsh-devforge'
 }
 
 /** 从会话事件里提取最近一轮的用户/助手文本窗口（导出供单测）。
- * 插件/工具来源的 user/message（记忆注入快照等）一律排除，防止旧记忆回流。 */
+ * 本插件记忆快照一律排除，防止旧记忆回流；其余 plugin 消息（任务通知等）
+ * 作为对话上下文保留——没有真实用户输入的工作轮次同样成立。 */
 export function extractLastTurnWindow(events: readonly unknown[], maxChars = 9000): { userText: string; assistantText: string } {
   let lastEnd = -1
   for (let i = events.length - 1; i >= 0; i--) {
@@ -81,7 +85,7 @@ export function extractLastTurnWindow(events: readonly unknown[], maxChars = 900
     }).join('')
     if (text.trim() === '') continue
     if (event.type === 'user/message') {
-      if (isInjectedSource(event.data)) continue
+      if (isMemorySnapshotSource(event.data)) continue
       userParts.push(text)
     }
     else if (event.type === 'assistant/message') assistantParts.push(text)
@@ -131,6 +135,8 @@ export class MemorySedimentService {
   failureCount = 0
   /** 最近一次失败原因（脱敏截断；空串 = 无失败）。 */
   lastError = ''
+  /** 最近一次提炼批处理的判定结果（stored:N / no-candidates / filtered-or-deduped / window-short / failed），面板可见。 */
+  lastOutcome = ''
   private readonly delayMs: number
   private readonly disposers: Array<() => void> = []
 
@@ -166,8 +172,10 @@ export class MemorySedimentService {
         const data = event.data as { turn?: unknown } | undefined
         const turn = typeof data?.turn === 'number' ? data.turn : this.turnOf(session)
         // 轮次提交即快照：此刻事件日志已包含完整一轮，提取结果不可变。
+        // 0.26.5：工作轮次常常没有真实用户输入（后台任务通知触发），只要
+        // 有实质助手产出就成立——干活的总结正是来自这些轮次。
         const window = extractLastTurnWindow(sessionEventsOf(session))
-        if (window.userText.trim() === '' || window.assistantText.trim() === '') return
+        if (window.assistantText.trim() === '') return
         this.enqueue(id, turn, window)
       })
       if (typeof off === 'function') this.disposers.push(off as () => void)
@@ -234,6 +242,7 @@ export class MemorySedimentService {
       entry.retries += 1
       this.failureCount += 1
       this.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200)
+      this.lastOutcome = 'failed'
       if (entry.retries <= MAX_BATCH_RETRIES) this.armTimer(sessionId)
     }
   }
@@ -250,20 +259,21 @@ export class MemorySedimentService {
       return stored
     }
     const window = extractLastTurnWindow(sessionEventsOf(session))
-    if (window.userText.trim() === '' || window.assistantText.trim() === '') return 0
+    if (window.assistantText.trim() === '') return 0
     return this.runBatch(sessionId, [{ turn, userText: window.userText, assistantText: window.assistantText }], turn)
   }
 
-  /** 执行一次提炼批处理（多轮窗口合并为一次模型调用）。失败抛出交调用方计数。 */
+  /** 执行一次提炼批处理（多轮窗口合并为一次模型调用）。失败抛出交调用方计数。
+   * 0.26.5：窗口有效性只看助手产出（工作轮次常无新用户输入）；无用户输入时
+   * 提示词改用占位说明。每次判定的结果写入 lastOutcome 供面板观测。 */
   private async runBatch(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number): Promise<number> {
     const settings = this.config()
     if (!settings.enabled || !settings.autoSediment) return 0
     this.attemptCount += 1
-    const userText = windows.map((item) => item.userText).join('\n')
     const assistantText = windows.map((item) => item.assistantText).join('\n')
-    if (userText.trim() === '' || assistantText.trim().length < 50) return 0
-    const dialog = windows.map((item) => '【用户】' + item.userText + '\n【助手】' + item.assistantText).join('\n\n')
-    const system = '你是记忆管理员。从对话里提炼值得长期保存的记忆条目（用户偏好、项目决策、环境事实、踩坑教训）。跳过：寒暄、一次性任务进度、问题本身、原始代码、密钥；「工作区有未提交改动、尚未推送、待验收、稍后继续」这类很快过期的临时状态一律不要保存。最多 5 条，每条一句独立中文陈述。只输出 JSON，不输出解释。'
+    if (assistantText.trim().length < 50) { this.lastOutcome = 'window-short'; return 0 }
+    const dialog = windows.map((item) => (item.userText.trim() !== '' ? '【用户】' + item.userText + '\n【助手】' : '【用户】（本轮无新用户输入，由后台任务/通知触发的智能体工作轮次）\n【助手】') + item.assistantText).join('\n\n')
+    const system = '你是记忆管理员。从对话里提炼值得长期保存的记忆条目（用户偏好、项目决策、环境事实、踩坑教训、智能体完成的工作成果）。跳过：寒暄、纯进度播报（「已挂起任务」「等待用户回复」）、问题本身、原始代码、密钥；「工作区有未提交改动、尚未推送、待验收、稍后继续」这类很快过期的临时状态一律不要保存。最多 5 条，每条一句独立中文陈述。只输出 JSON，不输出解释。'
     const user = '对话窗口（共 ' + windows.length + ' 轮）：\n' + dialog + '\n\n返回 JSON：{"items":[{"content":"...","importance":"critical|normal|low"}]}'
     let raw: string
     try { raw = await this.generate(system, user) } catch (error) { throw new Error('提炼模型调用失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
@@ -274,7 +284,7 @@ export class MemorySedimentService {
       const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : '{}') as { items?: MemoryCandidate[] }
       candidates = (parsed.items ?? []).filter((item) => typeof item.content === 'string' && normalizeMemoryText(item.content).length >= 6)
     } catch { throw new Error('提炼输出无法解析为 JSON') }
-    if (candidates.length === 0) return 0
+    if (candidates.length === 0) { this.lastOutcome = 'no-candidates'; return 0 }
     const keys = this.existingKeysOf()
     const kbId = this.getKbId()
     let stored = 0
@@ -309,6 +319,7 @@ export class MemorySedimentService {
       } catch { /* 单条失败继续 */ }
     }
     this.processedTurns.set(sessionId, watermarkTurn)
+    this.lastOutcome = stored > 0 ? 'stored:' + stored : 'filtered-or-deduped'
     if (stored > 0) {
       this.sedimentCount += stored
       this.lastSedimentAt = Date.now()

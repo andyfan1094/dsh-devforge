@@ -86,6 +86,8 @@ export interface MemoryStatus {
   sedimentFailureCount: number
   /** 最近一次沉淀失败原因（脱敏截断；空串 = 无失败）。 */
   sedimentLastError: string
+  /** 最近一次提炼批处理判定结果（stored:N / no-candidates / filtered-or-deduped / window-short / failed）。 */
+  sedimentLastOutcome: string
   /** 累计做梦整理次数（含失败）。 */
   dreamTotal: number
   /** 最近一次做梦完成时间戳（0 表示尚未做过）。 */

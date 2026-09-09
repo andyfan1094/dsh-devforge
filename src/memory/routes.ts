@@ -264,6 +264,7 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               sedimentAttemptCount: sediment.attemptCount,
               sedimentFailureCount: sediment.failureCount,
               sedimentLastError: sediment.lastError,
+              sedimentLastOutcome: sediment.lastOutcome,
               injectCount: stats.read().injectTotal,
               injectRunCount: injection.injectCount,
               lastSedimentAt: stats.read().lastSedimentAt,

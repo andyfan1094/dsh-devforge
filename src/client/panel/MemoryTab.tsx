@@ -245,7 +245,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         <div className={css['memoryStat']} title={status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) : (status !== null && status.sedimentLastError !== '' ? '最近失败：' + status.sedimentLastError : '本版启用后尚未沉淀')}>
           <span>自动沉淀</span>
           <strong>{status?.sedimentCount ?? '—'} 条</strong>
-          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}{status !== null && status.sedimentFailureCount > 0 ? ' · 失败 ' + status.sedimentFailureCount : ''}{status !== null && status.sedimentLastError !== '' ? ' · ' + status.sedimentLastError : ''}</small>
+          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}{status !== null && status.sedimentFailureCount > 0 ? ' · 失败 ' + status.sedimentFailureCount : ''}{status !== null && status.sedimentLastError !== '' ? ' · ' + status.sedimentLastError : ''}{status !== null && status.sedimentLastOutcome !== '' ? ' · 判定 ' + status.sedimentLastOutcome : ''}</small>
         </div>
         <div className={css['memoryStat']} title={status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : (status !== null && status.lastInjectAt > 0 ? '' : '尚未注入过；每轮对话第一步检索命中才注入')}>
           <span>主动注入</span>
