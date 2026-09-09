@@ -10,10 +10,10 @@ import { compileGitignoreLine, Ignored } from '../src/rag/ignore-lite.ts'
 import { collectFiles, ProjectIndexer } from '../src/rag/project-indexer.ts'
 import { collectPageRefs, listMnemonMarkdowns, mnemonDataRoot, readHindsightConfig, resolveBankId } from '../src/rag/mirror.ts'
 import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src/rag/rerank.ts'
-import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText } from '../src/memory/sediment.ts'
+import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText, sessionEventsOf } from '../src/memory/sediment.ts'
 import { buildMemoryQuery, messageText, MemoryInjectionService, RELATIVE_KEEP_RATIO, renderMemoryContext, renderNativeContext, stripBoilerplate } from '../src/memory/inject.ts'
 import { MemoryStatsStore } from '../src/memory/stats.ts'
-import { NativeMemoryStore } from '../src/memory/native.ts'
+import { NativeMemoryStore, type NativeMemoryEntry } from '../src/memory/native.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { closeDb } from '../src/store/db.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
@@ -30,7 +30,7 @@ function hit(id: string, score: number, text = '内容' + id): RagSearchHit {
 function fakeRag(overrides?: Partial<Record<string, unknown>>): RagService {
   const docs: RagDocument[] = []
   const base = {
-    listKbs: () => [{ id: 'kb1', name: '会话记忆库', source: 'memory', createdAt: 0 }],
+    listKbs: () => [{ id: 'kb1', name: '镜像库', source: 'mirror', createdAt: 0 }],
     listDocs: () => docs,
     listChunks: () => [],
     deleteDoc: () => {},
@@ -362,5 +362,227 @@ describe('工作流引擎', () => {
     assert.equal(engine.listRuns().length, 1)
     const resolved = engine.resolve('默认')
     assert.ok(resolved !== undefined)
+  })
+})
+
+/** 0.26.4 记忆失效修复回归：真实宿主形状、批量窗口、降级与快照协议。 */
+describe('会话记忆沉淀 0.26.4 修复回归', () => {
+  /** 最小事件上下文替身：on 注册监听，emit 手动触发（session/event 与 agent/pre-step 共用）。 */
+  function fakeCtx(): { on: (event: string, listener: (...args: never[]) => unknown) => () => void; emit: (event: string, ...args: unknown[]) => unknown } {
+    const listeners = new Map<string, Array<(...args: never[]) => unknown>>()
+    return {
+      on: (event, listener) => {
+        const list = listeners.get(event) ?? []
+        list.push(listener)
+        listeners.set(event, list)
+        return () => { const rest = listeners.get(event) ?? []; const index = rest.indexOf(listener); if (index >= 0) rest.splice(index, 1) }
+      },
+      emit: (event, ...args) => {
+        let result: unknown
+        for (const listener of listeners.get(event) ?? []) result = listener(...args)
+        return result
+      },
+    }
+  }
+
+  /** 真实宿主形状：只有 snapshotEvents()，没有 events 属性（旧实现读不到 → 沉淀恒 0）。 */
+  function hostLikeSession(id: string, events: readonly unknown[]): unknown {
+    return { id, snapshotEvents: () => events }
+  }
+
+  function turnEvents(turn: number, userText: string, assistantText: string, injectedSnapshot?: string): unknown[] {
+    const events: unknown[] = [
+      { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: userText }] } },
+    ]
+    if (injectedSnapshot !== undefined) {
+      // 插件注入快照：宿主契约下 source.kind='plugin'，绝不能被当成用户话术提炼。
+      events.splice(1, 0, { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: injectedSnapshot }] }, content: [{ type: 'text', text: injectedSnapshot }] } })
+    }
+    events.push(
+      { type: 'assistant/message', data: { turn, step: 1, message: { content: [{ type: 'text', text: assistantText }] } } },
+      { type: 'turn/end', data: { turn } },
+    )
+    return events
+  }
+
+  const LONG_REPLY = '本轮已经完成发布与推送，官网包哈希核对一致，这段是测试构造的足够长答复文本，用于通过沉淀窗口的最小长度过滤判断，避免被当成短寒暄丢弃处理。'
+
+  test('sessionEventsOf：优先宿主 snapshotEvents()，旧 events 兜底', () => {
+    const snap = [{ type: 'turn/end' }]
+    assert.equal(sessionEventsOf({ snapshotEvents: () => snap, events: [{ type: 'other' }] }), snap)
+    const legacy = [{ type: 'turn/end' }]
+    assert.equal(sessionEventsOf({ events: legacy }), legacy)
+    assert.deepEqual(sessionEventsOf({}), [])
+    assert.deepEqual(sessionEventsOf(null), [])
+  })
+
+  test('attach：真实宿主形状（仅 snapshotEvents）turn/end 后自动沉淀到 native，且不写 RAG', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-attach-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      let ragIngest = 0
+      const rag = fakeRag({ ingestText: async () => { ragIngest += 1; throw new Error('有 native 时不应双写 RAG') } })
+      const ctx = fakeCtx()
+      const sediment = new MemorySedimentService(rag, () => 'kb1', async () => '{"items":[{"content":"dsh-devforge 0.26.3 已发布到官网且源码提交 a9ab307 已推送 CNB","importance":"critical"}]}', () => SETTINGS, native, undefined, { delayMs: 10 })
+      sediment.attach(ctx)
+      const events = turnEvents(1, '天工造梦发布进展如何', LONG_REPLY)
+      ctx.emit('session/event', hostLikeSession('s-host', events), { type: 'turn/end', data: { turn: 1 } })
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const list = native.list()
+      assert.equal(list.length, 1)
+      assert.ok(list[0]!.content.includes('0.26.3'))
+      assert.equal(list[0]!.source, 'session')
+      assert.equal(ragIngest, 0, '有 native 时绝不双写 RAG 文档')
+      assert.equal(sediment.attemptCount, 1)
+      assert.equal(sediment.failureCount, 0)
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('attach：静默期内连续多轮不丢轮次——两轮窗口合并为一次提炼', async () => {
+    const stored: string[] = []
+    let prompted = ''
+    const rag = fakeRag({
+      listDocs: () => [],
+      listChunks: () => [],
+      ingestText: async (_kb: string, _name: string, text: string) => { stored.push(text); return { id: 'x', kbId: 'kb1', fileName: 'x', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 } as RagDocument },
+    })
+    const ctx = fakeCtx()
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async (_system, user) => {
+      prompted = user
+      return '{"items":[{"content":"批处理合并了两轮的关键结论","importance":"normal"}]}'
+    }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
+    sediment.attach(ctx)
+    // legacy 路径（无 native）：验证批处理与老数据面兼容。
+    const events: unknown[] = []
+    for (const [turn, marker] of [[1, '第一轮完成了构建与测试'], [2, '第二轮完成了发布与官网切换']] as const) {
+      events.push(
+        { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: marker + '，进展如何' }] } },
+        { type: 'assistant/message', data: { turn, step: 1, message: { content: [{ type: 'text', text: marker + '。' + LONG_REPLY }] } } },
+        { type: 'turn/end', data: { turn } },
+      )
+      ctx.emit('session/event', hostLikeSession('s-batch', [...events]), { type: 'turn/end', data: { turn } })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.ok(prompted.includes('第一轮完成了构建与测试'), '第一轮窗口不得被防抖丢弃')
+    assert.ok(prompted.includes('第二轮完成了发布与官网切换'), '第二轮窗口必须进入同一批提炼')
+    assert.equal(stored.length, 1, '多轮合并为一次提炼入库')
+  })
+
+  test('attach：插件注入快照不进入提炼窗口（防旧记忆回流再入库）', async () => {
+    let prompted = ''
+    const stored: string[] = []
+    const rag = fakeRag({
+      listDocs: () => [],
+      listChunks: () => [],
+      ingestText: async (_kb: string, _name: string, text: string) => { stored.push(text); return { id: 'x', kbId: 'kb1', fileName: 'x', contentHash: 'h', status: 'ready', chunkCount: 1, createdAt: 0 } as RagDocument },
+    })
+    const ctx = fakeCtx()
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async (_system, user) => { prompted = user; return '{"items":[{"content":"辉哥偏好紧凑排版","importance":"normal"}]}' }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
+    sediment.attach(ctx)
+    const events = turnEvents(1, '我喜欢紧凑排版', LONG_REPLY, '[内置长期记忆] 旧版候选：dsh-devforge 0.17.1 已发布到官网（过期事实，不得回流）')
+    ctx.emit('session/event', hostLikeSession('s-plugin', events), { type: 'turn/end', data: { turn: 1 } })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.ok(prompted.includes('紧凑排版'))
+    assert.ok(!prompted.includes('0.17.1'), '插件快照不得进入提炼输入')
+    assert.equal(stored.length, 1)
+  })
+
+  test('attach：提炼失败计数与脱敏原因可观测，且有界自动重试', async () => {
+    let calls = 0
+    const rag = fakeRag({ listDocs: () => [], listChunks: () => [], ingestText: async () => { throw new Error('不应走到写入') } })
+    const ctx = fakeCtx()
+    const sediment = new MemorySedimentService(rag, () => 'kb1', async () => { calls += 1; throw new Error('模型超时') }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
+    sediment.attach(ctx)
+    const events = turnEvents(1, '随便聊聊进展', LONG_REPLY)
+    ctx.emit('session/event', hostLikeSession('s-fail', events), { type: 'turn/end', data: { turn: 1 } })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    assert.ok(calls >= 2, '失败后应有界重试')
+    assert.equal(sediment.failureCount, calls)
+    assert.equal(sediment.attemptCount, calls)
+    assert.ok(sediment.lastError.includes('模型超时'))
+  })
+
+  test('decide：无任何 RAG 库仍注入常驻与内置记忆（旧实现提前 no-hit）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-degrade-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      native.create({ content: '生产环境禁止未经辉哥确认重启', importance: 4, pinned: true }, 'rule-1')
+      native.create({ content: 'dsh-devforge 0.26.3 已发布到官网', importance: 3 }, 'fact-1')
+      const rag = fakeRag({ listKbs: () => [], search: async () => { throw new Error('向量服务不可用') } })
+      const injection = new MemoryInjectionService(rag, () => SETTINGS, native)
+      const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: 'dsh-devforge 0.26.3 发布到哪了' }] }])
+      assert.equal(detail.reason, undefined, '常驻/内置存在时不得因 RAG 故障整体缺席')
+      assert.ok(detail.text?.includes('常驻记忆'))
+      assert.ok(detail.text?.includes('生产环境禁止未经辉哥确认重启'))
+      assert.ok(detail.text?.includes('0.26.3'))
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('decide：镜像 RAG 抛错只损失增强层，常驻与内置照常注入', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-mirror-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      native.create({ content: '发布包上传后必须核对 SHA256', importance: 3, pinned: true }, 'rule-1')
+      native.create({ content: '暂存实例固定使用 3081 端口', importance: 3 }, 'fact-1')
+      const rag = fakeRag({ search: async () => { throw new Error('嵌入失败') } })
+      const injection = new MemoryInjectionService(rag, () => SETTINGS, native)
+      const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: '暂存实例用什么端口' }] }])
+      assert.equal(detail.reason, undefined)
+      assert.ok(detail.text?.includes('发布包上传后必须核对 SHA256'))
+      assert.ok(detail.text?.includes('3081'))
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('decide：注入消息按宿主快照协议标记 form/sections', async () => {
+    const injection = new MemoryInjectionService(fakeRag(), () => SETTINGS)
+    const ctx = fakeCtx()
+    injection.attach(ctx)
+    const decision = await ctx.emit('agent/pre-step', { messages: [{ role: 'user', content: [{ type: 'text', text: '服务器地址是什么' }] }], step: 1 }, async () => ({ messages: [{ role: 'user', content: [{ type: 'text', text: '服务器地址是什么' }] }] })) as { messages: Array<{ source: { kind?: string; form?: string; sections?: Array<{ name: string; text: string }> } }> }
+    const last = decision.messages[decision.messages.length - 1]!
+    assert.equal(last.source.kind, 'plugin')
+    assert.equal(last.source.form, 'snapshot', '必须按宿主快照协议声明，后续快照才能替代前者')
+    assert.equal(last.source.sections?.[0]?.name, 'memory')
+    assert.ok(last.source.sections?.[0]?.text.includes('记忆中枢自动注入'))
+  })
+
+  test('renderNativeContext：整条装入预算，绝不截半条', () => {
+    const entry = (id: string, ch: string): NativeMemoryEntry => ({ id, content: ch.repeat(120), category: 'general', tags: [], source: 'session', importance: 3, createdAt: 0, updatedAt: Date.now() })
+    const text = renderNativeContext([entry('a', 'A'), entry('b', 'B')], 250)
+    assert.ok(text.includes('AAAA'), '首条必须完整注入')
+    assert.ok(!text.includes('BB'), '第二条装不下整条就不得出现半条')
+  })
+
+  test('renderNativeContext：每条渲染更新日期，帮助模型判断时效', () => {
+    const text = renderNativeContext([{ id: 'n1', content: '关键事实', category: 'general', tags: [], source: 'session', importance: 3, createdAt: 0, updatedAt: 1_700_000_000_000 }], 500)
+    assert.ok(text.includes('2023-'), '条目必须带更新日期')
+  })
+
+  test('decide：预算内内置记忆优先于镜像 RAG，长旧文档不再挤掉精确候选', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-budget-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      native.create({ content: 'dsh-devforge 0.26.3 已发布到官网，发布提交 a9ab307，本条为较长的上下文说明用于验证预算分配行为', importance: 3 }, 'native-1')
+      const rag = fakeRag({ search: async () => [hit('1', 0.9, 'Y'.repeat(400))] })
+      const injection = new MemoryInjectionService(rag, () => ({ ...SETTINGS, maxChars: 300 }), native)
+      const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: '0.26.3 发布事实在哪' }] }])
+      const text = detail.text ?? ''
+      const nativeAt = text.indexOf('0.26.3')
+      const ragAt = text.indexOf('YYYY')
+      assert.ok(nativeAt >= 0, '内置精确候选必须获得预算')
+      assert.ok(ragAt === -1 || ragAt > nativeAt, '内置记忆必须先于镜像 RAG 渲染（旧实现 RAG 先行会挤占预算）')
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('decide：内置与镜像同内容去重，不双份注入', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mem-dedupe-'))
+    try {
+      const native = new NativeMemoryStore(new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db')))
+      native.create({ content: '直播数据看板地址是 live.example.com', importance: 3 }, 'fact-1')
+      const rag = fakeRag({ search: async () => [hit('1', 0.9, '直播数据看板地址是 live.example.com')] })
+      const injection = new MemoryInjectionService(rag, () => SETTINGS, native)
+      const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: '直播数据看板地址是什么' }] }])
+      const occurrences = (detail.text?.match(/live\.example\.com/g) ?? []).length
+      assert.equal(occurrences, 1, '同一事实在常驻/内置/镜像三层只允许出现一次')
+    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
   })
 })

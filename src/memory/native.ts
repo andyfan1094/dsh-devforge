@@ -77,6 +77,32 @@ export function tokenizeForMatch(text: string): string[] {
   return [...new Set(tokens)]
 }
 
+/**
+ * 精确实体提取（导出供单测）：从查询里抽取版本号、git 提交号、绝对路径这类
+ * 「逐字命中才算数」的实体。中文长查询会产生海量二元组，把这类实体的信号
+ * 稀释掉（0.26.3 被 30 个 bigram 摊薄后与沾边旧文档同分）；实体逐字命中
+ * 必须能在排序里明确优先。
+ */
+export function extractExactEntities(query: string): string[] {
+  const lowered = query.toLocaleLowerCase()
+  const found: string[] = []
+  for (const match of lowered.matchAll(/\b\d+\.\d+\.\d+(?:[-.]\w+)*\b/gu)) found.push(match[0]) // 语义化版本号（0.26.3 / 0.26.3-beta.1）
+  for (const match of lowered.matchAll(/\b[a-f0-9]{7,40}\b/gu)) found.push(match[0]) // git 提交号（短/长哈希）
+  for (const match of lowered.matchAll(/(?:\/[\w.@+-]+){2,}/gu)) found.push(match[0]) // Unix 绝对路径
+  for (const match of lowered.matchAll(/[a-z]:\\(?:[\w. -]+\\?)+/giu)) found.push(match[0].toLocaleLowerCase()) // Windows 路径
+  return [...new Set(found)].slice(0, 8)
+}
+
+/** 有界新近度加分：7 天内 +0.1，30 天内 +0.05。
+ * 让「最新的正确事实」稳定压过同分的旧长文，但不大到能让只沾边的
+ * 新条目爬到强相关旧条目头上（覆盖度差距通常 ≥ 0.1）。 */
+function recencyBoost(updatedAt: number, now: number): number {
+  const ageDays = (now - updatedAt) / 86_400_000
+  if (ageDays <= 7) return 0.1
+  if (ageDays <= 30) return 0.05
+  return 0
+}
+
 /** 内置记忆 CRUD 与关键词检索门面。 */
 export class NativeMemoryStore {
   private readonly rag: RagStore
@@ -138,14 +164,29 @@ export class NativeMemoryStore {
     if (terms.length === 0) return []
     // 相关性门槛：至少命中 2 个不同词元（查询本身只有一个词元时命中 1 个即可）。
     // 旧实现「沾一个词就入围」，英文样板查询里的 DSH 之类常见词会把无关记忆全带进注入。
+    // 精确实体逐字命中额外计 1 个词元（版本号/提交号这类实体往往只对应一个 token，
+    // 不加记会被「至少 2 词元」门槛误杀）。
+    const entities = extractExactEntities(query)
     const minHits = Math.min(2, terms.length)
-    return this.list({ limit: 200, category: options?.category })
+    const now = Date.now()
+    // 全量扫描活跃条目（旧实现只看最新 200 条：超过窗口的旧精确条目永远搜不到）。
+    return this.all()
+      .filter((entry) => entry.archived !== true && (options?.category === undefined || entry.category === options.category))
       .map((entry) => {
         const haystack = (entry.content + ' ' + entry.tags.join(' ') + ' ' + entry.category).toLocaleLowerCase()
         const hits = terms.filter((term) => haystack.includes(term)).length
-        return { entry, hits, score: hits / terms.length + entry.importance * 0.001 }
+        let score = hits / terms.length + entry.importance * 0.001
+        let entityHits = 0
+        for (const entity of entities) {
+          if (haystack.includes(entity)) {
+            entityHits += 1
+            score += 0.3
+            if (entityHits >= 2) break // 两个以上实体齐中视为强相关，加分封顶
+          }
+        }
+        return { entry, effectiveHits: hits + (entityHits > 0 ? 1 : 0), score: score + recencyBoost(entry.updatedAt, now) }
       })
-      .filter((item) => item.hits >= minHits)
+      .filter((item) => item.effectiveHits >= minHits)
       .sort((a, b) => b.score - a.score || b.entry.updatedAt - a.entry.updatedAt)
       .slice(0, Math.max(1, Math.min(100, Math.floor(options?.limit ?? 20))))
       .map((item) => item.entry)
@@ -160,6 +201,11 @@ export class NativeMemoryStore {
   activityFingerprint(): { count: number; maxUpdatedAt: number } {
     const active = this.all().filter((entry) => entry.archived !== true)
     return { count: active.length, maxUpdatedAt: active.reduce((max, entry) => Math.max(max, entry.updatedAt), 0) }
+  }
+
+  /** 活跃条目数（status 路由的记忆总数口径：主存储真实条数，而非遗留 RAG 文档数）。 */
+  activeCount(): number {
+    return this.all().filter((entry) => entry.archived !== true).length
   }
 
   /** 归档/恢复：true=归档（软删除，可恢复），false=恢复活跃；钉选条目禁止归档（须先取消钉选）。 */

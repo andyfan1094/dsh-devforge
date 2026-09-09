@@ -239,13 +239,13 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
       {notice !== null && <div className={css['banner']} data-kind={notice.kind}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
 
       <div className={css['memoryStats']}>
-        <div className={css['memoryStat']}><span>会话沉淀库</span><strong>{status?.memoryCount ?? '—'}</strong><small>自动提炼 · RAG 全文可召回</small></div>
+        <div className={css['memoryStat']}><span>会话沉淀库</span><strong>{status?.memoryCount ?? '—'}</strong><small>内置长期记忆活跃条数 · 主存储</small></div>
         <div className={css['memoryStat']}><span>内置长期记忆</span><strong>{nativeEntries.length || (status === null ? '—' : 0)}</strong><small>主存储 · 手动/迁移/沉淀</small></div>
         {/* 沉淀/注入主数均为持久化累计口径（跨重启，与沉淀库总量一致）；本次运行增量与最近时间入副行，口径不再自相矛盾。 */}
-        <div className={css['memoryStat']} title={status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) : '本版启用后尚未沉淀'}>
+        <div className={css['memoryStat']} title={status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) : (status !== null && status.sedimentLastError !== '' ? '最近失败：' + status.sedimentLastError : '本版启用后尚未沉淀')}>
           <span>自动沉淀</span>
           <strong>{status?.sedimentCount ?? '—'} 条</strong>
-          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}</small>
+          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}{status !== null && status.sedimentFailureCount > 0 ? ' · 失败 ' + status.sedimentFailureCount : ''}{status !== null && status.sedimentLastError !== '' ? ' · ' + status.sedimentLastError : ''}</small>
         </div>
         <div className={css['memoryStat']} title={status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : (status !== null && status.lastInjectAt > 0 ? '' : '尚未注入过；每轮对话第一步检索命中才注入')}>
           <span>主动注入</span>

@@ -256,9 +256,14 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               autoSediment: settings.autoSediment,
               autoInject: settings.autoInject,
               memoryKbId: memoryKb?.id ?? '',
-              memoryCount: memoryKb === undefined ? 0 : rag.listDocs(memoryKb.id).length,
+              // 记忆总数口径改为主存储真实活跃条数：旧口径读遗留 RAG 文档数，
+              // 0.26.4 起 memory.entry 才是唯一事实源，两者会渐行渐远。
+              memoryCount: native.activeCount(),
               sedimentCount: stats.read().sedimentTotal,
               sedimentRunCount: sediment.sedimentCount,
+              sedimentAttemptCount: sediment.attemptCount,
+              sedimentFailureCount: sediment.failureCount,
+              sedimentLastError: sediment.lastError,
               injectCount: stats.read().injectTotal,
               injectRunCount: injection.injectCount,
               lastSedimentAt: stats.read().lastSedimentAt,

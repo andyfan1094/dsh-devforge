@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RagStore } from '../src/rag/rag-store.ts'
-import { NativeMemoryStore, tokenizeForMatch } from '../src/memory/native.ts'
+import { NativeMemoryStore, extractExactEntities, tokenizeForMatch } from '../src/memory/native.ts'
 
 function makeStore(): NativeMemoryStore {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-native-memory-'))
@@ -83,4 +83,40 @@ test('内置记忆：输入校验拒绝空内容、非法分类和超长查询',
   assert.throws(() => store.create({ content: '' }))
   assert.throws(() => store.create({ content: 'x', category: 'bad' as never }))
   assert.throws(() => store.search('x'.repeat(501)))
+})
+
+test('内置记忆：精确实体提取覆盖版本号/提交号/路径', () => {
+  const entities = extractExactEntities('dsh-devforge 0.26.3 发布包和源码 /Users/andyfan/Documents/ds/dsh-devforge 提交 a9ab307')
+  assert.ok(entities.includes('0.26.3'))
+  assert.ok(entities.includes('a9ab307'))
+  assert.ok(entities.some((entity) => entity.startsWith('/users/andyfan')))
+  assert.deepEqual(extractExactEntities('纯中文问题没有实体'), [])
+})
+
+test('内置记忆：精确实体优先 + 全量扫描（0.26.4 排序修复）', () => {
+  const store = makeStore()
+  // 旧长文档：只提 dsh-devforge，无版本号（模拟旧事实反复压过新事实的场景）。
+  store.create({ content: 'dsh-devforge 插件架构与交接记录，包含大量模块边界、验证结果、私有仓库与剩余风险的描述内容', importance: 3 }, 'old-doc')
+  // 新事实：带版本号与提交号。
+  store.create({ content: 'dsh-devforge 0.26.3 已发布到官网，源码提交 a9ab307 已推送 CNB', importance: 3 }, 'new-fact')
+  const hits = store.search('dsh-devforge 0.26.3 最新发布状态是什么')
+  assert.equal(hits[0]?.id, 'new-fact', '带精确实体的新事实必须压过沾边旧长文')
+  assert.equal(store.search('a9ab307 这个提交改了什么')[0]?.id, 'new-fact', '提交号实体逐字命中可独立召回')
+})
+
+test('内置记忆：检索全量扫描活跃条目，不再受最新 200 条窗口限制', () => {
+  const store = makeStore()
+  store.create({ content: 'dsh-devforge-0.26.3.tgz 发布包已上传官网并核对哈希', importance: 3 }, 'precise')
+  for (let index = 0; index < 250; index += 1) store.create({ content: '填充条目 ' + index, importance: 1 }, 'fill-' + index)
+  const hits = store.search('dsh-devforge-0.26.3.tgz 发布包在哪')
+  assert.equal(hits[0]?.id, 'precise', '窗口外的旧精确条目必须可检索')
+})
+
+test('内置记忆：有界新近度让新事实在同分时排前（7 天内加分）', () => {
+  const store = makeStore()
+  // 同词元覆盖、同重要度：更新时间新者优先（recencyBoost 对齐排序 tie-break 之外的显式加分）。
+  store.create({ content: '记忆中枢检索会先做分词再匹配', importance: 3 }, 'old-1')
+  store.create({ content: '记忆中枢检索会先做分词再匹配并注入', importance: 3 }, 'new-1')
+  const hits = store.search('记忆中枢检索分词')
+  assert.equal(hits[0]?.id, 'new-1', '同分时新条目靠前')
 })

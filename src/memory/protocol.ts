@@ -80,6 +80,12 @@ export interface MemoryStatus {
   lastInjectPreview: string
   /** 累计"触发了但检索无命中"的注入跳过次数。 */
   injectNoHit: number
+  /** 本次进程运行期沉淀尝试次数（含失败；观测自动沉淀是否真的在跑）。 */
+  sedimentAttemptCount: number
+  /** 本次进程运行期沉淀失败次数（模型/解析异常）。 */
+  sedimentFailureCount: number
+  /** 最近一次沉淀失败原因（脱敏截断；空串 = 无失败）。 */
+  sedimentLastError: string
   /** 累计做梦整理次数（含失败）。 */
   dreamTotal: number
   /** 最近一次做梦完成时间戳（0 表示尚未做过）。 */
