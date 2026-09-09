@@ -261,7 +261,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
                 ? <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void saveConfig(false) }}>停用自动同步</button>
                 : <button type="button" className={css['primaryButton']} disabled={busy || repo.trim() === ''} onClick={() => { void saveConfig(true) }}>启用自动同步</button>}
             </div>
-            <p className={css['resourceMessage']}>
+            <p className={css['subtleText']}>
               安全说明：密码仅存本机（0600 权限）用于无人值守自动加密；CNB 仓库只存密文。6 位密码建议混合字母与数字。
               备份仓库不存在时会用当前 CNB 账号自动创建私密仓库（需令牌含仓库写权限），已存在则校验为私密。
             </p>
@@ -285,31 +285,35 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
       )}
 
 
-      <div id="backup-sync-panel" className={css['formGrid']} data-dsh-part="backup-sync" style={{ marginTop: 16, borderTop: '1px dashed var(--dsh-border-color, #ccc)', paddingTop: 16 }}>
-        <h3 style={{ margin: 0, fontSize: '14px' }}>立即从远端同步（跳过本机）— Mac↔Windows 双向同步</h3>
-        <p className={css['resourceMessage']}>
-          流程：git fetch 远端 → 解析最近 100 个 commit 的 machine 字段 → 跳过本机 → 还原其他机器的最新一次提交。
-          覆盖前自动备份现有 store.db / dsh-feishu.json 为 *.pre-restore.bak。完成后需重启 DSH。
-        </p>
-        <label className={css['field']}>
-          <span>6 位备份密码（留空使用本机已设密码）</span>
-          <input type="password" autoComplete="new-password" value={syncPassword} onChange={event => setSyncPassword(event.target.value)} maxLength={6} placeholder="6 位" />
-        </label>
-        <div className={css['fieldActions']}>
-          <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void doSyncPreview() }}>预览同步</button>
-          {syncPreview !== undefined && syncPreview.noRemote !== true && syncPreview.upToDate !== true && (
-            <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSyncConfirm() }}>确认同步</button>
+      {/* 远端同步分组：asideUsage 提供上分隔线与分组留白，formGrid 保持字段网格；
+          标题与说明段落由 .formGrid 内的跨行规则铺满整行，不参与字段分列。 */}
+      <div className={css['asideUsage']}>
+        <div id="backup-sync-panel" className={css['formGrid']} data-dsh-part="backup-sync">
+          <h3 className={css['sectionTitle']}>立即从远端同步（跳过本机）— Mac↔Windows 双向同步</h3>
+          <p className={css['subtleText']}>
+            流程：git fetch 远端 → 解析最近 100 个 commit 的 machine 字段 → 跳过本机 → 还原其他机器的最新一次提交。
+            覆盖前自动备份现有 store.db / dsh-feishu.json 为 *.pre-restore.bak。完成后需重启 DSH。
+          </p>
+          <label className={css['field']}>
+            <span>6 位备份密码（留空使用本机已设密码）</span>
+            <input type="password" autoComplete="new-password" value={syncPassword} onChange={event => setSyncPassword(event.target.value)} maxLength={6} placeholder="6 位" />
+          </label>
+          <div className={css['fieldActions']}>
+            <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void doSyncPreview() }}>预览同步</button>
+            {syncPreview !== undefined && syncPreview.noRemote !== true && syncPreview.upToDate !== true && (
+              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSyncConfirm() }}>确认同步</button>
+            )}
+          </div>
+          {syncPreview !== undefined && (
+            <div className={css['subtleText']}>
+              {syncPreview.noRemote === true
+                ? '远端没有其他机器的备份，无需同步。'
+                : syncPreview.upToDate === true
+                  ? '已经同步过 ' + (syncPreview.source?.machine ?? '?') + ' 的最新 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '。'
+                  : '将同步 ' + (syncPreview.source?.machine ?? '?') + ' 的 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '（' + String(syncPreview.source?.size ?? 0) + ' 字节，备份于 ' + new Date(syncPreview.source?.createdAt ?? 0).toLocaleString() + '）'}
+            </div>
           )}
         </div>
-        {syncPreview !== undefined && (
-          <div className={css['resourceMessage']}>
-            {syncPreview.noRemote === true
-              ? '远端没有其他机器的备份，无需同步。'
-              : syncPreview.upToDate === true
-                ? '已经同步过 ' + (syncPreview.source?.machine ?? '?') + ' 的最新 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '。'
-                : '将同步 ' + (syncPreview.source?.machine ?? '?') + ' 的 commit ' + (syncPreview.source?.sha.slice(0, 7) ?? '') + '（' + String(syncPreview.source?.size ?? 0) + ' 字节，备份于 ' + new Date(syncPreview.source?.createdAt ?? 0).toLocaleString() + '）'}
-          </div>
-        )}
       </div>
 
       {restoreOpen && (
@@ -325,7 +329,7 @@ export function BackupTab({ api }: BackupTabProps): JSX.Element {
             )}
           </div>
           {preview !== undefined && (
-            <p className={css['resourceMessage']}>
+            <p className={css['subtleText']}>
               远端备份来自 {preview.machine}，备份时间 {new Date(preview.createdAt).toLocaleString()}，包含：{preview.files.join('、')}。
               恢复会覆盖本机现有数据（自动先备份），完成后需重启 DSH。
             </p>

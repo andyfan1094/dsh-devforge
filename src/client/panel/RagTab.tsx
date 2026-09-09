@@ -1,8 +1,9 @@
 /**
  * 记忆中枢页签 —— RAG 知识库管理、文档入库、检索测试台与设置。
- * 布局：顶部工具条（库管理+统计+上传）→ 主体双栏（左文档入库 / 右检索台）
- * → 底部一行式设置。样式复用 panel.module.css 主题类（深浅色自动适配），
- * 信息密度优先且守住块间距底线（辉哥排版偏好）。
+ * 布局：统一 workspace 滚动根（在 DevforgePanel 的 overflow:hidden 内容区内自行滚动）
+ * → 顶部库管理表面 → workbenchGrid 双栏（左文档入库 / 右检索台，≤960px 自动降为单列）
+ * → 底部设置表面。样式全部复用 panel.module.css 语义类（深浅色自动适配），
+ * 不引入本地布局样式；信息密度优先且守住块间距底线（辉哥排版偏好）。
  */
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
 import { RAG_API, type RagDocument, type RagKnowledgeBase, type RagSearchHit, type RagSettings } from '../../rag/protocol.ts'
@@ -16,10 +17,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,3fr)', gap: 10, alignItems: 'start' }
-const row: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }
-const card: React.CSSProperties = { border: '1px solid rgba(128,128,128,0.3)', borderRadius: 8, padding: '8px 10px', minWidth: 0 }
-const cardTitle: React.CSSProperties = { fontSize: 12, fontWeight: 600, opacity: 0.85, margin: '0 0 6px' }
+/** 横幅语义色类型：对应 banner[data-kind] 的三种状态样式，无匹配时省略属性用中性样式。 */
+type BannerKind = 'success' | 'warning' | 'error'
+
+/** 按消息首位的 emoji 前缀映射横幅语义色（✅成功 / ⚠警告 / ❌错误 / 其余中性），纯展示映射不改文案。 */
+function bannerKind(message: string): BannerKind | undefined {
+  if (message.startsWith('✅')) return 'success'
+  if (message.startsWith('⚠')) return 'warning'
+  if (message.startsWith('❌')) return 'error'
+  return undefined
+}
 
 export function RagTab() {
   const [kbs, setKbs] = useState<RagKnowledgeBase[]>([])
@@ -159,97 +166,108 @@ export function RagTab() {
   })
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
-      {message !== '' && <div className={css.banner}>{message}</div>}
+    <section className={css.workspace}>
+      {message !== '' && <div className={css.banner} data-kind={bannerKind(message)}>{message}</div>}
 
-      <div style={{ ...card, padding: '8px 10px' }}>
-        <div style={row}>
-          <div style={{ flex: '0 0 190px' }}>
+      {/* 顶部库管理表面：库选择/新建/删除 + 统计徽标 + 上传入口，一行工具栏随宽度自动换行 */}
+      <section className={css.surface}>
+        <div className={css.formRow}>
+          <label className={[css.field, css.fieldCompact].join(' ')}>
             <span className={css.fieldLabel}>知识库（{kbs.length}）</span>
             <select className={css.input} value={kbId} onChange={(e) => setKbId(e.target.value)}>
               {kbs.length === 0 && <option value="">（先创建一个库）</option>}
               {kbs.map((kb) => <option key={kb.id} value={kb.id}>{kb.name}</option>)}
             </select>
-          </div>
-          <div style={{ flex: '0 0 150px' }}>
+          </label>
+          <label className={[css.field, css.fieldCompact].join(' ')}>
             <span className={css.fieldLabel}>新建库</span>
             <input className={css.input} value={newKbName} placeholder="库名" onChange={(e) => setNewKbName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') createKb() }} />
-          </div>
+          </label>
           <button type="button" className={css.ghostButton} disabled={busy} onClick={createKb}>创建</button>
           <button type="button" className={css.dangerButton} disabled={busy || kbId === ''} onClick={deleteKb}>删除库</button>
-          <div style={{ flex: 1 }} />
+          <span className={css.toolbarSpacer} />
           <span className={css.badge}>{docs.length} 文档 · {totalChunks} 切块</span>
-          <label className={css.ghostButton} style={{ display: 'inline-block', cursor: 'pointer' }}>
+          {/* 上传入口：视觉上是幽灵按钮，内嵌仅屏幕阅读器可见的文件输入触发选档 */}
+          <label className={css.ghostButton}>
             上传文档
-            <input type="file" style={{ display: 'none' }} onChange={uploadFile} accept=".md,.txt,.csv,.json,.yaml,.yml,.log,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.sh,.css,.html,.pdf,.docx" />
+            <input type="file" className={css.srOnly} onChange={uploadFile} accept=".md,.txt,.csv,.json,.yaml,.yml,.log,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.sh,.css,.html,.pdf,.docx" />
           </label>
         </div>
-      </div>
+      </section>
 
-      <div style={grid2}>
-        <div style={card}>
-          <p style={cardTitle}>文档入库</p>
-          <div style={row}>
-            <input className={css.input} style={{ flex: '0 0 170px' }} value={pasteName} placeholder="文件名（如 部署文档.md）" onChange={(e) => setPasteName(e.target.value)} />
+      {/* 主体双栏：workbenchGrid 左入库右检索，≤960px 自动降为单列 */}
+      <div className={css.workbenchGrid}>
+        <section className={css.surface}>
+          <h3 className={css.surfaceTitle}>文档入库</h3>
+          <div className={css.formRow}>
+            <input className={[css.input, css.fieldGrow].join(' ')} value={pasteName} placeholder="文件名（如 部署文档.md）" onChange={(e) => setPasteName(e.target.value)} />
             <button type="button" className={css.ghostButton} disabled={busy} onClick={ingestText}>入库并嵌入</button>
           </div>
           <textarea
-            className={css.input}
-            style={{ minHeight: 96, resize: 'vertical', margin: '6px 0 8px', fontFamily: 'inherit' }}
+            className={[css.input, css.textarea].join(' ')}
             value={pasteText}
             placeholder="粘贴 Markdown / 文本内容…（自动标题感知切块 → 智谱向量化）"
             onChange={(e) => setPasteText(e.target.value)}
           />
           {docs.length === 0
             ? <div className={css.empty}>当前库还没有文档——粘贴文本或点右上角「上传文档」。</div>
-            : <table className={css.dataTable}>
-              <thead><tr><th>文件</th><th style={{ width: 64 }}>状态</th><th style={{ width: 52 }}>切块</th><th style={{ width: 56 }}>操作</th></tr></thead>
-              <tbody>
-                {docs.map((doc) => (
-                  <tr key={doc.id}>
-                    <td style={{ wordBreak: 'break-all' }}>{doc.fileName}</td>
-                    <td>{doc.status === 'ready' ? '✅' : doc.status}</td>
-                    <td>{doc.chunkCount}</td>
-                    <td><button type="button" className={css.ghostButton} disabled={busy} onClick={() => deleteDoc(doc.id)}>删除</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>}
-        </div>
+            : <div className={css.tableScroll}>
+              <table className={css.dataTable}>
+                <thead><tr><th>文件</th><th>状态</th><th>切块</th><th>操作</th></tr></thead>
+                <tbody>
+                  {docs.map((doc) => (
+                    <tr key={doc.id}>
+                      <td className={css.monoText}>{doc.fileName}</td>
+                      <td>{doc.status === 'ready' ? '✅' : doc.status}</td>
+                      <td>{doc.chunkCount}</td>
+                      <td><button type="button" className={css.ghostButton} disabled={busy} onClick={() => deleteDoc(doc.id)}>删除</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>}
+        </section>
 
-        <div style={card}>
-          <p style={cardTitle}>检索测试台（hybrid：中文全文 + 向量）</p>
-          <div style={row}>
+        <section className={css.surface}>
+          <h3 className={css.surfaceTitle}>检索测试台（hybrid：中文全文 + 向量）</h3>
+          <div className={css.formRow}>
             <input
-              className={css.input}
-              style={{ flex: 1, minWidth: 200 }}
+              className={[css.input, css.fieldGrow].join(' ')}
               value={query}
               placeholder="输入问题，如：暂存实例怎么启动？"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') doSearch() }}
             />
-            <label style={{ fontSize: 12, opacity: 0.8 }}>Top-K <input className={css.input} style={{ width: 56, display: 'inline-block' }} type="number" min={1} max={50} value={topK} onChange={(e) => setTopK(Number(e.target.value) || 8)} /></label>
-            <label style={{ fontSize: 12, opacity: 0.8, display: 'flex', alignItems: 'center', gap: 6 }}>向量 {vectorWeight.toFixed(2)}<input type="range" min={0} max={1} step={0.05} value={vectorWeight} style={{ width: 110 }} onChange={(e) => setVectorWeight(Number(e.target.value))} /></label>
+            <label className={css.field}>
+              <span className={css.fieldLabel}>Top-K</span>
+              {/* 数字输入用裸 compactNumber：.input 的 width:100% 在 CSS 中定义在后会覆盖 compactNumber 的定宽 */}
+              <input className={css.compactNumber} type="number" min={1} max={50} value={topK} onChange={(e) => setTopK(Number(e.target.value) || 8)} />
+            </label>
+            <label className={[css.field, css.fieldCompact].join(' ')}>
+              <span className={css.fieldLabel}>向量 {vectorWeight.toFixed(2)}</span>
+              {/* range 走浏览器原生外观（panel 全局规则刻意排除 range），随字段宽度拉伸 */}
+              <input type="range" min={0} max={1} step={0.05} value={vectorWeight} onChange={(e) => setVectorWeight(Number(e.target.value))} />
+            </label>
             <button type="button" className={css.ghostButton} disabled={busy || searching} onClick={doSearch}>{searching ? '检索中…' : '检索'}</button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          <div className={css.resultStack}>
             {hits.length === 0
               ? <div className={css.empty}>暂无检索结果——入库后在这里验证召回与排序。</div>
               : hits.map((hit) => (
-                <div key={hit.chunkId} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(128,128,128,0.09)' }}>
-                  <div style={{ fontSize: 11, opacity: 0.72, marginBottom: 2 }}>
+                <div key={hit.chunkId} className={css.resultItem}>
+                  <div className={css.resultMeta}>
                     「{hit.fileName}」{hit.headingPath !== '' ? ' · ' + hit.headingPath : ''}
-                    <span className={css.badge} style={{ marginLeft: 8 }}>{hit.score.toFixed(3)}</span>
+                    <span className={css.badge}>{hit.score.toFixed(3)}</span>
                   </div>
-                  <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{hit.text.length > 360 ? hit.text.slice(0, 360) + '…' : hit.text}</div>
+                  <div className={css.resultText}>{hit.text.length > 360 ? hit.text.slice(0, 360) + '…' : hit.text}</div>
                 </div>
               ))}
           </div>
-        </div>
+        </section>
       </div>
 
       {settings !== null && <SettingsRow settings={settings} busy={busy} onChange={setSettings} onSave={saveSettings} onReembed={reembedAll} />}
-    </div>
+    </section>
   )
 }
 /** 渠道中文标签与各渠道默认向量模型提示。 */
@@ -281,9 +299,9 @@ function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (n
   }
 
   return (
-    <div style={card}>
-      <div style={row}>
-        <div style={{ flex: '0 0 130px' }}>
+    <section className={css.surface}>
+      <div className={css.formRow}>
+        <label className={[css.field, css.fieldCompact].join(' ')}>
           <span className={css.fieldLabel}>向量渠道</span>
           <select className={css.input} value={settings.embedding.provider} onChange={(e) => {
             const provider = e.target.value as RagSettings['embedding']['provider']
@@ -291,49 +309,54 @@ function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (n
           }}>
             {Object.entries(PROVIDER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-        </div>
+        </label>
         {settings.embedding.provider === 'custom' && (
-          <div style={{ flex: '0 0 250px' }}>
+          <label className={[css.field, css.fieldGrow].join(' ')}>
             <span className={css.fieldLabel}>服务地址（到 /v1）</span>
             <input className={css.input} value={settings.embedding.baseURL ?? ''} placeholder="https://api.siliconflow.cn/v1" onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, baseURL: e.target.value } })} />
-          </div>
+          </label>
         )}
         {settings.embedding.provider === 'custom' && (
-          <div style={{ flex: '0 0 220px' }}>
+          <label className={[css.field, css.fieldGrow].join(' ')}>
             <span className={css.fieldLabel}>凭据引用名</span>
             <input className={css.input} value={settings.embedding.apiKeyEnv ?? ''} placeholder="RAG_CUSTOM_EMBEDDING_API_KEY" onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, apiKeyEnv: e.target.value } })} />
-          </div>
+          </label>
         )}
-        <div style={{ flex: '0 0 190px' }}>
+        <label className={[css.field, css.fieldCompact].join(' ')}>
           <span className={css.fieldLabel}>向量模型</span>
           <input className={css.input} value={settings.embedding.model} placeholder={PROVIDER_MODEL_HINT[settings.embedding.provider] ?? '模型名'} onChange={(e) => onChange({ ...settings, embedding: { ...settings.embedding, model: e.target.value } })} />
-        </div>
+        </label>
         <button type="button" className={css.ghostButton} disabled={busy || testing} onClick={testConnection}>{testing ? '测试中…' : '测试连接'}</button>
         <button type="button" className={css.ghostButton} disabled={busy} onClick={props.onReembed}>重嵌全部</button>
-        <div style={{ flex: '0 0 118px' }}>
+        <label className={[css.field, css.fieldCompact].join(' ')}>
           <span className={css.fieldLabel}>重排</span>
           <select className={css.input} value={settings.rerank.mode} onChange={(e) => onChange({ ...settings, rerank: { ...settings.rerank, mode: e.target.value as RagSettings['rerank']['mode'] } })}>
             <option value="zhipu">智谱 rerank</option>
             <option value="llm">LLM 兜底</option>
             <option value="off">关闭</option>
           </select>
-        </div>
-        <label style={{ fontSize: 12, opacity: 0.85 }}>块大小
-          <input className={css.input} style={{ width: 68, marginLeft: 6 }} type="number" value={settings.chunk.maxSize} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, maxSize: Number(e.target.value) || 512 } })} />
         </label>
-        <label style={{ fontSize: 12, opacity: 0.85 }}>重叠
-          <input className={css.input} style={{ width: 60, marginLeft: 6 }} type="number" value={settings.chunk.overlap} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, overlap: Number(e.target.value) || 64 } })} />
+        {/* 四个数字参数：fieldLabel 上置 + compactNumber 定宽输入，随 formRow 换行不再溢出 */}
+        <label className={css.field}>
+          <span className={css.fieldLabel}>块大小</span>
+          <input className={css.compactNumber} type="number" value={settings.chunk.maxSize} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, maxSize: Number(e.target.value) || 512 } })} />
         </label>
-        <label style={{ fontSize: 12, opacity: 0.85 }}>默认 Top-K
-          <input className={css.input} style={{ width: 58, marginLeft: 6 }} type="number" value={settings.search.topK} onChange={(e) => onChange({ ...settings, search: { ...settings.search, topK: Number(e.target.value) || 8 } })} />
+        <label className={css.field}>
+          <span className={css.fieldLabel}>重叠</span>
+          <input className={css.compactNumber} type="number" value={settings.chunk.overlap} onChange={(e) => onChange({ ...settings, chunk: { ...settings.chunk, overlap: Number(e.target.value) || 64 } })} />
         </label>
-        <label style={{ fontSize: 12, opacity: 0.85 }}>阈值(0=不过滤)
-          <input className={css.input} style={{ width: 60, marginLeft: 6 }} type="number" step="0.05" value={settings.search.threshold} onChange={(e) => onChange({ ...settings, search: { ...settings.search, threshold: Number(e.target.value) || 0 } })} />
+        <label className={css.field}>
+          <span className={css.fieldLabel}>默认 Top-K</span>
+          <input className={css.compactNumber} type="number" value={settings.search.topK} onChange={(e) => onChange({ ...settings, search: { ...settings.search, topK: Number(e.target.value) || 8 } })} />
         </label>
-        <div style={{ flex: 1 }} />
+        <label className={css.field}>
+          <span className={css.fieldLabel}>阈值(0=不过滤)</span>
+          <input className={css.compactNumber} type="number" step="0.05" value={settings.search.threshold} onChange={(e) => onChange({ ...settings, search: { ...settings.search, threshold: Number(e.target.value) || 0 } })} />
+        </label>
+        <span className={css.toolbarSpacer} />
         <button type="button" className={css.ghostButton} disabled={busy} onClick={save}>保存设置</button>
       </div>
-      {testResult !== '' && <div style={{ fontSize: 12, marginTop: 6, opacity: 0.9 }}>{testResult}</div>}
-    </div>
+      {testResult !== '' && <div className={css.subtleText}>{testResult}</div>}
+    </section>
   )
 }

@@ -1,6 +1,8 @@
 /**
  * 工作流页签 —— 工作流列表/参数编辑/运行台/历史。
- * 布局：顶栏（新建默认工作流+刷新）→ 左列定义列表与参数、右列运行台与历史（紧凑双栏）。
+ * 布局：统一面板布局体系——根为 workspace 滚动平面（在 DevforgePanel 的 overflow:hidden
+ * 内容区内自行滚动），页级工具栏与两张功能卡片统一用 surface，左右双列用 workbenchGrid
+ * （窄屏 ≤960px 由公共样式自动折叠为单列），历史数据表置于 tableScroll 内横向滚动。
  * 直接 fetch 同源 API（对齐 RagTab 模式）；所有失败内联横幅提示。
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -14,10 +16,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok || body?.ok === false) throw new Error(body?.error ?? ('HTTP ' + response.status))
   return body as T
 }
-
-const row = { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' } as const
-const card = { border: '1px solid rgba(128,128,128,0.3)', borderRadius: 8, padding: '8px 10px', minWidth: 0 } as const
-const cardTitle = { fontSize: 12, fontWeight: 600, opacity: 0.85, margin: '0 0 6px' } as const
 
 /** 节点摘要（列表一行展示）。 */
 function nodesSummary(workflow: WorkflowDefinition): string {
@@ -101,81 +99,96 @@ export function WorkflowTab(): JSX.Element {
   })
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
+    <section className={css.workspace}>
       {message !== '' && <div className={css.banner}>{message}</div>}
-      <div style={{ ...card, ...row, display: 'flex' }}>
-        <span className={css.badge}>{workflows.length} 个工作流</span>
-        <div style={{ flex: 1 }} />
-        <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void createDefault() }}>新建默认工作流</button>
-        <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void reload() }}>刷新</button>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,3fr)', gap: 10, alignItems: 'start' }}>
-        <div style={card}>
-          <p style={cardTitle}>工作流定义</p>
+
+      {/* 页级工具栏：总数徽标靠左，新建/刷新主操作靠右（surfaceHeader 换行安全）。 */}
+      <section className={css.surface}>
+        <div className={css.surfaceHeader}>
+          <span className={css.badge}>{workflows.length} 个工作流</span>
+          <div className={css.rowSpacer} />
+          <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void createDefault() }}>新建默认工作流</button>
+          <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void reload() }}>刷新</button>
+        </div>
+      </section>
+
+      {/* 双列工作区：workbenchGrid 在窄屏（≤960px）自动折叠为单列，子项不再错位。 */}
+      <div className={css.workbenchGrid}>
+        <section className={css.surface}>
+          <h3 className={css.surfaceTitle}>工作流定义</h3>
           {selected === null
             ? <div className={css.empty}>还没有工作流——点右上角「新建默认工作流」。</div>
             : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className={css.resultStack}>
                 <select className={css.input} value={selected.id} onChange={(e) => setSelected(workflows.find((item) => item.id === e.target.value) ?? null)}>
                   {workflows.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
-                <div style={{ fontSize: 11, opacity: 0.7 }}>{nodesSummary(selected)}</div>
-                <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div className={css.subtleText}>{nodesSummary(selected)}</div>
+                <label className={css.checkLabel}>
                   <input type="checkbox" checked={selected.nodes.rewrite?.enabled === true} onChange={(e) => patchSelected({ rewrite: { enabled: e.target.checked } })} />查询改写（多路召回）
                 </label>
-                <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <label className={css.checkLabel}>
                   <input type="checkbox" checked={selected.nodes.rerank?.enabled === true} onChange={(e) => patchSelected({ rerank: { enabled: e.target.checked } })} />合并后精排
                 </label>
-                <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <label className={css.checkLabel}>
                   <input type="checkbox" checked={selected.nodes.selfCheck?.enabled === true} onChange={(e) => patchSelected({ selfCheck: { enabled: e.target.checked, maxRetries: selected.nodes.selfCheck?.maxRetries ?? 1 } })} />自评重试
                 </label>
-                <div style={row}>
-                  <label style={{ fontSize: 12, opacity: 0.85 }}>Top-K
-                    <input className={css.input} style={{ width: 56, marginLeft: 6 }} type="number" min={1} max={50} value={selected.nodes.retrieve.topK} onChange={(e) => patchSelected({ retrieve: { ...selected.nodes.retrieve, topK: Number(e.target.value) || 8 } })} />
+                <div className={css.formRow}>
+                  <label className={[css.field, css.fieldCompact].join(' ')}>
+                    <span className={css.fieldLabel}>Top-K</span>
+                    <input className={css.input} type="number" min={1} max={50} value={selected.nodes.retrieve.topK} onChange={(e) => patchSelected({ retrieve: { ...selected.nodes.retrieve, topK: Number(e.target.value) || 8 } })} />
                   </label>
-                  <label style={{ fontSize: 12, opacity: 0.85, display: 'flex', alignItems: 'center', gap: 6 }}>向量 {selected.nodes.retrieve.vectorWeight.toFixed(2)}
-                    <input type="range" min={0} max={1} step={0.05} value={selected.nodes.retrieve.vectorWeight} style={{ width: 100 }} onChange={(e) => patchSelected({ retrieve: { ...selected.nodes.retrieve, vectorWeight: Number(e.target.value) } })} />
+                  <label className={[css.field, css.fieldGrow].join(' ')}>
+                    <span className={css.fieldLabel}>向量 {selected.nodes.retrieve.vectorWeight.toFixed(2)}</span>
+                    <input type="range" min={0} max={1} step={0.05} value={selected.nodes.retrieve.vectorWeight} onChange={(e) => patchSelected({ retrieve: { ...selected.nodes.retrieve, vectorWeight: Number(e.target.value) } })} />
                   </label>
                 </div>
-                <div style={row}>
+                <div className={css.actionRow}>
                   <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void saveSelected() }}>保存参数</button>
                   <button type="button" className={css.dangerButton} disabled={busy} onClick={() => { void removeSelected() }}>删除</button>
                 </div>
               </div>
             )}
-        </div>
-        <div style={card}>
-          <p style={cardTitle}>运行台（改写 → 多源检索 → 精排 → 生成 → 自评）</p>
-          <div style={row}>
-            <input className={css.input} style={{ flex: 1, minWidth: 200 }} value={query} placeholder="例如：暂存实例怎么启动？" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void doRun() }} />
+        </section>
+        <section className={css.surface}>
+          <h3 className={css.surfaceTitle}>运行台（改写 → 多源检索 → 精排 → 生成 → 自评）</h3>
+          <div className={css.formRow}>
+            <input className={[css.input, css.fieldGrow].join(' ')} value={query} placeholder="例如：暂存实例怎么启动？" onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void doRun() }} />
             <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void doRun() }}>{busy ? '运行中…' : '运行'}</button>
           </div>
           {result !== null && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>{result.steps.map((step) => step.name + ' ' + step.ms + 'ms').join(' → ')}</div>
-              <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.answer}</div>
-              <div style={{ fontSize: 11, opacity: 0.75 }}>
-                出处：{result.sources.map((source, i) => (source.headingPath !== '' ? source.fileName + ' · ' + source.headingPath : source.fileName) + '（' + source.score.toFixed(3) + '）').join('；')}
+            <div className={css.resultStack}>
+              <div className={css.resultItem}>
+                <div className={css.monoText}>{result.steps.map((step) => step.name + ' ' + step.ms + 'ms').join(' → ')}</div>
+                <div className={css.resultText}>{result.answer}</div>
+                <div className={css.subtleText}>
+                  出处：{result.sources.map((source, i) => (source.headingPath !== '' ? source.fileName + ' · ' + source.headingPath : source.fileName) + '（' + source.score.toFixed(3) + '）').join('；')}
+                </div>
               </div>
             </div>
           )}
-          {runs.length > 0 && (
-            <table className={css.dataTable} style={{ marginTop: 10 }}>
-              <thead><tr><th>时间</th><th>问题</th><th style={{ width: 60 }}>状态</th><th style={{ width: 70 }}>步骤</th></tr></thead>
-              <tbody>
-                {runs.slice(0, 8).map((item) => (
-                  <tr key={item.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(item.createdAt).toLocaleTimeString()}</td>
-                    <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.query}</td>
-                    <td>{item.status === 'ok' ? '✅' : '❌'}</td>
-                    <td>{item.steps.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {runs.length > 0 ? (
+            /* tableScroll 兜住窄屏：dataTable 最小 620px，超出部分在容器内横向滚动。 */
+            <div className={css.tableScroll}>
+              <table className={css.dataTable}>
+                <thead><tr><th>时间</th><th>问题</th><th style={{ width: 60 }}>状态</th><th style={{ width: 70 }}>步骤</th></tr></thead>
+                <tbody>
+                  {runs.slice(0, 8).map((item) => (
+                    <tr key={item.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{new Date(item.createdAt).toLocaleTimeString()}</td>
+                      <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.query}</td>
+                      <td>{item.status === 'ok' ? '✅' : '❌'}</td>
+                      <td>{item.steps.length}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={css.subtleText}>暂无运行记录。</div>
           )}
-        </div>
+        </section>
       </div>
-    </div>
+    </section>
   )
 }

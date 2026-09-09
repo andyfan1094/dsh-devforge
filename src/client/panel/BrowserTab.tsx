@@ -37,14 +37,21 @@ export function BrowserTab({ api }: { api: DevforgeApi }): JSX.Element {
         <div className={css['metricRow']}><span>浏览器进程</span><strong>{status?.running ? '运行中' : status === null ? '-' : '未启动'}</strong></div>
         <div className={css['metricRow']}><span>当前页</span><strong>{status?.currentUrl ?? status?.pageTitle ?? (status === null ? '-' : '无')}</strong></div>
       </div>
-      <div className={css['toolbar']}>
-        <input value={url} onChange={(event) => { setUrl(event.target.value) }} placeholder="https://..." style={{ flex: '1 1 auto', minWidth: '240px' }} />
+      {/* 地址与操作行：统一表单规格（formRow + fieldGrow + input），与其他页签控件同高、可收缩、窄屏自动换行，去除行内 flex/minWidth 魔法值。 */}
+      <div className={css['formRow']}>
+        <input className={[css['input'], css['fieldGrow']].filter(Boolean).join(' ')} value={url} onChange={(event) => { setUrl(event.target.value) }} placeholder="https://..." spellCheck={false} />
         <button type="button" className={css['ghostButton']} disabled={busy !== '' || url.trim() === ''} onClick={navigate}>{busy === 'navigate' ? '打开中…' : '打开'}</button>
         <button type="button" className={css['ghostButton']} disabled={busy !== ''} onClick={takeShot}>{busy === 'shot' ? '截图…' : '截图'}</button>
         <button type="button" className={css['ghostButton']} disabled={busy !== ''} onClick={loadSnapshot}>{busy === 'snapshot' ? '读取…' : '快照'}</button>
       </div>
-      {shot !== '' && <img src={shot} alt="浏览器截图" style={{ maxWidth: '100%', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px' }} />}
-      {snapshot !== '' && <pre className={css['modalContent']} style={{ maxHeight: '320px', overflow: 'auto' }}>{snapshot}</pre>}
+      {/* 截图：统一图形容器（graphWrap 提供主题边框/圆角/底色），img 只保留等比缩放所需 inline 样式，替代原先散写的 rgba 边框魔法值。 */}
+      {shot !== '' && (
+        <div className={css['graphWrap']}>
+          <img src={shot} alt="浏览器截图" style={{ display: 'block', maxWidth: '100%', height: 'auto' }} />
+        </div>
+      )}
+      {/* 快照：统一结果输出（resultOutput 等宽字体 + 固定 min/max 高度 + 滚动），长文本受控滚动不再撑破面板，替代 modalContent + 行内 maxHeight。 */}
+      {snapshot !== '' && <pre className={css['resultOutput']}>{snapshot}</pre>}
     </section>
   )
 }

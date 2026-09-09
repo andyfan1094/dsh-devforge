@@ -13,11 +13,6 @@ import type { DevforgeApi } from '../api.ts'
 import type { BrainRouterCatalogProvider, BrainRouterSettings, BrainRouterStatus } from '../../brain-router/protocol.ts'
 import css from './panel.module.css'
 
-const card = { border: '1px solid rgba(128,128,128,0.3)', borderRadius: 8, padding: '8px 10px', minWidth: 0 } as const
-const cardTitle = { fontSize: 12, fontWeight: 600, opacity: 0.85, margin: '0 0 6px' } as const
-const row = { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' } as const
-const hint = { fontSize: 11, opacity: 0.65, margin: '2px 0 0' } as const
-
 /** 状态徽标：向用户明示路由当前是否真的在生效。 */
 function StatusBadge({ status }: { status: BrainRouterStatus }): JSX.Element {
   if (!status.wrapperInstalled) return <span className={css.badge}>⚠ 拦截器未挂载（重启 Host 后生效）</span>
@@ -82,11 +77,7 @@ export function BrainRouterTab({ api }: { api: DevforgeApi }): JSX.Element {
   }
 
   if (draft === null || status === null) {
-    return (
-      <div>
-        <div className={css.banner}>{message !== '' ? message : '加载中…'}</div>
-      </div>
-    )
+    return <section className={css.workspace}><div className={css.banner}>{message !== '' ? message : '加载中…'}</div></section>
   }
 
   const providerOptions = providers.map((provider) => ({ value: provider.id, label: provider.name + '（' + provider.id + '）' }))
@@ -97,70 +88,75 @@ export function BrainRouterTab({ api }: { api: DevforgeApi }): JSX.Element {
   const effortOptions = (selectedModel?.efforts ?? []).map((effort) => ({ value: effort.id, label: effort.name + (selectedModel?.defaultEffort === effort.id ? '（默认）' : '') }))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <section className={css.workspace}>
       {message !== '' && <div className={css.banner}>{message}</div>}
 
-      <div style={card}>
-        <p style={cardTitle}>主脑路由（GPT 系列省钱模式） <StatusBadge status={status} /></p>
-        <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.6 }}>
+      <section className={css.surface}>
+        <div className={css.surfaceHeader}>
+          <h3 className={css.surfaceTitle}>主脑路由（GPT 系列省钱模式）</h3>
+          <StatusBadge status={status} />
+        </div>
+        <p className={css.surfaceDescription}>
           会话主模型命中下方匹配规则时（默认 GPT 系列），主模型只当「大脑/项目管理员」——做计划、找关键问题、指挥；
           它派出去干活的子代理（subagent / workflow / ralph 等全部委派入口）统一改道工人模型执行，省下 GPT 的 token 开销。
           主模型未命中时保持原行为（子代理继承主模型）。设置即改即生效，无需重启。
-        </div>
-      </div>
+        </p>
+      </section>
 
-      <div style={card}>
-        <p style={cardTitle}>规则</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+      <section className={css.surface}>
+        <h3 className={css.surfaceTitle}>规则</h3>
+        <div className={css.resultStack}>
+          <label className={css.checkLabel}>
             <input type="checkbox" checked={draft.enabled} onChange={(event) => { patch({ enabled: event.target.checked }) }} />
             启用主脑路由
           </label>
-          <div style={row}>
-            <div>
-              <label className={css.fieldLabel}>主模型匹配正则（不区分大小写，匹配 "provider/model"）</label>
+          <div className={css.formRow}>
+            <label className={[css.field, css.fieldGrow].join(' ')}>
+              <span className={css.fieldLabel}>主模型匹配正则（不区分大小写，匹配 "provider/model"）</span>
               <input className={css.input} value={draft.mainModelPattern} placeholder="gpt"
                 onChange={(event) => { patch({ mainModelPattern: event.target.value }) }} />
-              <p style={hint}>默认 gpt：openai-gateway/gpt-5.6 这类 GPT 系列命中；zai-coding-cn/glm-… 不命中。</p>
-            </div>
+              <span className={css.subtleText}>默认 gpt：openai-gateway/gpt-5.6 这类 GPT 系列命中；zai-coding-cn/glm-… 不命中。</span>
+            </label>
           </div>
-          <div style={row}>
-            <div>
-              <label className={css.fieldLabel}>工人模型 provider</label>
+          <div className={css.formRow}>
+            <label className={[css.field, css.fieldGrow].join(' ')}>
+              <span className={css.fieldLabel}>工人模型 provider</span>
               <ModelSelect value={draft.workerProvider} options={providerOptions} placeholder="（未配置）"
                 onChange={(next) => { patch({ workerProvider: next, workerModel: '', workerReasoningEffort: '' }) }} />
-            </div>
-            <div>
-              <label className={css.fieldLabel}>工人模型 model</label>
+            </label>
+            <label className={[css.field, css.fieldGrow].join(' ')}>
+              <span className={css.fieldLabel}>工人模型 model</span>
               <ModelSelect value={draft.workerModel} options={modelOptions} placeholder={draft.workerProvider === '' ? '先选 provider' : '（未配置）'}
                 onChange={(next) => { patch({ workerModel: next, workerReasoningEffort: '' }) }} />
-            </div>
-            <div>
-              <label className={css.fieldLabel}>推理档位（下拉选择）</label>
+            </label>
+            <label className={[css.field, css.fieldGrow].join(' ')}>
+              <span className={css.fieldLabel}>推理档位（下拉选择）</span>
               <ModelSelect value={draft.workerReasoningEffort} options={effortOptions} placeholder={draft.workerModel === '' ? '先选模型' : '模型默认档'}
                 onChange={(next) => { patch({ workerReasoningEffort: next }) }} />
-              <p style={hint}>档位来自所选模型的元数据，换工人模型会自动清空；留空用该模型的默认档。</p>
-            </div>
+            </label>
           </div>
-          <div style={row}>
-            <div>
-              <label className={css.fieldLabel}>不改道的委派入口（逗号分隔）</label>
-              <input className={css.input} style={{ minWidth: 240 }} value={draft.excludeProviders.join(', ')}
+          {/* 说明文字必须放在行外而非第三列 label 内部：三列保持「fieldLabel+控件」同构等高后，
+              formRow 的 flex-end 对齐才不会把前两列整体压低一行（2026-09-08 暂存验收 S2 对齐修复）。 */}
+          <span className={css.subtleText}>档位来自所选模型的元数据，换工人模型会自动清空；留空用该模型的默认档。</span>
+          <div className={css.formRow}>
+            <label className={[css.field, css.fieldGrow].join(' ')}>
+              <span className={css.fieldLabel}>不改道的委派入口（逗号分隔）</span>
+              <input className={css.input} value={draft.excludeProviders.join(', ')}
                 onChange={(event) => { patch({ excludeProviders: event.target.value.split(/[,,]/).map((item) => item.trim()).filter((item) => item !== '') }) }} />
-              <p style={hint}>fork 会复用主模型的会话缓存，改道会破坏复用，服务端强制保留 fork。</p>
-            </div>
+              <span className={css.subtleText}>fork 会复用主模型的会话缓存，改道会破坏复用，服务端强制保留 fork。</span>
+            </label>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+          <label className={css.checkLabel}>
             <input type="checkbox" checked={draft.overrideExplicit} onChange={(event) => { patch({ overrideExplicit: event.target.checked }) }} />
             主模型显式为子代理指定模型时仍强制改道（默认尊重显式选择）
           </label>
         </div>
-      </div>
+      </section>
 
-      <div style={row}>
+      <div className={css.actionRow}>
         <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void save() }}>保存设置</button>
         <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void reload() }}>刷新</button>
       </div>
-    </div>
+    </section>
   )
 }
