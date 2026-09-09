@@ -13,7 +13,7 @@ import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type 
 import { ZHIPU_API, type ZhipuDashboard, type ZhipuKeyUsage, type ZhipuOfficialStatus, type ZhipuStatus, type ZhipuUsageWindow } from '../zhipu/protocol.ts'
 import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minimax/protocol.ts'
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
-import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayStatus } from '../openai/protocol.ts'
+import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayModelPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
@@ -528,6 +528,12 @@ export class DevforgeApi {
   /** 调用中转站 GET /v1/models，并返回端点级成功或失败结果。 */
   async fetchOpenAiGatewayModels(endpointId?: string, signal?: AbortSignal): Promise<OpenAiGatewayFetchModelsResult> {
     return await readJson(await fetch(OPENAI_GATEWAY_API.fetchModels, { method: 'POST', headers: { 'content-type': 'application/json' }, body: endpointId === undefined ? undefined : JSON.stringify({ endpointId }), signal }))
+  }
+
+  /** 修改一个端点内单个模型的上下文窗口与输出上限，返回刷新后的脱敏状态。 */
+  async saveOpenAiGatewayModel(patch: OpenAiGatewayModelPatch, signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
+    const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.model, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch), signal }))
+    return data.status
   }
 
   /** 读取智谱凭据和最新模型的脱敏状态。 */

@@ -5,6 +5,7 @@ export const OPENAI_GATEWAY_API = {
   status: '/api/dsh-devforge/openai/status',
   config: '/api/dsh-devforge/openai/config',
   endpoint: '/api/dsh-devforge/openai/endpoint',
+  model: '/api/dsh-devforge/openai/model',
   fetchModels: '/api/dsh-devforge/openai/fetch-models',
 } as const
 
@@ -27,14 +28,36 @@ export interface OpenAiGatewayEndpointConfig {
   imageModel?: string
 }
 
+/** 端点内单个已注册模型的脱敏档案。 */
+export interface OpenAiGatewayModelInfo {
+  id: string
+  name?: string
+  configured: boolean
+  /** 上下文窗口（tokens）；缺省时由 provider 默认值兜底。 */
+  contextWindow?: number
+  /** 输出上限（tokens）；仅 Anthropic Messages 端点按模型生效。 */
+  maxTokens?: number
+}
+
 /** 端点脱敏状态（不返回 Key）。 */
 export interface OpenAiGatewayEndpointStatus extends OpenAiGatewayEndpointConfig {
   providerId: string
   credentialConfigured: boolean
-  models: Array<{ id: string; name?: string; configured: boolean }>
+  models: OpenAiGatewayModelInfo[]
 }
 
 /** 中转站配置保存请求；API Key 继续走通用受管凭据路由。 */
+/** 单模型容量修改请求；只允许调整已注册模型的上下文窗口与输出上限。 */
+export interface OpenAiGatewayModelPatch {
+  /** 目标端点 id。 */
+  endpointId: string
+  /** 目标模型 id。 */
+  modelId: string
+  /** 上下文窗口（tokens）。 */
+  contextWindow: number
+  /** 输出上限（tokens）；可省略表示保持不变，仅 Anthropic Messages 端点支持。 */
+  maxTokens?: number
+}
 /** 单个端点获取模型的结果；失败时保留该端点已有路由。 */
 export interface OpenAiGatewayEndpointFetchResult {
   endpointId: string
@@ -80,7 +103,7 @@ export interface OpenAiGatewayStatus {
   /** 主端点聊天协议镜像；旧客户端可忽略。 */
   api?: OpenAiEndpointApi
   imageModel?: string
-  models: Array<{ id: string; name?: string; configured: boolean }>
+  models: OpenAiGatewayModelInfo[]
   /** 多端点状态；旧客户端可忽略该字段。 */
   endpoints: OpenAiGatewayEndpointStatus[]
 }

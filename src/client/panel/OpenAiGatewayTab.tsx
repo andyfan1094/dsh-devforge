@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointStatus, OpenAiGatewayStatus } from '../../openai/protocol.ts'
+import type { OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointStatus, OpenAiGatewayModelInfo, OpenAiGatewayModelPatch, OpenAiGatewayStatus } from '../../openai/protocol.ts'
 import css from './panel.module.css'
 
 type EndpointDraft = OpenAiGatewayEndpointConfig & { keyDraft: string }
+type ModelCapacityDraft = { contextWindow: string; maxTokens: string }
 type Notice = { kind: 'success' | 'error'; text: string }
 
 /** OpenAI 中转站页签属性。 */
@@ -40,6 +41,8 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
   const [saving, setSaving] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [modelDrafts, setModelDrafts] = useState<Record<string, ModelCapacityDraft>>({})
+  const [savingModelKey, setSavingModelKey] = useState('')
   const mounted = useRef(true)
   const controller = useRef<AbortController | null>(null)
 
@@ -79,6 +82,8 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
   const selected = endpoints.find((endpoint) => endpoint.id === selectedId) ?? endpoints[0]
   const selectedStatus: OpenAiGatewayEndpointStatus | undefined = status?.endpoints.find((endpoint) => endpoint.id === selected?.id)
   const selectedModels = selectedStatus?.models ?? (status?.endpoints.length === 0 && selected?.id === 'default' ? status.models : [])
+  const selectedApi = selected?.api ?? 'openai-responses'
+  const anthropicEndpoint = selectedApi === 'anthropic-messages'
   const configuredCount = status?.endpoints.filter((endpoint) => endpoint.credentialConfigured).length ?? 0
   const routeCount = status?.endpoints.filter((endpoint) => endpoint.models.length > 0).length ?? 0
   const allConfigured = endpoints.length > 0 && configuredCount === endpoints.length
@@ -196,6 +201,62 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     return options
   }, [selected?.imageModel, selectedModels])
 
+  /** 模型行未保存的容量草稿；以「端点 id::模型 id」为键，避免切换端点串值。 */
+  const capacityValues = (model: OpenAiGatewayModelInfo): { contextWindow: string; maxTokens: string; contextCurrent: string; maxTokensCurrent: string } => {
+    const draftKey = (selected?.id ?? '') + '::' + model.id
+    const draft = modelDrafts[draftKey]
+    const contextCurrent = model.contextWindow !== undefined ? String(model.contextWindow) : ''
+    const maxTokensCurrent = model.maxTokens !== undefined ? String(model.maxTokens) : ''
+    return { contextWindow: draft?.contextWindow ?? contextCurrent, maxTokens: draft?.maxTokens ?? maxTokensCurrent, contextCurrent, maxTokensCurrent }
+  }
+
+  const updateModelDraft = (model: OpenAiGatewayModelInfo, patch: Partial<ModelCapacityDraft>): void => {
+    if (selected === undefined) return
+    const draftKey = selected.id + '::' + model.id
+    setModelDrafts((current) => {
+      const previous = current[draftKey] ?? { contextWindow: '', maxTokens: '' }
+      return { ...current, [draftKey]: { ...previous, ...patch } }
+    })
+    setNotice(null)
+  }
+
+  /** 保存单模型容量；输出上限留空表示保持不变，仅 Anthropic 端点提交该字段。 */
+  const saveModelCapacity = async (model: OpenAiGatewayModelInfo): Promise<void> => {
+    if (selected === undefined) return
+    const draftKey = selected.id + '::' + model.id
+    const values = capacityValues(model)
+    const contextRaw = values.contextWindow.trim()
+    if (contextRaw === '') { setNotice({ kind: 'error', text: '请填写上下文窗口（整数 tokens）。' }); return }
+    const contextWindow = Number(contextRaw)
+    if (!Number.isInteger(contextWindow)) { setNotice({ kind: 'error', text: '上下文窗口必须是整数 tokens。' }); return }
+    const patch: OpenAiGatewayModelPatch = { endpointId: selected.id, modelId: model.id, contextWindow }
+    if (anthropicEndpoint) {
+      const maxTokensRaw = values.maxTokens.trim()
+      if (maxTokensRaw !== '') {
+        const maxTokens = Number(maxTokensRaw)
+        if (!Number.isInteger(maxTokens)) { setNotice({ kind: 'error', text: '输出上限必须是整数 tokens，留空表示保持不变。' }); return }
+        patch.maxTokens = maxTokens
+      }
+    }
+    setSavingModelKey(draftKey)
+    setNotice(null)
+    try {
+      const next = await api.saveOpenAiGatewayModel(patch)
+      if (!mounted.current) return
+      setModelDrafts((current) => {
+        const rest = { ...current }
+        delete rest[draftKey]
+        return rest
+      })
+      applyStatus(next)
+      setNotice({ kind: 'success', text: '已保存模型 ' + model.id + ' 的容量配置。' })
+    } catch (error) {
+      if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+    } finally {
+      if (mounted.current) setSavingModelKey('')
+    }
+  }
+
   return (
     <section className={css['openAiWorkspace']}>
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
@@ -250,7 +311,28 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
             </div>
             <div className={css['endpointModelList']}>
               <div className={css['metricRow']}><span>聊天模型路由</span><strong data-state={(selectedStatus?.models.length ?? 0) > 0 ? 'ok' : 'pending'}>{selectedStatus?.models.length ?? 0} 个模型</strong></div>
-              {selectedStatus?.models.map((model) => <div key={model.id} className={css['metricRow']}><span>{model.name !== undefined && model.name !== model.id ? model.name + ' · ' + model.id : model.id}</span><strong data-state="ok">已注册</strong></div>)}
+              {selectedStatus?.models.map((model) => {
+                const values = capacityValues(model)
+                const dirty = values.contextWindow !== values.contextCurrent || (anthropicEndpoint && values.maxTokens !== values.maxTokensCurrent)
+                const draftKey = (selected?.id ?? '') + '::' + model.id
+                const modelLabel = model.name !== undefined && model.name !== model.id ? model.name + ' · ' + model.id : model.id
+                return <div key={model.id} className={css['metricRow']}>
+                  <span className={css['modelRouteName']} title={modelLabel}>{modelLabel}</span>
+                  <span className={css['modelCapacityEditor']}>
+                    <label className={css['capacityField']}>
+                      <span>上下文</span>
+                      <input className={css['input'] + ' ' + css['capacityInput']} value={values.contextWindow} onChange={(event) => updateModelDraft(model, { contextWindow: event.target.value })} inputMode="numeric" spellCheck={false} placeholder="默认" aria-label={modelLabel + ' 上下文窗口（tokens）'} />
+                    </label>
+                    {anthropicEndpoint && <label className={css['capacityField']}>
+                      <span>输出</span>
+                      <input className={css['input'] + ' ' + css['capacityInput']} value={values.maxTokens} onChange={(event) => updateModelDraft(model, { maxTokens: event.target.value })} inputMode="numeric" spellCheck={false} placeholder="默认" aria-label={modelLabel + ' 输出上限（tokens）'} />
+                    </label>}
+                    <button type="button" className={css['ghostButton'] + ' ' + css['capacitySave']} disabled={!dirty || savingModelKey !== ''} onClick={() => { void saveModelCapacity(model) }}>{savingModelKey === draftKey ? '保存中…' : '保存'}</button>
+                    <strong data-state="ok">已注册</strong>
+                  </span>
+                </div>
+              })}
+              {anthropicEndpoint && <p className={css['sectionHint']}>上下文与输出上限按模型保存，可修改；留空输出表示保持不变。非 Anthropic 端点只保存上下文窗口。</p>}
             </div>
             <div className={css['imageModelEditor']}>
               <label className={css['compactField']}><span className={css['fieldLabel']}>该端点的生图模型</span><select className={css['input']} value={selected.imageModel ?? ''} onChange={(event) => updateSelected({ imageModel: event.target.value })}>

@@ -1,7 +1,7 @@
 /** OpenAI 兼容中转站面板路由（loopback + 同源写入围栏）。 */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from '../loopback.ts'
-import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig } from './protocol.ts'
+import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayModelPatch } from './protocol.ts'
 import { OpenAiGatewayService, OpenAiServiceError } from './service.ts'
 
 /** 输出不可缓存 JSON。 */
@@ -133,6 +133,26 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
             endpoint.imageModel = item.imageModel
           }
           writeJson(res, 200, { ok: true, status: await service.saveEndpoint(endpoint) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: OPENAI_GATEWAY_API.model,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readBody(req)
+          if (typeof body.endpointId !== 'string' || body.endpointId.trim() === '') throw new OpenAiServiceError('endpointId 必须是非空字符串。', 400)
+          if (typeof body.modelId !== 'string' || body.modelId.trim() === '') throw new OpenAiServiceError('modelId 必须是非空字符串。', 400)
+          if (typeof body.contextWindow !== 'number' || !Number.isInteger(body.contextWindow)) throw new OpenAiServiceError('contextWindow 必须是整数 tokens。', 400)
+          const patch: OpenAiGatewayModelPatch = { endpointId: body.endpointId, modelId: body.modelId, contextWindow: body.contextWindow }
+          if (body.maxTokens !== undefined) {
+            if (typeof body.maxTokens !== 'number' || !Number.isInteger(body.maxTokens)) throw new OpenAiServiceError('maxTokens 必须是整数 tokens。', 400)
+            patch.maxTokens = body.maxTokens
+          }
+          writeJson(res, 200, { ok: true, status: await service.saveModelProfile(patch) })
         } catch (error) { writeError(res, error) }
       },
     },

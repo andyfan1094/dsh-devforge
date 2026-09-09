@@ -461,3 +461,105 @@ test('模型档案迁移：Anthropic 旧默认容量按官方规格升级并补 
   assert.equal(responses.maxTokens, undefined)
   assert.equal(responses.reasoningEfforts, false)
 })
+
+/** 构造带 settings 内存实现的最小 ctx；sections 由用例直接断言。 */
+function makeSettingsCtx(sections: Record<string, Record<string, unknown>>) {
+  const getAt = (root: Record<string, unknown>, path: string[]): { parent: Record<string, unknown>; key: string } => {
+    let parent = root
+    for (const part of path.slice(0, -1)) {
+      const next = parent[part]
+      if (next === null || typeof next !== 'object' || Array.isArray(next)) parent[part] = {}
+      parent = parent[part] as Record<string, unknown>
+    }
+    return { parent, key: path[path.length - 1] ?? '' }
+  }
+  return {
+    settings: {
+      get: (ns: string) => sections[String(ns)],
+      describe: () => Object.entries(sections).map(([ns, value]) => ({ ns, value, revision: 1 })),
+      mutate: async (ns: string, operations: Array<{ op: 'set' | 'unset'; path: string[]; value?: unknown }>) => {
+        const section = sections[String(ns)] ?? (sections[String(ns)] = {})
+        for (const operation of operations) {
+          const { parent, key } = getAt(section, operation.path)
+          if (operation.op === 'set') parent[key] = operation.value
+          else delete parent[key]
+        }
+      },
+    },
+    credentials: { describe: async () => ({ configured: true, writable: true }), resolve: async () => ({ value: 'test-key' }) },
+    logger: { warn: () => {} },
+  }
+}
+
+test('模型容量修改：按模型写上下文与输出上限，状态回传容量且迁移不重置显式覆盖值', async () => {
+  const sections: Record<string, Record<string, unknown>> = {
+    'llm-pi-ai': {
+      providers: {
+        'openai-gateway': { models: [{ id: 'gpt-5.6-sol', contextWindow: 1_000_000 }] },
+        'openai-gateway-claude': { models: [{ id: 'gpt-5.5', contextWindow: 200_000, maxTokens: 32_000 }, { id: 'claude-sonnet-4-5', contextWindow: 1_000_000, maxTokens: 64_000 }] },
+      },
+    },
+  }
+  const { OpenAiGatewayService } = await import('../src/openai/service.ts')
+  const endpoints = [
+    { id: 'main', name: '主站', baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY' },
+    { id: 'claude', name: 'Claude 端点', baseURL: 'https://two.example.com', apiKeyEnv: 'TWO_KEY', api: 'anthropic-messages' as const },
+  ]
+  const liveConfig: OpenAiCapabilityConfig = { ...config, baseURL: endpoints[0]!.baseURL, apiKeyEnv: 'ONE_KEY', imageModel: '', endpoints }
+  const service = new OpenAiGatewayService(makeSettingsCtx(sections) as never, liveConfig)
+  const readModels = (providerId: string): Array<Record<string, unknown>> => ((sections['llm-pi-ai']?.providers as Record<string, Record<string, unknown>>)[providerId]?.models ?? []) as Array<Record<string, unknown>>
+
+  const status = await service.saveModelProfile({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 400_000, maxTokens: 64_000 })
+  assert.equal(readModels('openai-gateway-claude')[0]?.contextWindow, 400_000)
+  assert.equal(readModels('openai-gateway-claude')[0]?.maxTokens, 64_000)
+  assert.equal(readModels('openai-gateway-claude')[1]?.contextWindow, 1_000_000)
+  assert.equal(readModels('openai-gateway')[0]?.contextWindow, 1_000_000)
+  const presented = status.endpoints.find((endpoint) => endpoint.id === 'claude')?.models.find((model) => model.id === 'gpt-5.5')
+  assert.equal(presented?.contextWindow, 400_000)
+  assert.equal(presented?.maxTokens, 64_000)
+
+  // 再次拉取模型与启动迁移都不得重置显式覆盖值。
+  const resynced = syncOpenAiModels(readModels('openai-gateway-claude'), [{ id: 'gpt-5.5' }, { id: 'claude-sonnet-4-5' }], 'anthropic-messages')
+  assert.equal((resynced.models[0] as Record<string, unknown>).contextWindow, 400_000)
+  assert.equal((resynced.models[0] as Record<string, unknown>).maxTokens, 64_000)
+  await service.ensureProvider()
+  assert.equal(readModels('openai-gateway-claude')[0]?.contextWindow, 400_000)
+  assert.equal(readModels('openai-gateway-claude')[0]?.maxTokens, 64_000)
+
+  // 输出上限省略时保持不变。
+  await service.saveModelProfile({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 500_000 })
+  assert.equal(readModels('openai-gateway-claude')[0]?.contextWindow, 500_000)
+  assert.equal(readModels('openai-gateway-claude')[0]?.maxTokens, 64_000)
+})
+
+test('模型容量修改：非法值与未知目标拒绝且不落库', async () => {
+  const sections: Record<string, Record<string, unknown>> = {
+    'llm-pi-ai': {
+      providers: {
+        'openai-gateway': { models: [{ id: 'gpt-5.6-sol', contextWindow: 1_000_000 }] },
+        'openai-gateway-claude': { models: [{ id: 'gpt-5.5', contextWindow: 200_000, maxTokens: 32_000 }] },
+      },
+    },
+  }
+  const { OpenAiGatewayService } = await import('../src/openai/service.ts')
+  const endpoints = [
+    { id: 'main', name: '主站', baseURL: 'https://one.example.com', apiKeyEnv: 'ONE_KEY' },
+    { id: 'claude', name: 'Claude 端点', baseURL: 'https://two.example.com', apiKeyEnv: 'TWO_KEY', api: 'anthropic-messages' as const },
+  ]
+  const liveConfig: OpenAiCapabilityConfig = { ...config, baseURL: endpoints[0]!.baseURL, apiKeyEnv: 'ONE_KEY', imageModel: '', endpoints }
+  const service = new OpenAiGatewayService(makeSettingsCtx(sections) as never, liveConfig)
+  const rejected = async (patch: Parameters<OpenAiGatewayService['saveModelProfile']>[0], status: number): Promise<void> => {
+    await assert.rejects(service.saveModelProfile(patch), (error: unknown) => error instanceof OpenAiServiceError && error.status === status)
+  }
+  await rejected({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 0 }, 400)
+  await rejected({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 1.5 }, 400)
+  await rejected({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 5_000_000 }, 400)
+  await rejected({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 400_000, maxTokens: 500_000 }, 400)
+  await rejected({ endpointId: 'claude', modelId: 'gpt-5.5', contextWindow: 400_000, maxTokens: 100 }, 400)
+  await rejected({ endpointId: 'main', modelId: 'gpt-5.6-sol', contextWindow: 400_000, maxTokens: 64_000 }, 400)
+  await rejected({ endpointId: 'missing', modelId: 'gpt-5.5', contextWindow: 400_000 }, 404)
+  await rejected({ endpointId: 'claude', modelId: 'no-such-model', contextWindow: 400_000 }, 404)
+  const readModels = (providerId: string): Array<Record<string, unknown>> => ((sections['llm-pi-ai']?.providers as Record<string, Record<string, unknown>>)[providerId]?.models ?? []) as Array<Record<string, unknown>>
+  assert.equal(readModels('openai-gateway-claude')[0]?.contextWindow, 200_000)
+  assert.equal(readModels('openai-gateway-claude')[0]?.maxTokens, 32_000)
+})

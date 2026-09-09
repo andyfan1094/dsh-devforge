@@ -6,7 +6,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
-import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayStatus } from './protocol.ts'
+import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayModelInfo, OpenAiGatewayModelPatch, OpenAiGatewayStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 const DEVFORGE_NAMESPACE = settingsNamespace('dsh-devforge')
@@ -354,6 +354,35 @@ export class OpenAiGatewayService {
     return await this.saveConfig({ endpoints })
   }
 
+  /** 修改一个端点内单个模型的上下文窗口（及 Anthropic 端点的输出上限）；显式覆盖值优先于默认档案且同步时不会被迁移重置。 */
+  async saveModelProfile(patch: OpenAiGatewayModelPatch): Promise<OpenAiGatewayStatus> {
+    const endpoints = this.endpointConfigs()
+    const index = endpoints.findIndex((item) => item.id === patch.endpointId)
+    if (index < 0) throw new OpenAiServiceError('指定端点不存在。', 404)
+    const endpoint = endpoints[index] as OpenAiGatewayEndpointConfig
+    if (!Number.isInteger(patch.contextWindow) || patch.contextWindow < MIN_MODEL_CONTEXT_WINDOW || patch.contextWindow > MAX_MODEL_CAPACITY) {
+      throw new OpenAiServiceError('上下文窗口必须是 ' + MIN_MODEL_CONTEXT_WINDOW + ' 到 ' + MAX_MODEL_CAPACITY + ' 之间的整数 tokens。', 400)
+    }
+    const anthropic = endpoint.api === 'anthropic-messages'
+    if (patch.maxTokens !== undefined) {
+      if (!anthropic) throw new OpenAiServiceError('只有 Anthropic Messages 端点支持按模型配置输出上限。', 400)
+      if (!Number.isInteger(patch.maxTokens) || patch.maxTokens < MIN_MODEL_MAX_TOKENS || patch.maxTokens > MAX_MODEL_CAPACITY) {
+        throw new OpenAiServiceError('输出上限必须是 ' + MIN_MODEL_MAX_TOKENS + ' 到 ' + MAX_MODEL_CAPACITY + ' 之间的整数 tokens。', 400)
+      }
+      if (patch.maxTokens > patch.contextWindow) throw new OpenAiServiceError('输出上限不能超过上下文窗口。', 400)
+    }
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const providerId = openAiProviderId(endpoint, index)
+    const models = readProviderModels(section?.providers?.[providerId])
+    if (!models.some((model) => model.id === patch.modelId)) throw new OpenAiServiceError('指定模型不在该端点的聊天路由里，请先获取模型。', 404)
+    const nextModels = models.map((model) => model.id === patch.modelId
+      ? { ...model, contextWindow: patch.contextWindow, ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}) }
+      : model)
+    // cleanLegacy=false：单模型容量修改不得牵动其它端点路由。
+    await this.writeProviders([{ endpoint, index, models: nextModels }], false)
+    return await this.readStatus()
+  }
+
   /** 启动时迁移旧 Sub2API OpenAI 配置并建立所有端点路由。 */
   async ensureProvider(): Promise<OpenAiGatewayStatus> {
     const migration = this.readLegacyConfig()
@@ -526,8 +555,19 @@ function readProviderModels(provider: Record<string, unknown> | undefined): Arra
   return Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
 }
 
-function presentModels(models: Array<Record<string, unknown>>): Array<{ id: string; name?: string; configured: boolean }> {
+/** 模型容量的可保存区间（tokens）：下限防呆、上限防手滑多敲零。 */
+const MIN_MODEL_CONTEXT_WINDOW = 1024
+const MIN_MODEL_MAX_TOKENS = 256
+const MAX_MODEL_CAPACITY = 4_000_000
+
+function presentModels(models: Array<Record<string, unknown>>): OpenAiGatewayModelInfo[] {
   return models
-    .map((model) => ({ id: typeof model.id === 'string' ? model.id : '', ...(typeof model.name === 'string' && model.name !== '' ? { name: model.name } : {}), configured: typeof model.id === 'string' && model.id !== '' }))
+    .map((model) => ({
+      id: typeof model.id === 'string' ? model.id : '',
+      ...(typeof model.name === 'string' && model.name !== '' ? { name: model.name } : {}),
+      configured: typeof model.id === 'string' && model.id !== '',
+      ...(Number.isInteger(model.contextWindow as number) ? { contextWindow: model.contextWindow as number } : {}),
+      ...(Number.isInteger(model.maxTokens as number) ? { maxTokens: model.maxTokens as number } : {}),
+    }))
     .filter((model) => model.id !== '')
 }
