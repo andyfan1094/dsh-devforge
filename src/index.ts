@@ -585,7 +585,11 @@ export function apply(ctx: Context, config?: Config): void {
   }
   // 持久化统计：沉淀/注入累计口径跨重启，修复"计数器内存态重启清零"的可观测缺陷。
   const memoryStats = new MemoryStatsStore(ragService, memoryKbId)
-  const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => generateText({ system, user, maxTokens: 700 }), () => {
+  const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => {
+    // 沉淀路由可独立配置（0.26.6）：全局默认路由故障（503 等）时，面板指到健康模型即可，不再被聊天路由绑架。
+    const route = memorySettingsRead()
+    return generateText({ system, user, maxTokens: 700, ...(route.sedimentProvider !== '' ? { provider: route.sedimentProvider } : {}), ...(route.sedimentModel !== '' ? { model: route.sedimentModel } : {}) })
+  }, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
   }, nativeMemory, memoryStats)

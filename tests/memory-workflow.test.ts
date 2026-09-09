@@ -12,6 +12,7 @@ import { collectPageRefs, listMnemonMarkdowns, mnemonDataRoot, readHindsightConf
 import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src/rag/rerank.ts'
 import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText, sessionEventsOf } from '../src/memory/sediment.ts'
 import { buildMemoryQuery, messageText, MemoryInjectionService, RELATIVE_KEEP_RATIO, renderMemoryContext, renderNativeContext, stripBoilerplate } from '../src/memory/inject.ts'
+import { normalizeMemorySettings, DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
 import { MemoryStatsStore } from '../src/memory/stats.ts'
 import { NativeMemoryStore, type NativeMemoryEntry } from '../src/memory/native.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
@@ -291,6 +292,18 @@ describe('记忆主动注入', () => {
       const occurrences = (detail2.text?.match(/live\.example\.com/g) ?? []).length
       assert.equal(occurrences, 1, '常驻条目不得在检索块重复出现')
     } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('记忆设置规整（0.26.6 沉淀路由）', () => {
+  test('sedimentProvider/sedimentModel 合法采纳、非法回退', () => {
+    const next = normalizeMemorySettings({ sedimentProvider: ' volcengine-ark-plan ', sedimentModel: 'glm-5.3-flash', topK: 6 }, DEFAULT_MEMORY_SETTINGS)
+    assert.equal(next.sedimentProvider, 'volcengine-ark-plan')
+    assert.equal(next.sedimentModel, 'glm-5.3-flash')
+    assert.equal(next.topK, 6)
+    const bad = normalizeMemorySettings({ sedimentProvider: 123, sedimentModel: null }, DEFAULT_MEMORY_SETTINGS)
+    assert.equal(bad.sedimentProvider, DEFAULT_MEMORY_SETTINGS.sedimentProvider)
+    assert.equal(bad.sedimentModel, DEFAULT_MEMORY_SETTINGS.sedimentModel)
   })
 })
 

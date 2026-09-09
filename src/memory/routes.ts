@@ -43,6 +43,9 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   dreamMaxTokens: 8192,
   dreamMaxEntries: 300,
   dreamMaxChars: 240,
+  // 沉淀模型路由（0.26.6）：空串=跟随全局默认路由；默认路由故障时可在面板指到健康模型。
+  sedimentProvider: '',
+  sedimentModel: '',
 }
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
@@ -95,6 +98,8 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     dreamMaxTokens: clampNumber(body.dreamMaxTokens, 1024, 65536, current.dreamMaxTokens),
     dreamMaxEntries: clampNumber(body.dreamMaxEntries, 20, 1000, current.dreamMaxEntries),
     dreamMaxChars: clampNumber(body.dreamMaxChars, 60, 2000, current.dreamMaxChars),
+    sedimentProvider: cleanRoute(body.sedimentProvider, current.sedimentProvider),
+    sedimentModel: cleanRoute(body.sedimentModel, current.sedimentModel),
   }
 }
 

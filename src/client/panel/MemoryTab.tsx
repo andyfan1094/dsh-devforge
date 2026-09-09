@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
+import { type BrainRouterCatalogProvider } from '../../brain-router/protocol.ts'
 import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
@@ -57,12 +58,14 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [profile, setProfile] = useState<MemoryUserProfile | null>(null)
   const [habitsText, setHabitsText] = useState('')
   const [dream, setDream] = useState<MemoryDreamStatus | null>(null)
+  const [catalog, setCatalog] = useState<BrainRouterCatalogProvider[]>([])
   const mounted = useRef(true)
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [nextStatus, nextSettings] = await Promise.all([api.getMemoryStatus(), api.getMemorySettings()])
+      const [nextStatus, nextSettings, nextCatalog] = await Promise.all([api.getMemoryStatus(), api.getMemorySettings(), api.getBrainRouterCatalog().catch(() => [] as BrainRouterCatalogProvider[])])
+      setCatalog(nextCatalog)
       const nextDocs = nextStatus.memoryKbId === '' ? [] : await api.listMemories()
       // 预览最近 30 条的首块内容：沉淀条目文件名是时间戳，必须给可读内容（单条失败回退文件名）
       const recentIds = nextDocs.slice().reverse().slice(0, 30)
@@ -309,6 +312,8 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
                 <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限</span><input className={css['input']} type="number" min={300} max={4000} step={100} value={settings.maxChars} onChange={(e) => updateSettings({ maxChars: Number(e.target.value) || 1200 })}/></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>做梦静默分钟</span><input className={css['input']} type="number" min={1} max={120} value={settings.dreamIdleMinutes} onChange={(e) => updateSettings({ dreamIdleMinutes: Number(e.target.value) || 10 })}/></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>做梦最小间隔（小时）</span><input className={css['input']} type="number" min={1} max={168} value={settings.dreamMinIntervalHours} onChange={(e) => updateSettings({ dreamMinIntervalHours: Number(e.target.value) || 6 })}/></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.sedimentProvider} onChange={(e) => updateSettings({ sedimentProvider: e.target.value, sedimentModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.sedimentProvider !== '' && !catalog.some((provider) => provider.id === settings.sedimentProvider) && <option value={settings.sedimentProvider}>{settings.sedimentProvider}（已存，目录中暂无）</option>}</select></label>
+                <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀模型（空=跟随默认）</span><select className={css['input']} value={settings.sedimentModel} disabled={settings.sedimentProvider === ''} onChange={(e) => updateSettings({ sedimentModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.sedimentProvider !== '' && settings.sedimentModel !== '' && !(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).some((model) => model.id === settings.sedimentModel) && <option value={settings.sedimentModel}>{settings.sedimentModel}（已存，目录中暂无）</option>}</select></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型 provider（空=跟随默认）</span><input className={css['input']} value={settings.dreamProvider} placeholder="如 minimax-cn" onChange={(e) => updateSettings({ dreamProvider: e.target.value })}/></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型名（空=跟随默认）</span><input className={css['input']} value={settings.dreamModel} placeholder="如 MiniMax-M2.7-highspeed" onChange={(e) => updateSettings({ dreamModel: e.target.value })}/></label>
               </div>

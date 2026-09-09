@@ -56,6 +56,11 @@ export interface MemorySettings {
   dreamMaxEntries: number
   /** 快照中单条记忆的截断字符数（控制裁决输入体量）。 */
   dreamMaxChars: number
+  /** 沉淀模型 provider 覆盖；空串 = 跟随全局默认路由。
+   * 0.26.6 新增：默认路由指向的模型不可用（503 等）时，沉淀不应被聊天默认路由绑架。 */
+  sedimentProvider: string
+  /** 沉淀模型名覆盖；空串 = 跟随全局默认路由。 */
+  sedimentModel: string
 }
 
 /** 记忆层状态（面板顶栏）。 */
