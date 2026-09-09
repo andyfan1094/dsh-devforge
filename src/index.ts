@@ -618,7 +618,7 @@ export function apply(ctx: Context, config?: Config): void {
       ? '失败：' + (run.error ?? '未知原因')
       : run.status === 'skipped'
         ? (run.error ?? '未达触发条件')
-        : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length
+        : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length + (run.retried === true ? '（解析重试后成功）' : '')
     memoryStats.update((prev) => ({ ...prev, dreamTotal: prev.dreamTotal + 1, lastDreamAt: run.finishedAt, lastDreamStatus: run.status, lastDreamSummary: summary.slice(0, 200) }))
   }
   dream.start()

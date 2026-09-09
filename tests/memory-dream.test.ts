@@ -205,3 +205,58 @@ test('MemoryDreamService：活跃不足与总开关关闭时手动触发被拒',
   const refused = await off.triggerNow()
   assert.equal(refused.started, false)
 })
+
+test('parseDreamDecisions：对象包裹数组可兜底提取，失败信息带输出预览', () => {
+  // 模型把数组包进对象（真实踩坑周边：不守格式指令）时不应整轮作废。
+  const wrapped = parseDreamDecisions('好的，以下是决策：\n{"decisions":[{"action":"archive","ids":["a"]},{"action":"keep","ids":["b"]}]}')
+  assert.equal(wrapped.length, 2)
+  // 失败必须留输出预览，否则无法排查「模型到底输出了什么」。
+  assert.throws(() => parseDreamDecisions('我觉得都挺好，不用整理。'), /输出预览/)
+  assert.throws(() => parseDreamDecisions(''), /（空输出）/)
+})
+
+test('MemoryDreamService：首次解析失败自动重试一次成功', async () => {
+  const { store, ragStore } = makeStore()
+  for (let i = 0; i < 10; i++) seed(store, '待整理记忆 ' + i + '：内容各不相同')
+  let calls = 0
+  const dream = new MemoryDreamService({
+    native: store,
+    generate: async (input) => {
+      calls += 1
+      if (calls === 1) return '今天没什么要整理的，都挺好的。'
+      assert.ok(input.user.includes('补充硬性要求'))
+      return '[{"action":"archive","ids":["' + store.list()[0].id + '"],"reason":"过期"}]'
+    },
+    config: () => settings({ dreamEnabled: true }),
+    listDomain: (domain) => ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
+  })
+  const run = await dream.run(true)
+  assert.equal(run.status, 'ok')
+  assert.equal(run.retried, true)
+  assert.equal(calls, 2)
+  assert.equal(run.archived, 1)
+  // 审计记录同样带重试标记，便于观测模型是否经常不听格式指令。
+  assert.equal(dream.status().runs[0].retried, true)
+})
+
+test('MemoryDreamService：重试仍解析失败则整轮 failed 且错误带预览', async () => {
+  const { store, ragStore } = makeStore()
+  for (let i = 0; i < 10; i++) seed(store, '待整理记忆 ' + i + '：内容各不相同')
+  let calls = 0
+  const dream = new MemoryDreamService({
+    native: store,
+    generate: async () => { calls += 1; return '还是不给你数组。' },
+    config: () => settings({ dreamEnabled: true }),
+    listDomain: (domain) => ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
+  })
+  const run = await dream.run(true)
+  assert.equal(run.status, 'failed')
+  assert.equal(calls, 2)
+  assert.ok(run.error?.includes('重试后仍失败'))
+  assert.ok(run.error?.includes('输出预览'))
+  assert.equal(store.list().length, 10)
+})

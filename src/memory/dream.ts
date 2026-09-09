@@ -61,12 +61,33 @@ export function buildDreamUserPrompt(entries: readonly NativeMemoryEntry[], maxC
 
 /** 从模型输出里提取决策 JSON 数组（容忍代码块围栏与前后缀文本；无数组时抛错由调用方记审计）。 */
 export function parseDreamDecisions(text: string): MemoryDreamDecision[] {
+  // 失败时带上原始输出预览：否则「模型到底输出了什么」无从排查（真实踩坑：failed 只有错误名）。
+  const preview = (): string => {
+    const flat = text.trim().replace(/\s+/g, ' ')
+    return flat === '' ? '（空输出）' : flat.slice(0, 160)
+  }
+  const fail = (message: string): never => { throw new Error(message + '（输出预览：' + preview() + '）') }
   const start = text.indexOf('[')
   const end = text.lastIndexOf(']')
-  if (start < 0 || end <= start) throw new Error('no json array in llm output')
-  const parsed = JSON.parse(text.slice(start, end + 1)) as unknown
-  if (!Array.isArray(parsed)) throw new Error('no json array in llm output')
-  return parsed.filter((item): item is MemoryDreamDecision => item !== null && typeof item === 'object' && typeof (item as MemoryDreamDecision).action === 'string')
+  if (start < 0 || end <= start) return fail('no json array in llm output')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1)) as unknown
+  } catch (error) {
+    return fail('决策 JSON 解析失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 120))
+  }
+  if (Array.isArray(parsed)) return filterDreamDecisions(parsed)
+  // 兜底：模型把数组包进对象（如 {"decisions":[...]}）时取第一个数组值字段，不让整轮作废。
+  if (parsed !== null && typeof parsed === 'object') {
+    const wrapper = Object.values(parsed as Record<string, unknown>).find((value): value is unknown[] => Array.isArray(value))
+    if (wrapper !== undefined) return filterDreamDecisions(wrapper)
+  }
+  return fail('no json array in llm output')
+}
+
+/** 决策元素过滤：非对象或缺 action 字符串的元素直接丢弃。 */
+function filterDreamDecisions(items: readonly unknown[]): MemoryDreamDecision[] {
+  return items.filter((item): item is MemoryDreamDecision => item !== null && typeof item === 'object' && typeof (item as MemoryDreamDecision).action === 'string')
 }
 
 /** 决策应用结果（审计口径）。 */
@@ -291,9 +312,24 @@ export class MemoryDreamService {
       let decisions: MemoryDreamDecision[]
       try {
         decisions = parseDreamDecisions(raw)
-      } catch (error) {
-        run.error = error instanceof Error ? error.message : String(error)
-        return run
+      } catch (firstError) {
+        // 解析失败自动重试一次：附更严格的「只输出 JSON 数组」硬约束。
+        // （真实踩坑：glm-5.3-flash 曾输出整段口语说明没有数组，一次失败就干等 6 小时下一轮。）
+        const firstMessage = firstError instanceof Error ? firstError.message : String(firstError)
+        try {
+          const retryRaw = await this.generate({
+            system: buildDreamSystemPrompt(),
+            user: buildDreamUserPrompt(snapshot, settings.dreamMaxChars) + '\n\n补充硬性要求：上一次输出无法解析（' + firstMessage.slice(0, 120) + '）。请严格只输出 JSON 数组本身：第一个字符必须是 [，最后一个字符必须是 ]，不要输出任何解释、思考过程或代码块围栏。',
+            maxTokens: settings.dreamMaxTokens,
+            ...(provider !== '' ? { provider } : {}),
+            ...(model !== '' ? { model } : {}),
+          })
+          decisions = parseDreamDecisions(retryRaw)
+          run.retried = true
+        } catch (retryError) {
+          run.error = '重试后仍失败：' + (retryError instanceof Error ? retryError.message : String(retryError))
+          return run
+        }
       }
       const applied = applyDreamDecisions(this.native, decisions)
       run.archived = applied.archived
@@ -379,6 +415,7 @@ function asRun(data: unknown, id: string): MemoryDreamRun | undefined {
     finishedAt: typeof value.finishedAt === 'number' ? value.finishedAt : value.startedAt,
     status,
     model: typeof value.model === 'string' ? value.model : '',
+    ...(value.retried === true ? { retried: true } : {}),
     snapshot: typeof value.snapshot === 'number' ? value.snapshot : 0,
     archived: typeof value.archived === 'number' ? value.archived : 0,
     merged: typeof value.merged === 'number' ? value.merged : 0,

@@ -250,6 +250,8 @@ export interface MemoryDreamRun {
   status: 'ok' | 'degraded' | 'failed' | 'skipped'
   /** 实际使用的模型路由（provider:model；skipped 时为空串）。 */
   model: string
+  /** true=首次解析失败后重试一次成功（观测模型是否经常不听格式指令）。 */
+  retried?: boolean
   /** 快照条数。 */
   snapshot: number
   /** 归档条数（软删除）。 */
