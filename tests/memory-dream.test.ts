@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { NativeMemoryStore } from '../src/memory/native.ts'
-import { applyDreamDecisions, buildDreamSystemPrompt, buildDreamUserPrompt, dreamGate, MemoryDreamService, parseDreamDecisions } from '../src/memory/dream.ts'
+import { applyDreamDecisions, buildDreamSystemPrompt, buildDreamUserPrompt, dreamGate, MemoryDreamService, parseDreamDecisions, salvageDecisionObjects } from '../src/memory/dream.ts'
 import { DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
 import type { MemorySettings } from '../src/memory/protocol.ts'
 
@@ -259,4 +259,18 @@ test('MemoryDreamService：重试仍解析失败则整轮 failed 且错误带预
   assert.ok(run.error?.includes('重试后仍失败'))
   assert.ok(run.error?.includes('输出预览'))
   assert.equal(store.list().length, 10)
+})
+
+test('salvageDecisionObjects：从 max_tokens 截断的数组里抢救完整决策', () => {
+  // 真实案例：8192 预算下模型写了 1.5 万字符决策数组被切在半截。
+  const truncated = '[{"action":"archive","ids":["a"],"reason":"过期"},{"action":"merge","ids":["b\\"x","c"],"content":"含转义与}]的花括号"},{"action":"archive","ids'
+  const salvaged = salvageDecisionObjects(truncated)
+  assert.equal(salvaged.length, 2)
+  assert.equal(salvaged[0].action, 'archive')
+  assert.deepEqual(salvaged[1].ids, ['b"x', 'c'])
+  // parseDreamDecisions 对截断文本走抢救路径而非整轮作废。
+  const parsed = parseDreamDecisions(truncated)
+  assert.equal(parsed.length, 2)
+  // 系统提示词带单轮决策上限（防截断第一道闸）。
+  assert.ok(buildDreamSystemPrompt().includes('最多输出 12 条决策'))
 })

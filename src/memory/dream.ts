@@ -41,6 +41,7 @@ export function buildDreamSystemPrompt(): string {
     '- keep：明确保留（通常不需要输出，未点名的条目一律视为 keep）。',
     '红线：不要输出任何未列出的 id；不要合并不同分类的条目；宁可少动也不误删——拿不准的一律 keep。',
     'ids 必须逐字复制快照里的完整 id（不得缩写或截断）；只整理确实需要动作的条目，输出可以是空数组。',
+    '单轮最多输出 12 条决策，挑最明显的先做，其余留给下一轮（真实踩坑：129 条快照放开写会撑爆 max_tokens 把 JSON 截断）。',
     '只输出 JSON 数组，不输出解释。数组元素形如：',
     '[{"action":"merge","ids":["id1","id2"],"keepId":"id1","content":"合并后的内容","importance":4,"reason":"同一主题重复 3 条"}]',
   ].join('\n')
@@ -74,6 +75,10 @@ export function parseDreamDecisions(text: string): MemoryDreamDecision[] {
   try {
     parsed = JSON.parse(text.slice(start, end + 1)) as unknown
   } catch (error) {
+    // 截断兜底：max_tokens 打爆会把数组切在半截。按花括号配平抢救已完整的决策对象，
+    // 抢救得到就降级使用，不让整轮作废（真实案例：8192 预算下模型写了 1.5 万字符决策数组被截）。
+    const salvaged = salvageDecisionObjects(text)
+    if (salvaged.length > 0) return salvaged
     return fail('决策 JSON 解析失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 120))
   }
   if (Array.isArray(parsed)) return filterDreamDecisions(parsed)
@@ -88,6 +93,40 @@ export function parseDreamDecisions(text: string): MemoryDreamDecision[] {
 /** 决策元素过滤：非对象或缺 action 字符串的元素直接丢弃。 */
 function filterDreamDecisions(items: readonly unknown[]): MemoryDreamDecision[] {
   return items.filter((item): item is MemoryDreamDecision => item !== null && typeof item === 'object' && typeof (item as MemoryDreamDecision).action === 'string')
+}
+
+/**
+ * 从截断文本里抢救完整的顶层决策对象：逐字符扫描（含字符串转义态）按花括号配平，
+ * 每个完整 {...} 单独 JSON.parse，合法且带 action 的才收。截断尾巴自然丢弃。
+ */
+export function salvageDecisionObjects(text: string): MemoryDreamDecision[] {
+  const objects: MemoryDreamDecision[] = []
+  let depth = 0
+  let startIdx = -1
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') { if (depth === 0) startIdx = i; depth += 1 } else if (ch === '}') {
+      if (depth === 0) continue
+      depth -= 1
+      if (depth === 0 && startIdx >= 0) {
+        try {
+          const parsed = JSON.parse(text.slice(startIdx, i + 1)) as unknown
+          if (parsed !== null && typeof parsed === 'object' && typeof (parsed as MemoryDreamDecision).action === 'string') objects.push(parsed as MemoryDreamDecision)
+        } catch { /* 单对象非法只丢这一条 */ }
+        startIdx = -1
+      }
+    }
+  }
+  return objects
 }
 
 /** 决策应用结果（审计口径）。 */

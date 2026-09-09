@@ -1,6 +1,6 @@
 {
   "name": "dsh-devforge",
-  "version": "0.26.8",
+  "version": "0.26.9",
   "description": "DSH 规范驱动天工造梦：注入版本化开发规范、一键创建服务生成子代理，并提供天工造梦操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
