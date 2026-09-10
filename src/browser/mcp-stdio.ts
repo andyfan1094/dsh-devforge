@@ -100,7 +100,15 @@ export class PlaywrightMcpStdio {
     const child = this.child
     this.child = undefined
     if (child !== undefined && child.exitCode === null) {
-      try { child.kill('SIGTERM') } catch { /* 进程已退出时忽略 */ }
+      try {
+        if (process.platform === 'win32' && child.pid !== undefined) {
+          // Windows 经 shell 启动时 kill 只能杀到 cmd.exe 外壳，用 taskkill 连整棵子进程树一起结束。
+          const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+          killer.on('error', () => { /* taskkill 不可用时退回默认行为，避免未处理异常 */ })
+        } else {
+          child.kill('SIGTERM')
+        }
+      } catch { /* 进程已退出时忽略 */ }
     }
     const entries = [...this.pending.values()]
     this.pending.clear()
@@ -122,7 +130,13 @@ export class PlaywrightMcpStdio {
   private async start(): Promise<void> {
     this.stop()
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(this.command, this.args, { stdio: ['pipe', 'pipe', 'pipe'] })
+      // Windows 下 npx 实为 npx.cmd，Node 强制 .cmd 必须经 shell 启动；含空格的参数需补引号防止被 shell 拆散。
+      const useShell = process.platform === 'win32'
+      const command = useShell && !/\.[a-zA-Z]+$/.test(this.command) ? this.command + '.cmd' : this.command
+      const args = useShell
+        ? this.args.map((item) => (/[\s"]/.test(item) ? '"' + item.replace(/"/g, '\\"') + '"' : item))
+        : this.args
+      const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], shell: useShell })
       this.child = child
       this.buffer = ''
       this.stderrTail = ''
@@ -131,8 +145,12 @@ export class PlaywrightMcpStdio {
       child.stderr?.setEncoding('utf8')
       child.stderr?.on('data', (chunk: string) => { this.stderrTail = (this.stderrTail + chunk).slice(-800) })
       child.on('exit', () => { this.failAll(new Error('浏览器 MCP 进程已退出：' + this.stderrTail.trim().split('\n').pop())) })
-      // 握手超时：避免 npx 首次下载或浏览器启动卡死拖住调用方。
-      const bootTimer = setTimeout(() => { reject(new Error('浏览器 MCP 启动超时：' + this.stderrTail.trim().split('\n').pop())) }, Math.max(this.timeoutMs, 60000))
+      // spawn 失败（如 ENOENT）只触发 error 不触发 exit；不接住会变成未处理异常击穿整个 Host 进程。
+      child.on('error', (error: Error) => {
+        this.failAll(new Error('浏览器 MCP 进程启动失败：' + (error?.message ?? String(error))))
+      })
+      // 握手超时：放宽到 120 秒，覆盖 npx 首次下载 @playwright/mcp 包的耗时。
+      const bootTimer = setTimeout(() => { reject(new Error('浏览器 MCP 启动超时：' + this.stderrTail.trim().split('\n').pop())) }, Math.max(this.timeoutMs, 120000))
       void this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dsh-devforge', version: '0.5.0' } })
         .then(async () => {
           this.notify('notifications/initialized', {})

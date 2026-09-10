@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { buildPlaywrightArgs, normalizeMcpCallResult, PLAYWRIGHT_MCP_PACKAGE } from '../src/browser/mcp-stdio.ts'
+import { buildPlaywrightArgs, normalizeMcpCallResult, PlaywrightMcpStdio, PLAYWRIGHT_MCP_PACKAGE } from '../src/browser/mcp-stdio.ts'
 import { isSafeHttpUrl } from '../src/browser/protocol.ts'
 import { buildElementTargetArgs, normalizeBrowserConfig, parseBrowserTabs, parseScopedElementRef, pickCurrentTab, scopeSnapshotRefs } from '../src/browser/service.ts'
 
@@ -84,4 +84,12 @@ test('buildElementTargetArgs 使用新版 Playwright MCP 的 target 参数', () 
     element: '快照元素 f11e180',
     target: 'f11e180',
   })
+})
+
+test('PlaywrightMcpStdio 启动失败返回拒绝且不产生未处理异常（Windows ENOENT 回归）', async () => {
+  const client = new PlaywrightMcpStdio('definitely-not-exist-cmd-xyz', ['--version'], 5000)
+  await assert.rejects(() => client.ensureReady(), /浏览器 MCP/)
+  assert.equal(client.running, false)
+  // 失败后重复调用应再次走启动流程并同样拒绝，不能卡死或抛未处理异常。
+  await assert.rejects(() => client.ensureReady(), /浏览器 MCP/)
 })
