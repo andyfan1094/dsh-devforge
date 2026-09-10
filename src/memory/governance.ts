@@ -127,6 +127,8 @@ function parseEpisode(data: unknown, id: string): MemoryEpisode | undefined {
     injectedMemoryIds: Array.isArray(value.injectedMemoryIds) ? value.injectedMemoryIds.filter((item): item is string => typeof item === 'string') : [],
     usedMemoryIds: Array.isArray(value.usedMemoryIds) ? value.usedMemoryIds.filter((item): item is string => typeof item === 'string') : [],
     createdAt: value.createdAt,
+    // 技术兜底标记必须存活往返：读回时丢掉它，面板就分不清「任务失败」和「复盘缺口」。
+    ...(value.reflectionGap === true ? { reflectionGap: true as const } : {}),
   }
 }
 

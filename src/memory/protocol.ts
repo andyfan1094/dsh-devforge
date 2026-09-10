@@ -353,6 +353,13 @@ export interface MemoryEpisode {
   injectedMemoryIds: string[]
   usedMemoryIds: string[]
   createdAt: number
+  /**
+   * 本轮的复盘是技术兜底（提炼模型不可用，只按轮次留痕），不是模型精炼结果。
+   *
+   * 它标记的是「复盘缺口」，与 `outcome`（任务本身的成败）是两个维度：
+   * 提炼失败不能给已经干成的任务扣失败帽子，面板必须能分开看这两件事。
+   */
+  reflectionGap?: true
 }
 
 /** 一次召回审计；query 只保存哈希与短预览，命中保存分层分数和降级原因。 */

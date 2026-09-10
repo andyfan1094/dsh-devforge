@@ -174,13 +174,36 @@ describe('会话记忆沉淀', () => {
   test('提取最近一轮窗口', () => {
     const events = [
       { type: 'turn/end', data: { turn: 1 } },
-      { type: 'user/message', data: { content: [{ type: 'text', text: '喜欢紧凑排版' }] } },
+      { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '喜欢紧凑排版' }] } },
       { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的，已记住并按紧凑密度实现，这里有足够长的答复内容以便通过窗口过滤。' }] } },
       { type: 'turn/end', data: { turn: 2 } },
     ]
     const window = extractLastTurnWindow(events)
     assert.ok(window.userText.includes('紧凑排版'))
     assert.ok(window.assistantText.includes('紧凑密度'))
+  })
+  test('窗口排除系统提示注入，同时保留后台通知（真实提问不能被挤出）', () => {
+    // 生产实况：宿主的 skill 目录、常驻指令也走 user/message，且排在真实提问之后。
+    // 旧口径照单全收，尾部截断后 goal 全是系统文本、真实提问反而丢失。
+    const injections = ['skill-catalog', 'agent-instructions'].map((kind) => ({
+      type: 'user/message',
+      data: { source: { kind }, content: [{ type: 'text', text: '<system-reminder>' + '技能目录条目…'.repeat(400) + '</system-reminder>' }] },
+    }))
+    const events = [
+      { type: 'turn/end', data: { turn: 1 } },
+      { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你拉取我天工造梦的最新代码' }] } },
+      ...injections,
+      // plugin 来源是后台任务通知：干活的轮次正是这种形状，必须保留（不能一刀切误杀）。
+      { type: 'user/message', data: { source: { kind: 'plugin', plugin: 'tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed].' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '已拉取完成并核对远端一致。' }] } },
+      { type: 'turn/end', data: { turn: 2 } },
+    ]
+    const window = extractLastTurnWindow(events)
+    assert.ok(!window.userText.includes('system-reminder'), '系统提醒不得被当成用户提问')
+    assert.ok(!window.userText.includes('技能目录条目'), 'skill 目录不得混入用户窗口')
+    assert.ok(window.userText.includes('你拉取我天工造梦的最新代码'), '真实提问必须保留')
+    assert.ok(window.userText.includes('background job'), '后台通知必须保留，否则通知轮次无法沉淀')
+    assert.ok(window.assistantText.includes('已拉取完成'))
   })
   test('提炼去重入库', async () => {
     const stored: string[] = []
@@ -301,7 +324,7 @@ describe('会话记忆沉淀', () => {
     try {
       const rag = fakeRag({ listDocs: () => [], listChunks: () => [] })
       const session = { id: 's6', events: [
-        { type: 'user/message', data: { content: [{ type: 'text', text: '跑一遍部署检查' }] } },
+        { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '跑一遍部署检查' }] } },
         { type: 'tool/call', data: { callId: 'c1', name: 'bash' } },
         { type: 'tool/result', data: { message: { source: { callId: 'c1' } }, content: [{ type: 'text', text: '检查脚本输出：全部通过' }] } },
         { type: 'assistant/message', data: { turn: 1, content: [{ type: 'text', text: '部署检查已经跑完：端口、依赖版本、磁盘余量与备份任务四项全部通过，没有发现阻塞项，可以进入下一步交付流程。本句是测试构造的长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
@@ -311,16 +334,45 @@ describe('会话记忆沉淀', () => {
       const context = { on: (_event: string, listener: (session: unknown, event: unknown) => void) => { void listener(session, { type: 'turn/end', data: { turn: 1 } }); return () => { /* 卸载 */ } } }
       assert.equal(governance.listEpisodes(10).length, 0)
       sediment.attach(context)
-      // 模型连续失败三次（初次 + 两次重试）后仍必须留下复盘记录，否则面板上「任务复盘」永远空白；
-      // 该记录按失败计：复盘缺口必须显式可见，不能伪装成成功。
+      // 模型连续失败三次（初次 + 两次重试）后仍必须留下复盘记录，否则面板上「任务复盘」永远空白。
       for (let attempt = 0; attempt < 60 && governance.listEpisodes(10).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25))
       const episodes = governance.listEpisodes(10)
       assert.equal(episodes.length, 1, '模型失败也必须落一条待复盘记录')
-      assert.equal(episodes[0]?.outcome, 'failure')
+      // 生产实况：这一轮工具全部成功、轮次正常结束，任务本身干成了。
+      // 提炼失败只能记成「复盘缺口」，不能反过来给它扣失败帽子（旧口径 17/17 全误标）。
+      assert.equal(episodes[0]?.outcome, 'success', '任务成败只由自身证据决定')
+      assert.equal(episodes[0]?.reflectionGap, true, '复盘缺口必须显式可见，不能伪装成模型精炼结果')
       assert.equal(episodes[0]?.goal, '跑一遍部署检查')
       assert.deepEqual(episodes[0]?.toolNames, ['bash'], '工具证据必须保留，复盘才可核对')
       assert.equal(episodes[0]?.toolSuccesses, 1)
       assert.equal(governance.listPendingWindows().length, 1, '待处理窗口保留：模型恢复后仍要补提炼，不能丢记忆')
+      sediment.dispose()
+    } finally {
+      closeDb(join(dir, 'store.db'))
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  test('技术复盘的失败判定仍须生效：工具失败多于成功时记失败', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sed-toolfail-'))
+    const ragStore = new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db'))
+    const native = new NativeMemoryStore(ragStore)
+    const governance = new MemoryGovernanceService(ragStore, native)
+    try {
+      const rag = fakeRag({ listDocs: () => [], listChunks: () => [] })
+      const session = { id: 's7', events: [
+        { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '部署到生产' }] } },
+        { type: 'tool/call', data: { callId: 'c1', name: 'bash' } },
+        { type: 'tool/result', data: { message: { source: { callId: 'c1' } }, content: [{ type: 'text', text: '构建失败：依赖缺失' }], error: { message: '构建失败' } } },
+        { type: 'assistant/message', data: { turn: 1, content: [{ type: 'text', text: '这次部署没有成功：构建阶段因为依赖缺失中断，我没有继续推送，需要先补齐依赖再重跑。本句是测试构造的长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
+        { type: 'turn/end', data: { turn: 1 } },
+      ] }
+      const sediment = new MemorySedimentService(rag, () => 'kb1', async () => { throw new Error('模型调用失败') }, () => SETTINGS, native, undefined, { governance, scopeOf: () => ({ kind: 'global' }), delayMs: 5 })
+      const context = { on: (_event: string, listener: (session: unknown, event: unknown) => void) => { void listener(session, { type: 'turn/end', data: { turn: 1 } }); return () => { /* 卸载 */ } } }
+      sediment.attach(context)
+      for (let attempt = 0; attempt < 60 && governance.listEpisodes(10).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25))
+      const episodes = governance.listEpisodes(10)
+      assert.equal(episodes[0]?.outcome, 'failure', '工具确实失败时仍必须记失败，修复不能把真失败也放过')
+      assert.equal(episodes[0]?.toolFailures, 1)
       sediment.dispose()
     } finally {
       closeDb(join(dir, 'store.db'))

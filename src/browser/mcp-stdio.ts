@@ -210,7 +210,17 @@ export class PlaywrightMcpStdio {
     const id = this.nextId++
     const message = JSON.stringify({ jsonrpc: '2.0', id, method, params })
     await new Promise<void>((resolve, reject) => {
-      stdin.write(message + '\n', (error) => { error === null ? resolve() : reject(error) })
+      // 子进程启动失败（ENOENT）与首次写入是异步竞态：管道可能已经关闭，
+      // 此时 write 会同步抛 EPIPE。裸 EPIPE 的消息里没有「浏览器 MCP」，
+      // 调用方看不出是谁坏了，这里统一包成带前缀的可读拒绝。
+      try {
+        stdin.write(message + '\n', (error) => {
+          if (error === null || error === undefined) { resolve(); return }
+          reject(new Error('浏览器 MCP 进程不可用：' + error.message))
+        })
+      } catch (error) {
+        reject(new Error('浏览器 MCP 进程不可用：' + (error instanceof Error ? error.message : String(error))))
+      }
     })
     return await new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {

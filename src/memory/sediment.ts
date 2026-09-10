@@ -70,7 +70,20 @@ function lastTurnBounds(events: readonly unknown[]): { start: number; end: numbe
   return { start, end }
 }
 
-/** 提取最近一轮用户/助手文本；插件记忆快照必须排除，其他后台通知保留。 */
+/** 宿主系统提示注入的来源：它们被投递成 user/message，但不是用户说的话。
+ *  进窗口只会把系统文本当成用户提问，并借尾部截断把真实提问挤出
+ *  （生产实况：skill-catalog 171 条 + agent-instructions 15 条）。
+ *  这里用精确黑名单而非「只收 user」白名单：后台通知（plugin）、子代理回报、
+ *  目标触发等轮次同样要能沉淀——干活的轮次正是那种形状，不能一刀切误杀。 */
+const INJECTED_USER_MESSAGE_SOURCES = new Set(['skill-catalog', 'agent-instructions'])
+
+function isUserAuthoredMessage(data: unknown): boolean {
+  const source = (data as { source?: { kind?: unknown } } | undefined)?.source
+  const kind = source !== null && typeof source === 'object' ? source.kind : undefined
+  return kind === undefined || !INJECTED_USER_MESSAGE_SOURCES.has(String(kind))
+}
+
+/** 提取最近一轮用户/助手文本；插件记忆快照与系统提示注入必须排除，后台通知保留。 */
 export function extractLastTurnWindow(events: readonly unknown[], maxChars = 9000): { userText: string; assistantText: string } {
   const bounds = lastTurnBounds(events)
   if (bounds === undefined) return { userText: '', assistantText: '' }
@@ -81,8 +94,10 @@ export function extractLastTurnWindow(events: readonly unknown[], maxChars = 900
     if (isMemorySnapshotSource(event.data)) continue
     const text = contentText(event.data)
     if (text === '') continue
-    if (event.type === 'user/message') userParts.push(text)
-    else if (event.type === 'assistant/message') assistantParts.push(text)
+    if (event.type === 'user/message') {
+      if (!isUserAuthoredMessage(event.data)) continue
+      userParts.push(text)
+    } else if (event.type === 'assistant/message') assistantParts.push(text)
   }
   return { userText: userParts.join('\n').slice(-maxChars), assistantText: assistantParts.join('\n').slice(-maxChars) }
 }
@@ -460,10 +475,9 @@ export class MemorySedimentService {
   private recordTechnicalEpisodes(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number, batchFailed: boolean): void {
     if (this.governance === undefined) return
     for (const window of windows) {
-      // 完成轮次（含提炼失败兜底）按工具成败判定结果，不给整轮扣失败帽子。
+      // 任务成败只由这一轮自己的证据决定：轮次未完成，或工具失败多于成功。
       const toolFailed = window.toolFailures > window.toolSuccesses
-      // 整批提炼失败时全部轮次记失败：复盘没提炼出来本身就是一次复盘缺口，面板必须能一眼看出。
-      const outcome: 'success' | 'failure' = batchFailed || window.completed !== true || toolFailed ? 'failure' : 'success'
+      const outcome: 'success' | 'failure' = window.completed !== true || toolFailed ? 'failure' : 'success'
       this.governance.recordEpisode({
         id: sessionId + ':' + window.turn,
         sessionId,
@@ -480,6 +494,8 @@ export class MemorySedimentService {
         injectedMemoryIds: [],
         usedMemoryIds: [],
         createdAt: Date.now(),
+        // 提炼整批失败是「复盘缺口」，如实标记即可；它不能反过来给已干成的任务扣失败帽子。
+        ...(batchFailed ? { reflectionGap: true as const } : {}),
       })
     }
     void watermarkTurn
