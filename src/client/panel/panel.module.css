@@ -674,7 +674,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .memoryHeader, .panelHeading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
 .memoryHeader { align-items: flex-start; }
 .workspaceTitle { margin: 0 0 4px; font-size: 18px; }
-.memoryStats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--dv-grid-gap); }
+.memoryStats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--dv-grid-gap); }
 .memoryStat { display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: var(--dv-card-pad); background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: var(--dv-radius-card, 8px); }
 .memoryStat span, .memoryStat small { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; }
 .memoryStat strong { font-size: 19px; font-variant-numeric: tabular-nums; }
@@ -732,8 +732,38 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .categoryBadge { padding: 1px 6px; color: #b45309; background: color-mix(in srgb, #ea580c 12%, transparent); border-radius: 5px; font-size: 10.5px; white-space: nowrap; }
 /* 会话沉淀表 4 列变体：内容 / 切块 / 时间 / 操作。 */
 .memoryTable[data-cols='4'] .memoryTableHead, .memoryTable[data-cols='4'] .memoryTableRow { grid-template-columns: minmax(0, 1fr) 40px 74px 48px; }
-@media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 620px) { .memoryStats, .compactFields { grid-template-columns: minmax(0, 1fr); } .memoryHeader, .panelHeading { align-items: flex-start; flex-direction: column; } .inlineForm { align-items: stretch; flex-direction: column; } }
+/* 主存储表 5 列变体：内容 / 分类 / 来源·重要度 / 更新时间 / 操作；行可点击展开详情。 */
+.memoryTable[data-cols='5'] .memoryTableHead, .memoryTable[data-cols='5'] .memoryTableRow { grid-template-columns: minmax(0, 1fr) 56px 108px 84px 46px; }
+.memoryTable[data-cols='5'] .memoryTableRow { cursor: pointer; }
+.memoryTable[data-cols='5'] .memoryTableRow:hover { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 4%, transparent); }
+.memoryTable[data-cols='5'] .memoryTableRow[data-selected] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 7%, transparent); }
+
+/* 记忆工作台页签栏：下划线式页签，紧凑密度。 */
+.tabBar { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.tabItem { padding: 8px 16px; font: inherit; font-size: 13px; color: var(--dsw-alias-label-secondary, #667085); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.tabItem:hover { color: var(--dsw-alias-label-primary, #1f2329); }
+.tabItem[data-active] { color: var(--dsw-alias-state-business-primary, #2563eb); border-bottom-color: var(--dsw-alias-state-business-primary, #2563eb); font-weight: 600; }
+
+/* 主存储工具栏：搜索 + 分类筛选 + 图谱过滤 chip + 手动新增，一行收纳。 */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.toolbar .input { flex: 1; min-width: 150px; width: auto; }
+.toolbar .memoryChip { display: inline-flex; align-items: center; gap: 2px; }
+.chipClear { padding: 0 1px; font: inherit; font-size: 12px; line-height: 1; color: inherit; background: none; border: none; cursor: pointer; }
+.chipClear:hover { color: #fff; }
+
+/* 分页条：右对齐，等宽数字。 */
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* 行内详情：主色左边条 + 浅色底，承接图谱选中与表格行展开。 */
+.rowDetail { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; font-size: 12px; background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 4%, var(--dsw-alias-bg-layer-1, #fff)); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 18%, transparent); border-left: 3px solid var(--dsw-alias-state-business-primary, #2563eb); border-radius: var(--dv-radius-card, 8px); }
+.rowDetailContent { line-height: 1.65; color: var(--dsw-alias-label-primary, #1f2329); white-space: pre-wrap; word-break: break-word; }
+
+/* 页签内容网格：策略页 3:2（左表单右状态），治理页治理卡全宽 + 右侧运维列。 */
+.policyGrid, .opsGrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
+.govGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
+
+@media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid, .policyGrid, .opsGrid, .govGrid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 620px) { .memoryStats, .compactFields { grid-template-columns: minmax(0, 1fr); } .memoryHeader, .panelHeading { align-items: flex-start; flex-direction: column; } .inlineForm { align-items: stretch; flex-direction: column; } .toolbar { align-items: stretch; flex-direction: column; } .toolbar .input { width: 100%; } }
 
 .endpointLayout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; min-width: 0; }
 .endpointList { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 4px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }

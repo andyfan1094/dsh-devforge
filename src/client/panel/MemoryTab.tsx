@@ -1,6 +1,7 @@
 /**
- * 记忆工作台：状态、自动化设置、知识图谱、内置长期记忆主存储列表，以及迁移/搜索入口。
+ * 记忆工作台：页签化布局（记忆库 / 自动策略 / 治理运维）。
  * 数据职责：全部通过 DevforgeApi 访问同源路由；图谱与列表互联动（点节点看详情/点关键词过滤）。
+ * 布局职责：主存储列表带工具栏（本地过滤 + 分类筛选 + 手动新增）与分页；图谱与沉淀原文库折叠收纳。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
@@ -12,22 +13,20 @@ import { MemoryGraphView } from './MemoryGraphView.tsx'
 import { MemoryGovernance } from './MemoryGovernance.tsx'
 
 type Notice = { kind: 'success' | 'error'; text: string }
+type MemoryTabId = 'library' | 'policy' | 'ops'
 
 /** 分类中文展示名（与后端 graph.ts 保持一致）。 */
 const CATEGORY_LABELS: Record<string, string> = { preference: '偏好', decision: '决策', fact: '事实', insight: '洞察', context: '上下文', general: '通用' }
+const CATEGORY_ORDER = ['preference', 'decision', 'fact', 'insight', 'context', 'general']
+
+/** 主存储列表每页条数：紧凑表格 20 条一页，避免 200+ 条全量平铺。 */
+const PAGE_SIZE = 20
 
 function memoryTitle(doc: RagDocument): string {
   return doc.fileName.replace(/^mem-/, '').replace(/\.md$/, '')
 }
 
-function mirrorLabel(status: MemoryStatus | null): string {
-  if (status === null) return '读取中'
-  const mnemon = status.mirror.mnemonRootExists ? 'Mnemon 可用' : 'Mnemon 未发现'
-  const hindsight = status.mirror.hindsightConfigured ? 'Hindsight ' + status.mirror.hindsightServerMode : 'Hindsight 未配置'
-  return mnemon + ' · ' + hindsight
-}
-
-/** 紧凑时间显示：MM-DD HH:mm（等宽数字，年跨度过大时前端提示略）。 */
+/** 紧凑时间显示：MM-DD HH:mm（等宽数字）。 */
 function fmtTime(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return '—'
   const d = new Date(ts)
@@ -35,7 +34,7 @@ function fmtTime(ts: number): string {
   return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
 }
 
-/** 记忆工作台页签。所有数据请求统一通过 DevforgeApi。 */
+/** 记忆工作台。 */
 export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [status, setStatus] = useState<MemoryStatus | null>(null)
   const [settings, setSettings] = useState<MemorySettings | null>(null)
@@ -46,9 +45,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [activeTag, setActiveTag] = useState('')
   const [selectedEntryId, setSelectedEntryId] = useState('')
   const [projectPath, setProjectPath] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<NativeMemoryEntry[]>([])
-  const [searching, setSearching] = useState(false)
   const [draftContent, setDraftContent] = useState('')
   const [migrationStatus, setMigrationStatus] = useState<{ count: number; migrated: number; lastUpdatedAt: number } | null>(null)
   const [report, setReport] = useState('')
@@ -60,6 +56,13 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [habitsText, setHabitsText] = useState('')
   const [dream, setDream] = useState<MemoryDreamStatus | null>(null)
   const [catalog, setCatalog] = useState<BrainRouterCatalogProvider[]>([])
+  // 布局状态：页签、工具栏过滤、分页、折叠面板。
+  const [tab, setTab] = useState<MemoryTabId>('library')
+  const [filterQuery, setFilterQuery] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
+  const [page, setPage] = useState(1)
+  const [graphOpen, setGraphOpen] = useState(false)
+  const [docsOpen, setDocsOpen] = useState(false)
   const mounted = useRef(true)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -139,7 +142,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   /** 删除内置长期记忆：清掉可能指向它的选中态后整体刷新（图谱/列表联动）。 */
   const removeNative = (id: string): Promise<void> => run(async () => {
     await api.deleteNativeMemory(id)
-    setSearchResults((current) => current.filter((entry) => entry.id !== id))
     if (selectedEntryId === id) setSelectedEntryId('')
     await reload()
     if (mounted.current) setNotice({ kind: 'success', text: '内置记忆已删除。' })
@@ -152,17 +154,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     setReport('项目索引 · 扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 删除 ' + result.removed + ' · 跳过 ' + result.skipped + (result.errors.length > 0 ? ' · 错误 ' + result.errors.length : ''))
     await reload()
     if (mounted.current) setNotice({ kind: 'success', text: '项目索引完成。' })
-  })
-
-  /** 关键词搜索内置长期记忆（空关键词提示先输入）。 */
-  const runSearch = (): Promise<void> => run(async () => {
-    const query = searchQuery.trim()
-    if (query === '') throw new Error('请输入搜索关键词。')
-    setSearching(true)
-    try {
-      const entries = await api.searchNativeMemories(query)
-      if (mounted.current) { setSearchResults(entries); setNotice({ kind: 'success', text: '搜索完成，命中 ' + entries.length + ' 条。' }) }
-    } finally { if (mounted.current) setSearching(false) }
   })
 
   /** 手动补录一条长期记忆并清空输入。 */
@@ -215,81 +206,154 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
 
   const recentDocs = docs.slice().reverse().slice(0, 30)
   const sourceReady = status?.memoryKbId !== '' && status?.memoryKbId !== undefined
-  const selectedEntry = selectedEntryId === '' ? undefined : nativeEntries.find((entry) => entry.id === selectedEntryId)
 
   // 图谱聚焦：优先选中条目，其次激活关键词；列表过滤直接复用图谱边（entry→term），不重复抽关键词
   const focusId = selectedEntryId !== '' ? 'entry:' + selectedEntryId : activeTag !== '' ? 'term:' + activeTag : ''
-  const visibleNative = useMemo(() => {
-    if (activeTag === '') return nativeEntries
-    if (graph === null) return nativeEntries
+  const tagFilteredIds = useMemo(() => {
+    if (activeTag === '' || graph === null) return undefined
     const ids = new Set<string>()
     for (const edge of graph.edges) {
       if (edge.target === 'term:' + activeTag && edge.source.startsWith('entry:')) ids.add(edge.source.slice('entry:'.length))
     }
-    return nativeEntries.filter((entry) => ids.has(entry.id))
-  }, [activeTag, graph, nativeEntries])
+    return ids
+  }, [activeTag, graph])
+
+  /** 工具栏过滤：本地即时过滤（关键词 + 分类），叠加图谱关键词 chip 过滤。 */
+  const filtered = useMemo(() => {
+    const q = filterQuery.trim().toLocaleLowerCase()
+    return nativeEntries.filter((entry) => {
+      if (tagFilteredIds !== undefined && !tagFilteredIds.has(entry.id)) return false
+      if (filterCategory !== '' && entry.category !== filterCategory) return false
+      if (q === '') return true
+      return entry.content.toLocaleLowerCase().includes(q) || entry.tags.some((tag) => tag.toLocaleLowerCase().includes(q))
+    })
+  }, [nativeEntries, tagFilteredIds, filterQuery, filterCategory])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const pageClamped = Math.min(page, totalPages)
+  const pageEntries = filtered.slice((pageClamped - 1) * PAGE_SIZE, pageClamped * PAGE_SIZE)
+  const selectedEntry = selectedEntryId === '' ? undefined : nativeEntries.find((entry) => entry.id === selectedEntryId)
 
   const toggleTag = (tag: string): void => {
     setActiveTag((current) => (current === tag ? '' : tag))
+    setPage(1)
   }
+
+  const onFilterChange = (query: string, category: string): void => {
+    setFilterQuery(query)
+    setFilterCategory(category)
+    setPage(1)
+  }
+
+  /** 统计卡副行：只留开关态与最近时间，长状态串收敛进 title 悬停查看。 */
+  const sedimentTitle = status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) + (status.sedimentLastOutcome !== '' ? ' · 判定 ' + status.sedimentLastOutcome : '') + (status.sedimentLastError !== '' ? ' · 最近失败：' + status.sedimentLastError : '') : '本版启用后尚未沉淀'
+  const injectTitle = status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : '尚未注入过；每轮对话第一步检索命中才注入'
+  const dreamTitle = status !== null && status.lastDreamSummary !== '' ? '最近做梦：' + status.lastDreamSummary : '尚未做梦；开启后按静默窗口自动整理'
 
   return (
     <section className={css['memoryWorkspace']}>
       <header className={css['memoryHeader']}>
-        <div><h2 className={css['workspaceTitle']}>记忆工作台</h2><p className={css['sectionHint']}>内置长期记忆主存储 + 会话沉淀库统一管理；图谱可视化、搜索、迁移与治理都在这里。</p></div>
-        <button type="button" className={css['ghostButton']} disabled={busy || loading} onClick={() => { void reload() }}>{loading ? '读取中…' : '刷新状态'}</button>
+        <div><h2 className={css['workspaceTitle']}>记忆工作台</h2><p className={css['sectionHint']}>内置长期记忆主存储 + 会话沉淀库统一管理；图谱可视化、迁移与治理都在这里。</p></div>
+        <span className={css['inlineActions']}><span className={css['badge']} data-kind="success">{nativeEntries.length} 条活跃记忆</span><button type="button" className={css['ghostButton']} disabled={busy || loading} onClick={() => { void reload() }}>{loading ? '读取中…' : '刷新状态'}</button></span>
       </header>
 
       {notice !== null && <div className={css['banner']} data-kind={notice.kind}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
 
       <div className={css['memoryStats']}>
-        <div className={css['memoryStat']}><span>会话沉淀库</span><strong>{status?.memoryCount ?? '—'}</strong><small>内置长期记忆活跃条数 · 主存储</small></div>
-        <div className={css['memoryStat']}><span>内置长期记忆</span><strong>{nativeEntries.length || (status === null ? '—' : 0)}</strong><small>主存储 · 手动/迁移/沉淀</small></div>
-        {/* 沉淀/注入主数均为持久化累计口径（跨重启，与沉淀库总量一致）；本次运行增量与最近时间入副行，口径不再自相矛盾。 */}
-        <div className={css['memoryStat']} title={status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) : (status !== null && status.sedimentLastError !== '' ? '最近失败：' + status.sedimentLastError : '本版启用后尚未沉淀')}>
-          <span>自动沉淀</span>
-          <strong>{status?.sedimentCount ?? '—'} 条</strong>
-          <small>{settings?.autoSediment ? '已开启' : '已关闭'} · 本次运行 +{status?.sedimentRunCount ?? 0}{status !== null && status.lastSedimentAt > 0 ? ' · 最近 ' + fmtTime(status.lastSedimentAt) : ''}{status !== null && status.sedimentFailureCount > 0 ? ' · 失败 ' + status.sedimentFailureCount : ''}{status !== null && status.sedimentLastError !== '' ? ' · ' + status.sedimentLastError : ''}{status !== null && status.sedimentLastOutcome !== '' ? ' · 判定 ' + status.sedimentLastOutcome : ''}</small>
-        </div>
-        <div className={css['memoryStat']} title={status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : (status !== null && status.lastInjectAt > 0 ? '' : '尚未注入过；每轮对话第一步检索命中才注入')}>
-          <span>主动注入</span>
-          <strong>{status?.injectCount ?? '—'} 次</strong>
-          <small>{settings?.autoInject ? '已开启' : '已关闭'} · 本次运行 +{status?.injectRunCount ?? 0}{status !== null && status.lastInjectAt > 0 ? ' · 最近 ' + fmtTime(status.lastInjectAt) : ''}{status !== null && status.injectNoHit > 0 ? ' · 无命中 ' + status.injectNoHit : ''}{!sourceReady ? ' · 数据源待初始化' : ''}</small>
-        </div>
-        <div className={css['memoryStat']} title={status !== null && status.lastDreamSummary !== '' ? '最近做梦：' + status.lastDreamSummary : '尚未做梦；开启后按静默窗口自动整理'}>
-          <span>做梦整理</span>
-          <strong>{status?.dreamTotal ?? '—'} 次</strong>
-          <small>{settings?.dreamEnabled ? '已开启' : '已关闭'}{status !== null && status.lastDreamAt > 0 ? ' · 最近 ' + fmtTime(status.lastDreamAt) : ''}{status !== null && status.lastDreamStatus !== '' ? ' · ' + status.lastDreamStatus : ''}</small>
-        </div>
+        <div className={css['memoryStat']}><span>内置长期记忆</span><strong>{nativeEntries.length || (status === null ? '—' : 0)}</strong><small>主存储活跃条数</small></div>
+        <div className={css['memoryStat']}><span>会话沉淀库</span><strong>{status?.memoryCount ?? '—'}</strong><small>RAG 沉淀文档数</small></div>
+        <div className={css['memoryStat']} title={sedimentTitle}><span>自动沉淀</span><strong>{status?.sedimentCount ?? '—'} 条</strong><small>{settings?.autoSediment ? '已开启' : '已关闭'} · 最近 {status !== null && status.lastSedimentAt > 0 ? fmtTime(status.lastSedimentAt) : '—'}</small></div>
+        <div className={css['memoryStat']} title={injectTitle}><span>主动注入</span><strong>{status?.injectCount ?? '—'} 次</strong><small>{settings?.autoInject ? '已开启' : '已关闭'} · 最近 {status !== null && status.lastInjectAt > 0 ? fmtTime(status.lastInjectAt) : '—'}</small></div>
+        <div className={css['memoryStat']} title={dreamTitle}><span>做梦整理</span><strong>{status?.dreamTotal ?? '—'} 次</strong><small>{settings?.dreamEnabled ? '自动运行' : '已关闭'}{dream?.running === true ? ' · 整理中…' : ''}</small></div>
       </div>
 
-      {/* 单一两列网格：左列图谱→主存储（点图谱条目即过滤下方列表，联动相邻）；右列操作与库表面板。
-         取代旧的上下两套网格——两套网格左右列高度各自独立，内容错位、中部大片空白。 */}
-      <div className={css['memoryGrid']}>
+      <nav className={css['tabBar']}>
+        <button type="button" className={css['tabItem']} data-active={tab === 'library' ? '' : undefined} onClick={() => setTab('library')}>记忆库</button>
+        <button type="button" className={css['tabItem']} data-active={tab === 'policy' ? '' : undefined} onClick={() => setTab('policy')}>自动策略</button>
+        <button type="button" className={css['tabItem']} data-active={tab === 'ops' ? '' : undefined} onClick={() => setTab('ops')}>治理与运维</button>
+      </nav>
+
+      {tab === 'library' && <div className={css['memoryStack']}>
+        <section className={css['memoryPanel']}>
+          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置长期记忆（主存储）</h3><p className={css['sectionHint']}>点击行查看详情与标签过滤；工具栏支持即时搜索、分类筛选与手动新增。</p></div><span className={css['badge']}>{filtered.length} 条{tagFilteredIds !== undefined ? '（已过滤）' : ''}</span></div>
+          <div className={css['toolbar']}>
+            <input className={css['input']} value={filterQuery} placeholder="搜索内容或标签…" onChange={(e) => onFilterChange(e.target.value, filterCategory)} />
+            <select className={css['input']} value={filterCategory} onChange={(e) => onFilterChange(filterQuery, e.target.value)}>
+              <option value="">全部分类</option>
+              {CATEGORY_ORDER.map((cat) => <option key={cat} value={cat}>{CATEGORY_LABELS[cat]}</option>)}
+            </select>
+            {activeTag !== '' && <span className={css['memoryChip']} data-active="">#{activeTag}<button type="button" className={css['chipClear']} onClick={() => toggleTag(activeTag)}>×</button></span>}
+            <span style={{ flex: 1 }} />
+            <input className={css['input']} value={draftContent} placeholder="手动补录一条长期记忆…" onChange={(e) => setDraftContent(e.target.value)} />
+            <button type="button" className={css['primaryButton']} disabled={busy || draftContent.trim() === ''} onClick={() => { void saveNative() }}>新增</button>
+          </div>
+          {softError !== '' && <p className={css['operationReport']}>{softError}</p>}
+          {filtered.length === 0 ? <div className={css['empty']}>{nativeEntries.length === 0 ? '暂无内置长期记忆。正常使用几轮会话会自动沉淀，或在上方工具栏手动补录。' : '当前筛选下没有条目。'}</div> : <div className={css['memoryTable']} data-cols="5">
+            <div className={css['memoryTableHead']}><span>内容</span><span>分类</span><span>来源 · 重要度</span><span>更新时间</span><span>操作</span></div>
+            {pageEntries.map((entry) => <div key={entry.id} className={css['memoryTableRow']} data-selected={selectedEntryId === entry.id ? '' : undefined} onClick={() => setSelectedEntryId(selectedEntryId === entry.id ? '' : entry.id)}>
+              <span className={css['memoryDocTitle']} title={entry.content}>{entry.content}</span>
+              <span><span className={css['categoryBadge']}>{CATEGORY_LABELS[entry.category] ?? entry.category}</span></span>
+              <span className={css['nativeTime']}>{entry.source} · {entry.importance}</span>
+              <span className={css['nativeTime']}>{fmtTime(entry.updatedAt)}</span>
+              <span className={css['inlineActions']} onClick={(e) => e.stopPropagation()}><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(entry.id) }}>删除</button></span>
+            </div>)}
+          </div>}
+          {selectedEntry !== undefined && <div className={css['rowDetail']}>
+            <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[selectedEntry.category] ?? selectedEntry.category}</span>{selectedEntry.tags.map((tag) => <button key={tag} type="button" className={css['memoryChip']} data-active={activeTag === tag ? '' : undefined} onClick={() => toggleTag(tag)}>{tag}</button>)}</div>
+            <div className={css['rowDetailContent']}>{selectedEntry.content}</div>
+            <div className={css['nativeRowMain']}><span className={css['nativeTime']}>{fmtTime(selectedEntry.updatedAt)} · {selectedEntry.source} · 重要度 {selectedEntry.importance} · 信任 {selectedEntry.trust}</span><span style={{ flex: 1 }} /><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(selectedEntry.id) }}>删除</button><button type="button" className={css['ghostButton']} onClick={() => setSelectedEntryId('')}>关闭</button></div>
+          </div>}
+          {filtered.length > PAGE_SIZE && <div className={css['pagination']}><button type="button" className={css['ghostButton']} disabled={pageClamped <= 1} onClick={() => setPage(pageClamped - 1)}>上一页</button><span>第 {pageClamped} / {totalPages} 页 · 共 {filtered.length} 条</span><button type="button" className={css['ghostButton']} disabled={pageClamped >= totalPages} onClick={() => setPage(pageClamped + 1)}>下一页</button></div>}
+        </section>
+
+        <section className={css['memoryPanel']}>
+          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>知识图谱</h3><p className={css['sectionHint']}>由内置长期记忆现算：条目-关键词-分类关联；点条目看详情，点关键词过滤列表。</p></div><span className={css['inlineActions']}><span className={css['badge']}>{graph === null ? '—' : graph.nodes.length + ' 节点 · ' + graph.edges.length + ' 边'}</span><button type="button" className={css['ghostButton']} onClick={() => setGraphOpen((open) => !open)}>{graphOpen ? '收起' : '展开'}</button></span></div>
+          {graphOpen && <MemoryGraphView graph={graph} focusId={focusId} onSelectEntry={(id) => setSelectedEntryId(id)} onToggleTag={toggleTag} />}
+        </section>
+
+        <section className={css['memoryPanel']}>
+          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>会话沉淀原文库</h3><p className={css['sectionHint']}>最近 30 条 · 自动提炼的会话记忆，随 RAG 检索参与每轮注入。</p></div><span className={css['inlineActions']}><span className={css['badge']}>{docs.length} 条</span><button type="button" className={css['ghostButton']} onClick={() => setDocsOpen((open) => !open)}>{docsOpen ? '收起' : '展开'}</button></span></div>
+          {docsOpen && (recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => { const preview = (previews[doc.id] ?? '').trim(); return <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={preview !== '' ? preview : memoryTitle(doc)}>{preview !== '' ? preview : memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div> })}</div>)}
+        </section>
+      </div>}
+
+      {tab === 'policy' && <div className={css['policyGrid']}>
+        <section className={css['memoryPanel']}>
+          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>自动记忆策略</h3><p className={css['sectionHint']}>控制会话结束后的提炼、每轮开始时的相关记忆注入，以及候选自动激活。</p></div><span className={css['badge']} data-kind={settings?.enabled ? 'success' : 'pending'}>{settings?.enabled ? '运行中' : '已停用'}</span></div>
+          {settings === null ? <div className={css['empty']} data-loading="">正在读取设置…</div> : <div className={css['memoryForm']}>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.enabled} onChange={(e) => updateSettings({ enabled: e.target.checked })}/><span><strong>启用记忆层</strong><small>关闭后不自动沉淀，也不主动注入。</small></span></label>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoSediment} onChange={(e) => updateSettings({ autoSediment: e.target.checked })}/><span><strong>自动沉淀</strong><small>会话结束后提炼值得长期保存的信息。</small></span></label>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoInject} onChange={(e) => updateSettings({ autoInject: e.target.checked })}/><span><strong>主动注入</strong><small>每轮首步召回与当前问题相关的记忆。</small></span></label>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoActivate} onChange={(e) => updateSettings({ autoActivate: e.target.checked })}/><span><strong>候选自动激活</strong><small>沉淀与工具写入直接生效，无需人工审核；关闭则回退到工作台审核流程。</small></span></label>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.projectProfile} onChange={(e) => updateSettings({ projectProfile: e.target.checked })}/><span><strong>项目档案卡</strong><small>工作目录命中登记项目时，全量注入该项目已沉淀记忆。</small></span></label>
+            <label className={css['toggleRow']}><input type="checkbox" checked={settings.dreamEnabled} onChange={(e) => updateSettings({ dreamEnabled: e.target.checked })}/><span><strong>做梦整理</strong><small>库静默后自动整理重复与过期记忆（软删除可恢复）。</small></span></label>
+            <div className={css['compactFields']}>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>注入条数</span><input className={css['input']} type="number" min={1} max={20} value={settings.topK} onChange={(e) => updateSettings({ topK: Number(e.target.value) || 4 })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>相关度阈值</span><input className={css['input']} type="number" min={0} max={1} step={0.05} value={settings.threshold} onChange={(e) => updateSettings({ threshold: Number(e.target.value) || 0 })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限</span><input className={css['input']} type="number" min={300} max={4000} step={100} value={settings.maxChars} onChange={(e) => updateSettings({ maxChars: Number(e.target.value) || 1200 })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>做梦静默分钟</span><input className={css['input']} type="number" min={1} max={120} value={settings.dreamIdleMinutes} onChange={(e) => updateSettings({ dreamIdleMinutes: Number(e.target.value) || 10 })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>做梦最小间隔（小时）</span><input className={css['input']} type="number" min={1} max={168} value={settings.dreamMinIntervalHours} onChange={(e) => updateSettings({ dreamMinIntervalHours: Number(e.target.value) || 6 })}/></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.sedimentProvider} onChange={(e) => updateSettings({ sedimentProvider: e.target.value, sedimentModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.sedimentProvider !== '' && !catalog.some((provider) => provider.id === settings.sedimentProvider) && <option value={settings.sedimentProvider}>{settings.sedimentProvider}（已存，目录中暂无）</option>}</select></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀模型（空=跟随默认）</span><select className={css['input']} value={settings.sedimentModel} disabled={settings.sedimentProvider === ''} onChange={(e) => updateSettings({ sedimentModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.sedimentProvider !== '' && settings.sedimentModel !== '' && !(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).some((model) => model.id === settings.sedimentModel) && <option value={settings.sedimentModel}>{settings.sedimentModel}（已存，目录中暂无）</option>}</select></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>裁决服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.dreamProvider} onChange={(e) => updateSettings({ dreamProvider: e.target.value, dreamModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.dreamProvider !== '' && !catalog.some((provider) => provider.id === settings.dreamProvider) && <option value={settings.dreamProvider}>{settings.dreamProvider}（已存，目录中暂无）</option>}</select></label>
+              <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型（空=跟随默认）</span><select className={css['input']} value={settings.dreamModel} disabled={settings.dreamProvider === ''} onChange={(e) => updateSettings({ dreamModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.dreamProvider !== '' && settings.dreamModel !== '' && !(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).some((model) => model.id === settings.dreamModel) && <option value={settings.dreamModel}>{settings.dreamModel}（已存，目录中暂无）</option>}</select></label>
+            </div>
+            <div className={css['formFooter']}><span className={css['sectionHint']}>设置存入本地 store.db，不依赖外部记忆插件。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveSettings() }}>保存策略</button></div>
+          </div>}
+        </section>
         <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>知识图谱</h3><p className={css['sectionHint']}>由内置长期记忆现算：条目-关键词-分类关联；悬停高亮关联，点条目看详情，点关键词过滤下方列表。</p></div><span className={css['badge']}>{graph === null ? '—' : graph.nodes.length + ' 节点 · ' + graph.edges.length + ' 边'}</span></div>
-            {softError !== '' && <p className={css['operationReport']}>图谱加载失败：{softError}</p>}
-            <MemoryGraphView graph={graph} focusId={focusId} onSelectEntry={(id) => { setSelectedEntryId(id) }} onToggleTag={toggleTag} />
-            <div className={css['graphLegend']}><span><i style={{ background: 'var(--dsw-alias-state-business-primary, #2563eb)' }} />记忆条目</span><span><i style={{ background: '#7c3aed' }} />关键词</span><span><i style={{ background: '#ea580c' }} />分类</span><span>半径 = 关联度</span></div>
-            {selectedEntry !== undefined && <div className={css['graphDetail']}>
-              <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[selectedEntry.category] ?? selectedEntry.category}</span>{selectedEntry.tags.map((tag) => <span key={tag} className={css['memoryChip']} onClick={() => toggleTag(tag)}>{tag}</span>)}</div>
-              <div>{selectedEntry.content}</div>
-              <div className={css['nativeRowMain']}><span className={css['nativeTime']}>{fmtTime(selectedEntry.updatedAt)} · {selectedEntry.source} · 重要度 {selectedEntry.importance}</span><span style={{ flex: 1 }} /><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(selectedEntry.id) }}>删除</button><button type="button" className={css['ghostButton']} onClick={() => setSelectedEntryId('')}>关闭</button></div>
-            </div>}
-          </section>
-          <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置长期记忆（主存储）</h3><p className={css['sectionHint']}>点内容查看详情；点关键词 chip 可过滤。{activeTag !== '' ? '当前过滤：' + activeTag : ''}</p></div><span className={css['badge']}>{activeTag === '' ? nativeEntries.length + ' 条' : visibleNative.length + '/' + nativeEntries.length + ' 条'}{activeTag !== '' && <button type="button" className={css['ghostButton']} onClick={() => setActiveTag('')}>清除过滤</button>}</span></div>
-            {nativeEntries.length === 0 ? <div className={css['empty']}>暂无内置长期记忆。点右侧「迁移」导入 Mnemon/Hindsight，或正常使用几轮会话自动沉淀。</div> : <div className={css['nativeList']}>
-              {visibleNative.map((entry) => <div key={entry.id} className={css['nativeRow']} data-selected={selectedEntryId === entry.id ? '' : undefined}>
-                <div className={css['nativeRowMain']}><span className={css['nativeContent']} title={entry.content} onClick={() => { setSelectedEntryId(entry.id) }}>{entry.content}</span><span className={css['nativeTime']}>{fmtTime(entry.updatedAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(entry.id) }}>删除</button></div>
-                <div className={css['memoryChips']}><span className={css['categoryBadge']}>{CATEGORY_LABELS[entry.category] ?? entry.category}</span><span className={css['nativeTime']}>{entry.source} · 重要度 {entry.importance}</span>{entry.tags.map((tag) => <button key={tag} type="button" className={css['memoryChip']} data-active={activeTag === tag.toLocaleLowerCase() ? '' : undefined} onClick={() => toggleTag(tag.toLocaleLowerCase())}>{tag}</button>)}</div>
+            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>记忆做梦整理</h3><p className={css['sectionHint']}>库静默后自动合并重复、归档过期（软删除可恢复）；裁决模型在上方策略里指定。</p></div><span className={css['badge']} data-kind={settings?.dreamEnabled ? 'success' : 'pending'}>{dream?.running === true ? '整理中…' : settings?.dreamEnabled ? '自动运行' : '已关闭'}</span></div>
+            <div className={css['inlineActions']}><button type="button" className={css['primaryButton']} disabled={busy || dream?.running === true} onClick={() => { void runDream() }}>{dream?.running === true ? '整理中…' : '立即整理一次'}</button></div>
+            {dream !== null && dream.runs.length > 0 ? <div className={css['memoryTable']}>
+              <div className={css['memoryTableHead']}><span>时间</span><span>状态</span><span>结果</span></div>
+              {dream.runs.slice(0, 6).map((run) => <div key={run.id} className={css['memoryTableRow']}>
+                <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
+                <span className={css['categoryBadge']}>{run.status}</span>
+                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : Array.isArray(run.proposals) ? '快照 ' + run.snapshot + ' · 治理建议 ' + run.proposals.length + ' 条（待人工审核）' : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
               </div>)}
-              {visibleNative.length === 0 && <div className={css['empty']}>该关键词下暂无条目。</div>}
-            </div>}
+            </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
           </section>
-        </div>
-        <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}>
             <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>用户身份卡</h3><p className={css['sectionHint']}>常驻注入每轮对话（不靠召回，必达）；插件给别人用时，每人填自己的身份与习惯。</p></div><span className={css['badge']} data-kind={profile?.enabled === true && (profile.alias !== '' || profile.identity !== '' || habitsText.trim() !== '') ? 'success' : 'pending'}>{profile?.enabled === false ? '已停用' : '常驻注入'}</span></div>
             {profile === null ? <div className={css['empty']} data-loading="">正在读取身份卡…</div> : <div className={css['memoryForm']}>
@@ -301,57 +365,12 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
               <div className={css['formFooter']}><span className={css['sectionHint']}>保存在本地 store.db，保存即时生效。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveProfile() }}>保存身份卡</button></div>
             </div>}
           </section>
-          <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>自动记忆策略</h3><p className={css['sectionHint']}>控制会话结束后的提炼，以及每轮开始时的相关记忆注入。</p></div><span className={css['badge']} data-kind={settings?.enabled ? 'success' : 'pending'}>{settings?.enabled ? '运行中' : '已停用'}</span></div>
-            {settings === null ? <div className={css['empty']} data-loading="">正在读取设置…</div> : <div className={css['memoryForm']}>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.enabled} onChange={(e) => updateSettings({ enabled: e.target.checked })}/><span><strong>启用记忆层</strong><small>关闭后不自动沉淀，也不主动注入。</small></span></label>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoSediment} onChange={(e) => updateSettings({ autoSediment: e.target.checked })}/><span><strong>自动沉淀</strong><small>会话结束后提炼值得长期保存的信息。</small></span></label>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoInject} onChange={(e) => updateSettings({ autoInject: e.target.checked })}/><span><strong>主动注入</strong><small>每轮首步召回与当前问题相关的记忆。</small></span></label>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.autoActivate} onChange={(e) => updateSettings({ autoActivate: e.target.checked })}/><span><strong>候选自动激活</strong><small>沉淀与工具写入直接生效，无需人工审核；关闭则回退到工作台审核流程。</small></span></label>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.projectProfile} onChange={(e) => updateSettings({ projectProfile: e.target.checked })}/><span><strong>项目档案卡</strong><small>工作目录命中登记项目时，全量注入该项目已沉淀记忆，免于重新探索。</small></span></label>
-              <div className={css['compactFields']}>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>注入条数</span><input className={css['input']} type="number" min={1} max={20} value={settings.topK} onChange={(e) => updateSettings({ topK: Number(e.target.value) || 4 })}/></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>相关度阈值</span><input className={css['input']} type="number" min={0} max={1} step={0.05} value={settings.threshold} onChange={(e) => updateSettings({ threshold: Number(e.target.value) || 0 })}/></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限</span><input className={css['input']} type="number" min={300} max={4000} step={100} value={settings.maxChars} onChange={(e) => updateSettings({ maxChars: Number(e.target.value) || 1200 })}/></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>做梦静默分钟</span><input className={css['input']} type="number" min={1} max={120} value={settings.dreamIdleMinutes} onChange={(e) => updateSettings({ dreamIdleMinutes: Number(e.target.value) || 10 })}/></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>做梦最小间隔（小时）</span><input className={css['input']} type="number" min={1} max={168} value={settings.dreamMinIntervalHours} onChange={(e) => updateSettings({ dreamMinIntervalHours: Number(e.target.value) || 6 })}/></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.sedimentProvider} onChange={(e) => updateSettings({ sedimentProvider: e.target.value, sedimentModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.sedimentProvider !== '' && !catalog.some((provider) => provider.id === settings.sedimentProvider) && <option value={settings.sedimentProvider}>{settings.sedimentProvider}（已存，目录中暂无）</option>}</select></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>沉淀模型（空=跟随默认）</span><select className={css['input']} value={settings.sedimentModel} disabled={settings.sedimentProvider === ''} onChange={(e) => updateSettings({ sedimentModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.sedimentProvider !== '' && settings.sedimentModel !== '' && !(catalog.find((provider) => provider.id === settings.sedimentProvider)?.models ?? []).some((model) => model.id === settings.sedimentModel) && <option value={settings.sedimentModel}>{settings.sedimentModel}（已存，目录中暂无）</option>}</select></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>裁决服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.dreamProvider} onChange={(e) => updateSettings({ dreamProvider: e.target.value, dreamModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.dreamProvider !== '' && !catalog.some((provider) => provider.id === settings.dreamProvider) && <option value={settings.dreamProvider}>{settings.dreamProvider}（已存，目录中暂无）</option>}</select></label>
-                <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型（空=跟随默认）</span><select className={css['input']} value={settings.dreamModel} disabled={settings.dreamProvider === ''} onChange={(e) => updateSettings({ dreamModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.dreamProvider !== '' && settings.dreamModel !== '' && !(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).some((model) => model.id === settings.dreamModel) && <option value={settings.dreamModel}>{settings.dreamModel}（已存，目录中暂无）</option>}</select></label>
-              </div>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.dreamEnabled} onChange={(e) => updateSettings({ dreamEnabled: e.target.checked })}/><span><strong>做梦整理（仅产生治理建议）</strong><small>模型只负责发现重复/过期记忆并给出建议，任何合并、归档都必须在下方「记忆治理」人工确认后才生效。</small></span></label>
-              <div className={css['formFooter']}><span className={css['sectionHint']}>设置存入本地 store.db，不依赖外部记忆插件。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveSettings() }}>保存策略</button></div>
-            </div>}
-          </section>
+        </div>
+      </div>}
 
-          <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>记忆做梦整理</h3><p className={css['sectionHint']}>库静默后自动合并重复、归档过期（软删除可恢复）；裁决模型在上方策略里指定，缺省跟随会话默认模型。</p></div><span className={css['badge']} data-kind={settings?.dreamEnabled ? 'success' : 'pending'}>{dream?.running === true ? '整理中…' : settings?.dreamEnabled ? '自动运行' : '已关闭'}</span></div>
-            <div className={css['inlineActions']}><button type="button" className={css['primaryButton']} disabled={busy || dream?.running === true} onClick={() => { void runDream() }}>{dream?.running === true ? '整理中…' : '立即整理一次'}</button></div>
-            {dream !== null && dream.runs.length > 0 ? <div className={css['memoryTable']}>
-              <div className={css['memoryTableHead']}><span>时间</span><span>状态</span><span>结果</span></div>
-              {dream.runs.slice(0, 6).map((run) => <div key={run.id} className={css['memoryTableRow']}>
-                <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
-                <span className={css['categoryBadge']}>{run.status}</span>
-                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : Array.isArray(run.proposals) ? '快照 ' + run.snapshot + ' · 治理建议 ' + run.proposals.length + ' 条（待人工审核）' : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
-              </div>)}
-            </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
-          </section>
-
-          <MemoryGovernance api={api} />
-
-          <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置记忆搜索与新增</h3><p className={css['sectionHint']}>关键词检索长期记忆主存储；也可以手动补录重要信息。</p></div><span className={css['badge']} data-kind="success">已上线</span></div>
-            <div className={css['inlineForm']}><input className={css['input']} value={searchQuery} placeholder="关键词，如：硅基流动 / 偏好 / 决策" onChange={(e) => setSearchQuery(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void runSearch() }}>{searching ? '搜索中…' : '搜索'}</button></div>
-            {searchResults.length > 0 && <div className={css['memoryTable']}>
-              <div className={css['memoryTableHead']}><span>命中的长期记忆</span><span>来源</span><span>操作</span></div>
-              {searchResults.map((entry) => <div key={entry.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={entry.content}>{entry.content}</span><span>{entry.source}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void removeNative(entry.id) }}>删除</button></div>)}
-            </div>}
-            <div className={css['inlineForm']}><input className={css['input']} value={draftContent} placeholder="手动补录一条长期记忆…" onChange={(e) => setDraftContent(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy || draftContent.trim() === ''} onClick={() => { void saveNative() }}>保存</button></div>
-          </section>
-          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>会话记忆条目（沉淀原文库）</h3><p className={css['sectionHint']}>最近 30 条 · 自动提炼的会话记忆，随 RAG 检索参与每轮注入。</p></div><span className={css['badge']}>{docs.length} 条</span></div>
-            {recentDocs.length === 0 ? <div className={css['empty']}>暂无会话沉淀。正常使用几轮会话后，值得长期保存的内容会出现在这里。</div> : <div className={css['memoryTable']} data-cols="4"><div className={css['memoryTableHead']}><span>内容</span><span>切块</span><span>时间</span><span>操作</span></div>{recentDocs.map((doc) => { const preview = (previews[doc.id] ?? '').trim(); return <div key={doc.id} className={css['memoryTableRow']}><span className={css['memoryDocTitle']} title={preview !== '' ? preview : memoryTitle(doc)}>{preview !== '' ? preview : memoryTitle(doc)}</span><span>{doc.chunkCount}</span><span className={css['nativeTime']}>{fmtTime(doc.createdAt)}</span><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void deleteMemory(doc.id) }}>删除</button></div> })}</div>}
-          </section>
+      {tab === 'ops' && <div className={css['opsGrid']}>
+        <MemoryGovernance api={api} />
+        <div className={css['memoryStack']}>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>项目知识索引</h3><p className={css['sectionHint']}>尊重 .gitignore，增量更新到 RAG 知识库。</p></div></div><div className={css['inlineForm']}><input className={css['input']} value={projectPath} placeholder="/Users/andyfan/Documents/ds/项目" onChange={(e) => setProjectPath(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void indexProject() }}>开始索引</button></div></section>
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部记忆迁移（幂等）</h3><p className={css['sectionHint']}>迁移进内置主存储：Mneme 活跃记忆整库搬家、Mnemon 分条入库、Hindsight 整页入库；重复执行只更新不重复。</p></div>{migrationStatus !== null && <span className={css['badge']}>已迁移 {migrationStatus.migrated}/{migrationStatus.count}</span>}</div>
             <div className={css['inlineActions']}>
@@ -364,7 +383,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
           {/* 卡片一律平级，禁止嵌套：只读镜像是独立能力，不再塞进迁移卡片内部造成双层边框。 */}
           <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部只读镜像</h3><p className={css['sectionHint']}>当前仍保留只读同步，迁移完成前不删除外部数据。</p></div></div><div className={css['inlineActions']}><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('mnemon') }}>同步 Mnemon</button><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('hindsight') }}>同步 Hindsight</button></div></section>
         </div>
-      </div>
+      </div>}
     </section>
   )
 }

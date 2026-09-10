@@ -89,7 +89,7 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
 
   return (
     <section className={css['memoryPanel']}>
-      <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>记忆治理</h3><p className={css['sectionHint']}>模型提炼只产生候选，这里人工转正；任务复盘与召回轨迹可追溯，错误记忆可反馈隔离。</p></div><span className={css['badge']} data-kind={candidates.length > 0 ? 'pending' : 'success'}>{candidates.length > 0 ? candidates.length + ' 条待审核' : '队列清空'}</span></div>
+      <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>记忆治理</h3><p className={css['sectionHint']}>自动沉淀直接生效；这里处理冲突候选、查看质量画像，错误记忆可反馈隔离，归档可恢复。</p></div><span className={css['badge']} data-kind={candidates.length > 0 ? 'pending' : 'success'}>{candidates.length > 0 ? candidates.length + ' 条待处理' : '队列清空'}</span></div>
 
       {notice !== '' && <p className={css['operationReport']}>{notice}<button type="button" className={css['ghostButton']} onClick={() => setNotice('')}>关闭</button></p>}
 
@@ -107,6 +107,10 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
         <span className={css['memoryChip']}>复盘 {quality.episodes}</span>
         <span className={css['memoryChip']}>召回 {quality.retrievals}</span>
       </div>}
+
+      {/* 两列治理网格：左列候选与复盘（需要动作），右列轨迹与归档（只读回溯），避免单列长滚动。 */}
+      <div className={css['govGrid']}>
+      <div className={css['memoryStack']}>
 
       {candidates.length > 0 ? <div className={css['memoryTable']} data-cols="4">
         <div className={css['memoryTableHead']}><span>候选内容</span><span>来源 · 置信度</span><span>状态</span><span>操作</span></div>
@@ -127,6 +131,8 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
           <span className={css['nativeTime']}>{fmtTime(episode.createdAt)}</span>
         </div>)}
       </div> : <div className={css['empty']}>暂无任务复盘。开启自动沉淀后，每轮完成都会记录结构化复盘。</div>}
+      </div>
+      <div className={css['memoryStack']}>
 
       {recalls.length > 0 ? <div className={css['memoryTable']} data-cols="4">
         <div className={css['memoryTableHead']}><span>召回轨迹（可反馈）</span><span>结果</span><span>命中</span><span>时间</span></div>
@@ -148,6 +154,8 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
           <span>{entry.state === 'archived' ? <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void restore(entry.id) }}>恢复</button> : <span className={css['nativeTime']}>需先处理冲突或修订</span>}</span>
         </div>)}
       </div> : null}
+      </div>
+      </div>
     </section>
   )
 }
