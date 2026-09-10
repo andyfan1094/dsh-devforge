@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
 import { createPackageReader, type PackageReader } from './plugin-brief.ts'
 
 /** 更新源登记：一个可更新的自研插件包（官网清单为主，GitHub 兜底）。 */
@@ -161,13 +162,13 @@ export function parseSiteIndex(payload: unknown): SiteReleaseIndex | undefined {
 /** 带超时的 GitHub Latest Release 拉取（兜底渠道；测试可注入）。 */
 export async function fetchLatestRelease(repo: string, timeoutMs = 15000): Promise<LatestRelease | null> {
   const response = await fetch('https://api.github.com/repos/' + repo + '/releases/latest', {
-    headers: { 'user-agent': 'dsh-devforge-plugin-update', accept: 'application/vnd.github+json' },
+    headers: upstreamRequestHeaders({ 'user-agent': 'dsh-devforge-plugin-update', accept: 'application/vnd.github+json' }),
     signal: AbortSignal.timeout(timeoutMs),
   })
   // 无任何 release 时 GitHub 返回 404：按「无新版」处理而不是报错。
   if (response.status === 404) return null
   if (!response.ok) throw new Error('GitHub API HTTP ' + String(response.status))
-  const payload = await response.json() as { tag_name?: unknown; assets?: unknown }
+  const payload = JSON.parse(await upstreamResponseText(response)) as { tag_name?: unknown; assets?: unknown }
   if (typeof payload.tag_name !== 'string') throw new Error('GitHub 响应缺少 tag_name')
   const assets = Array.isArray(payload.assets) ? payload.assets as Array<{ name?: unknown; browser_download_url?: unknown }> : []
   const picked = pickTgzAsset(assets)
@@ -177,11 +178,11 @@ export async function fetchLatestRelease(repo: string, timeoutMs = 15000): Promi
 /** 带超时的官网清单拉取（主渠道；测试可注入）。 */
 export async function fetchSiteIndex(indexUrl: string, timeoutMs = 15000): Promise<SiteReleaseIndex> {
   const response = await fetch(indexUrl, {
-    headers: { 'user-agent': 'dsh-devforge-plugin-update' },
+    headers: upstreamRequestHeaders({ 'user-agent': 'dsh-devforge-plugin-update' }),
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error('官网清单 HTTP ' + String(response.status))
-  const parsed = parseSiteIndex(await response.json())
+  const parsed = parseSiteIndex(JSON.parse(await upstreamResponseText(response)))
   if (!parsed) throw new Error('官网清单结构不合法')
   return parsed
 }

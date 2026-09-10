@@ -21,6 +21,7 @@
 
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
 
 /** 更新源登记：DSH 本体官方仓库（硬编码白名单，不接受外部配置改写）。 */
 export interface HarnessUpdateSource {
@@ -160,11 +161,11 @@ export function pickLatestHarnessTag(tags: readonly GithubTag[], tagPrefix: stri
 /** 带超时的 GitHub tags 拉取（官方仓库不发 Release，只能读 tag；测试可注入）。 */
 export async function fetchLatestHarnessTag(source: HarnessUpdateSource, timeoutMs = 15000): Promise<{ version: string; tag: string } | undefined> {
   const response = await fetch('https://api.github.com/repos/' + source.repo + '/tags?per_page=100', {
-    headers: { 'user-agent': 'dsh-devforge-harness-update', accept: 'application/vnd.github+json' },
+    headers: upstreamRequestHeaders({ 'user-agent': 'dsh-devforge-harness-update', accept: 'application/vnd.github+json' }),
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error('GitHub tags API HTTP ' + String(response.status))
-  const payload = await response.json()
+  const payload = JSON.parse(await upstreamResponseText(response))
   if (!Array.isArray(payload)) throw new Error('GitHub tags 响应结构不合法')
   return pickLatestHarnessTag(payload as GithubTag[], source.tagPrefix)
 }

@@ -3,6 +3,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
+import { decodeUpstreamBody, upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { deleteCredential, setCredential } from '../credentials-writer.ts'
 import { getDb, putCredentialMirror, removeCredentialMirror } from '../store/db.ts'
 import { parseQuotaLimits } from './quota.ts'
@@ -292,7 +293,7 @@ export class ZhipuCodingPlanService {
     let response: Response
     try {
       response = await fetch(this.baseURL + '/api/paas/v4/models', {
-        headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+        headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, Accept: 'application/json' }),
         signal: controller.signal,
       })
     } catch (error) {
@@ -304,7 +305,8 @@ export class ZhipuCodingPlanService {
       const text = await response.text().catch(() => '')
       throw new ZhipuServiceError('智谱官方 models 接口 HTTP ' + response.status + '：' + text.slice(0, 200), response.status === 401 ? 401 : 502)
     }
-    const payload = await response.json().catch(() => null) as { data?: unknown } | null
+    let payload: { data?: unknown } | null = null
+    try { payload = JSON.parse(await upstreamResponseText(response)) as { data?: unknown } } catch { payload = null }
     const official = parseZhipuModelList(payload)
     if (official.length === 0) throw new ZhipuServiceError('智谱官方 models 接口未返回有效数据。', 502)
     const next = await this.mergeFetchedModels(official)
@@ -516,7 +518,7 @@ export class ZhipuCodingPlanService {
     const timer = setTimeout(abort, this.config.timeoutMs)
     try {
       const response = await fetch(this.baseURL + path, {
-        headers: { authorization: apiKey, accept: 'application/json', 'accept-language': 'zh-CN,zh' },
+        headers: upstreamRequestHeaders({ authorization: apiKey, accept: 'application/json', 'accept-language': 'zh-CN,zh' }),
         signal: controller.signal,
       })
       const text = await this.readResponseText(response)
@@ -562,7 +564,7 @@ export class ZhipuCodingPlanService {
       }
       chunks.push(part.value)
     }
-    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total).toString('utf8')
+    return decodeUpstreamBody(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total))
   }
 
   /** 保证接口 data 是普通对象。 */

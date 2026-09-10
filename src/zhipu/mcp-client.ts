@@ -1,4 +1,5 @@
 /** 智谱官方 MCP Server 轻量客户端（Streamable HTTP，官方协议直连，无第三方依赖）。 */
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { isKeySwitchableStatus } from './key-pool.ts'
 import type { ZhipuMcpToolDescriptor } from './protocol.ts'
 
@@ -172,12 +173,12 @@ export class ZhipuMcpClient {
     try {
       response = await fetch(this.endpoint, {
         method: 'POST',
-        headers: {
+        headers: upstreamRequestHeaders({
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/event-stream',
           'Authorization': `Bearer ${apiKey}`,
           ...(sessionId !== undefined ? { 'mcp-session-id': sessionId } : {}),
-        },
+        }),
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       })
@@ -194,7 +195,7 @@ export class ZhipuMcpClient {
 
   /** 解析响应体：纯 JSON 或 SSE（data: 行）。 */
   private async readPayload(response: Response): Promise<any> {
-    const text = await response.text().catch(() => '')
+    const text = await upstreamResponseText(response).catch(() => '')
     if (text.trim() === '') return {}
     const dataLine = text.split('\n').find((line) => line.startsWith('data:'))
     const raw = dataLine !== undefined ? dataLine.slice(5).trim() : text

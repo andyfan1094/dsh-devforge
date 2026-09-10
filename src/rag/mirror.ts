@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import type { RagService } from './service.ts'
 
 /** Hindsight 配置（只取连接所需三字段，令牌绝不落日志）。 */
@@ -169,9 +170,9 @@ export async function syncHindsightMirror(rag: RagService, kbId: string, overrid
   const timeout = overrides?.timeoutMs ?? 15000
   let tree: unknown
   try {
-    const response = await fetch(base + '/knowledge-base/tree', { headers, signal: AbortSignal.timeout(timeout) })
+    const response = await fetch(base + '/knowledge-base/tree', { headers: upstreamRequestHeaders(headers), signal: AbortSignal.timeout(timeout) })
     if (!response.ok) { report.errors.push('知识库树 HTTP ' + response.status); return report }
-    tree = ((await response.json()) as { roots?: unknown }).roots
+    tree = (JSON.parse(await upstreamResponseText(response)) as { roots?: unknown }).roots
   } catch (error) {
     report.errors.push('知识库树请求失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 160))
     return report
@@ -181,9 +182,9 @@ export async function syncHindsightMirror(rag: RagService, kbId: string, overrid
   const items: Array<{ key: string; text: string }> = []
   for (const page of pages) {
     try {
-      const response = await fetch(base + '/knowledge-base/pages/' + encodeURIComponent(page.id), { headers, signal: AbortSignal.timeout(timeout) })
+      const response = await fetch(base + '/knowledge-base/pages/' + encodeURIComponent(page.id), { headers: upstreamRequestHeaders(headers), signal: AbortSignal.timeout(timeout) })
       if (!response.ok) { report.errors.push(page.name + '：HTTP ' + response.status); continue }
-      const doc = (await response.json()) as { markdown?: string; content?: string; body?: string }
+      const doc = (JSON.parse(await upstreamResponseText(response)) as { markdown?: string; content?: string; body?: string })
       const text = doc.markdown ?? doc.content ?? doc.body ?? ''
       if (text.trim() === '') { report.skipped += 1; continue }
       items.push({ key: 'hindsight/' + page.name, text })

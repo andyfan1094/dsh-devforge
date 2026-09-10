@@ -8,6 +8,7 @@
  *
  * 红线：凭据每次请求重新解析；错误一律脱敏，绝不把 Bearer Key 带进异常或日志。
  */
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { RagEmbeddingError, safeEmbeddingError } from './embedder.ts'
 
 /** 单条待重排候选项（只需原文文本，索引由调用方按下标对齐）。 */
@@ -64,7 +65,7 @@ export class ZhipuReranker implements Reranker {
     try {
       response = await fetch(this.baseURL + this.path, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }),
         body: buildRerankRequestBody(this.model, query, candidates.map(item => item.text), Math.min(topN, candidates.length)),
         signal: AbortSignal.timeout(this.timeoutMs),
       })
@@ -75,7 +76,7 @@ export class ZhipuReranker implements Reranker {
       const body = await response.text().catch(() => '')
       throw new RagEmbeddingError('重排渠道 HTTP ' + response.status + '：' + safeEmbeddingError(body))
     }
-    const payload = (await response.json()) as { error?: { message?: string } }
+    const payload = JSON.parse(await upstreamResponseText(response)) as { error?: { message?: string } }
     if (payload.error?.message !== undefined) throw new RagEmbeddingError('重排渠道拒绝：' + safeEmbeddingError(payload.error.message))
     return parseRerankResponse(payload, candidates.length)
   }

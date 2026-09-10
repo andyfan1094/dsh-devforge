@@ -3,6 +3,7 @@
  * 认证：Authorization: Bearer <访问令牌>；Accept: application/json。
  * 关键接口：GET /user（验证令牌）、GET /user/repos（我的仓库，page/page_size/search）。
  */
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { CNB_WEB_BASE, type RepoSummary } from './protocol.ts'
 import type { CnbStore, StoredAccount } from './store.ts'
 
@@ -57,7 +58,7 @@ export class CnbApi {
   /** 统一请求：注入 Bearer 令牌；非 2xx 抛出带状态码的可读错误。 */
   async request<T>(account: StoredAccount, path: string): Promise<T> {
     const response = await fetch(account.apiUrl + path, {
-      headers: { accept: 'application/json', authorization: 'Bearer ' + account.token, 'user-agent': 'dsh-devforge-cnb' },
+      headers: upstreamRequestHeaders({ accept: 'application/json', authorization: 'Bearer ' + account.token, 'user-agent': 'dsh-devforge-cnb' }),
     })
     return await this.parseResponse<T>(response)
   }
@@ -66,12 +67,12 @@ export class CnbApi {
   async writeRequest<T>(account: StoredAccount, path: string, payload: unknown): Promise<{ status: number; body: T }> {
     const response = await fetch(account.apiUrl + path, {
       method: 'POST',
-      headers: {
+      headers: upstreamRequestHeaders({
         accept: 'application/json',
         authorization: 'Bearer ' + account.token,
         'content-type': 'application/json',
         'user-agent': 'dsh-devforge-cnb',
-      },
+      }),
       body: JSON.stringify(payload),
     })
     const body = await this.parseResponse<T>(response)
@@ -80,7 +81,7 @@ export class CnbApi {
 
   /** 统一响应解析：非 2xx 抛带状态码的可读错误。 */
   private async parseResponse<T>(response: Response): Promise<T> {
-    const text = await response.text()
+    const text = await upstreamResponseText(response)
     let body: unknown
     try { body = JSON.parse(text) } catch { body = text }
     if (!response.ok) {

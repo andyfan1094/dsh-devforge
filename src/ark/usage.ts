@@ -1,5 +1,6 @@
 /** 火山方舟套餐用量客户端：OpenAPI V4 签名、请求与响应规整。 */
 import { createHash, createHmac } from 'node:crypto'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import type { ArkPlanUsage, ArkUsageProduct } from './protocol.ts'
 
 const VOLC_OPEN_API_HOST = 'open.volcengineapi.com'
@@ -207,11 +208,11 @@ async function callUsageAction(action: string, product: ArkUsageProduct, request
   try {
     const response = await fetcher(signed.url, {
       method: 'POST',
-      headers: signed.headers,
+      headers: upstreamRequestHeaders(signed.headers),
       body: signed.body,
       signal,
     })
-    const text = await response.text()
+    const text = await upstreamResponseText(response)
     return parseArkUsageResponse(product, response.status, text)
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 240) : '未知网络错误'

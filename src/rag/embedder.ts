@@ -8,6 +8,7 @@
  * - vectorKey(model,text) = sha256：embedding 缓存的命中键（防重复计费）。
  */
 import { createHash } from 'node:crypto'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 
 /** 向量化失败（脱敏后可直接呈现）。 */
 export class RagEmbeddingError extends Error {
@@ -97,7 +98,7 @@ export class ZhipuEmbedder {
     try {
       response = await fetch(target + this.path, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }),
         body: buildRequestBody(model, batch),
         signal: AbortSignal.timeout(this.timeoutMs),
       })
@@ -108,7 +109,7 @@ export class ZhipuEmbedder {
       const body = await response.text().catch(() => '')
       throw new RagEmbeddingError('向量渠道 HTTP ' + response.status + '：' + safeEmbeddingError(body))
     }
-    const payload = (await response.json()) as { data?: Array<{ embedding?: number[]; index?: number }>; error?: { message?: string } }
+    const payload = JSON.parse(await upstreamResponseText(response)) as { data?: Array<{ embedding?: number[]; index?: number }>; error?: { message?: string } }
     if (payload.error?.message !== undefined) {
       throw new RagEmbeddingError('向量渠道拒绝：' + safeEmbeddingError(payload.error.message))
     }

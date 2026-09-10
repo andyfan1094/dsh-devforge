@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { readFileSync } from 'node:fs'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { listMnemonMarkdowns, readHindsightConfig, resolveBankId } from '../rag/mirror.ts'
 import type { NativeMemoryCategory, NativeMemoryMigrationItem } from './protocol.ts'
 
@@ -65,9 +66,9 @@ export async function collectHindsightItems(overrides?: { apiUrl?: string; apiTo
   const timeout = overrides?.timeoutMs ?? 15000
   let tree: unknown
   try {
-    const response = await fetch(base + '/knowledge-base/tree', { headers, signal: AbortSignal.timeout(timeout) })
+    const response = await fetch(base + '/knowledge-base/tree', { headers: upstreamRequestHeaders(headers), signal: AbortSignal.timeout(timeout) })
     if (!response.ok) return []
-    tree = ((await response.json()) as { roots?: unknown }).roots
+    tree = (JSON.parse(await upstreamResponseText(response)) as { roots?: unknown }).roots
   } catch { return [] }
   const pages: Array<{ id: string; name: string }> = []
   const walk = (nodes: unknown): void => {
@@ -82,9 +83,9 @@ export async function collectHindsightItems(overrides?: { apiUrl?: string; apiTo
   const items: NativeMemoryMigrationItem[] = []
   for (const page of pages) {
     try {
-      const response = await fetch(base + '/knowledge-base/pages/' + encodeURIComponent(page.id), { headers, signal: AbortSignal.timeout(timeout) })
+      const response = await fetch(base + '/knowledge-base/pages/' + encodeURIComponent(page.id), { headers: upstreamRequestHeaders(headers), signal: AbortSignal.timeout(timeout) })
       if (!response.ok) continue
-      const doc = (await response.json()) as { markdown?: string; content?: string; body?: string }
+      const doc = (JSON.parse(await upstreamResponseText(response)) as { markdown?: string; content?: string; body?: string })
       const text = doc.markdown ?? doc.content ?? doc.body ?? ''
       if (text.trim() === '') continue
       items.push({ content: clip(text), category: 'context', source: 'hindsight', tags: ['hindsight-page'], migrationKey: 'hindsight:' + hashText(page.name + ':' + text) })

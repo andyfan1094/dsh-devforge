@@ -1,4 +1,5 @@
 /** MiniMax Coding Plan 官方 HTTP API 轻量客户端（官方直连，无第三方依赖）。 */
+import { decodeUpstreamBody, upstreamRequestHeaders } from '../upstream-fetch.ts'
 import type { MiniMaxDashboard, MiniMaxRemainsModel, MiniMaxSearchResult } from './protocol.ts'
 
 /** 可直接呈现给模型的调用失败；消息已脱敏。 */
@@ -84,7 +85,7 @@ export class MiniMaxApiClient {
     try {
       response = await fetch(this.baseURL + path, {
         method,
-        headers,
+        headers: upstreamRequestHeaders(headers),
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
@@ -222,7 +223,7 @@ async function readResponseText(response: Response): Promise<string> {
     }
     chunks.push(part.value)
   }
-  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total).toString('utf8')
+  return decodeUpstreamBody(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total))
 }
 
 /** 规整官方搜索响应为稳定结构（忽略不完整字段）。 */

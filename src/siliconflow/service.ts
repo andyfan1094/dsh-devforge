@@ -10,6 +10,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import type { SiliconFlowStatus } from './protocol.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
@@ -204,7 +205,7 @@ export class SiliconFlowService {
     let response: Response
     try {
       response = await fetch(BASE_URL + path, {
-        headers: { authorization: 'Bearer ' + apiKey, accept: 'application/json' },
+        headers: upstreamRequestHeaders({ authorization: 'Bearer ' + apiKey, accept: 'application/json' }),
         signal: AbortSignal.timeout(this.config.timeoutMs),
       })
     } catch (error) {
@@ -214,6 +215,6 @@ export class SiliconFlowService {
       const body = await response.text().catch(() => '')
       throw new SiliconFlowServiceError('硅基流动接口 HTTP ' + response.status + '：' + body.replace(/sk-[A-Za-z0-9-]+/gu, 'sk-[redacted]').slice(0, 200))
     }
-    return await response.json()
+    return JSON.parse(await upstreamResponseText(response)) as unknown
   }
 }

@@ -4,6 +4,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
+import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { MiniMaxApiClient } from './api-client.ts'
 import type { MiniMaxDashboard, MiniMaxStatus } from './protocol.ts'
 
@@ -101,7 +102,7 @@ export class MiniMaxService {
     let response: Response
     try {
       response = await fetch('https://api.minimaxi.com/v1/models', {
-        headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+        headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, Accept: 'application/json' }),
         signal: controller.signal,
       })
     } catch (error) {
@@ -113,7 +114,8 @@ export class MiniMaxService {
       const text = await response.text().catch(() => '')
       throw new MiniMaxServiceError('MiniMax 官方 models 接口 HTTP ' + response.status + '：' + text.slice(0, 200), response.status === 401 ? 401 : 502)
     }
-    const payload = await response.json().catch(() => null)
+    let payload: unknown = null
+    try { payload = JSON.parse(await upstreamResponseText(response)) } catch { payload = null }
     const official = parseMiniMaxModelList(payload)
     if (official.length === 0) throw new MiniMaxServiceError('MiniMax 官方 models 接口未返回有效数据。', 502)
     return await this.mergeFetchedModels(official)
