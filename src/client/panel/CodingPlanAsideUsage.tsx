@@ -1,123 +1,15 @@
 /** Coding Plan 侧栏套餐用量卡片：三家用量在左侧栏紧凑展示，默认展开全部窗口。
  * 辉哥定稿布局：套餐用量卡片在左（侧栏），模型 token 计量看板在右（控制面板顶部）。
- * 卡片状态类型与构建器（zhipuCard/minimaxCard/arkCard）原属 UsageOverviewTab，
- * 随布局定稿迁入本文件统一维护；数据仍由 CodingPlanTab 统一加载。 */
+ * 卡片状态类型与构建器（zhipuCard/zhipuCardFromUsages/minimaxCard/arkCard）为无 JSX 纯函数，
+ * 沉淀在 overview-cards.ts 便于纯 node 单测；本文件只做渲染，数据由 CodingPlanTab 统一加载。 */
 import { useState } from 'react'
-import type { ArkUsageDashboard } from '../../ark/protocol.ts'
-import type { MiniMaxDashboard } from '../../minimax/protocol.ts'
-import type { ZhipuDashboard } from '../../zhipu/protocol.ts'
+import { INITIAL_CARD } from './overview-cards.ts'
+import type { OverviewCardState, OverviewCards, OverviewPeriod, OverviewProvider } from './overview-cards.ts'
 import { resolveOverviewReset } from './reset-countdown.ts'
 import css from './panel.module.css'
 
-export type OverviewProvider = 'zhipu' | 'minimax' | 'ark'
-
-/** 统一的一行用量窗口。 */
-export interface OverviewPeriod {
-  label: string
-  usedPercent: number
-  detail: string
-  resetAt?: number
-}
-
-/** 单家用量卡片状态：侧栏卡片共用的展示模型。 */
-export interface OverviewCardState {
-  phase: 'loading' | 'ready' | 'error'
-  configured: boolean
-  subscribed?: boolean
-  badge: string
-  planName?: string
-  periods: OverviewPeriod[]
-  warnings: string[]
-  error?: string
-}
-
-/** 三家卡片状态集合。 */
-export interface OverviewCards {
-  zhipu: OverviewCardState
-  minimax: OverviewCardState
-  ark: OverviewCardState
-}
-
-/** 卡片初始态：加载中、未配置、无窗口数据。 */
-export const INITIAL_CARD: OverviewCardState = { phase: 'loading', configured: false, badge: '', periods: [], warnings: [] }
-
-function percentText(usedPercent: number): string {
-  return usedPercent.toFixed(1) + '% 已用 · ' + Math.max(0, 100 - usedPercent).toFixed(1) + '% 剩余'
-}
-
-/** 由窗口 label 关键字推断窗口级别（用于重置倒计时 urgency 分档）。 */
-function inferOverviewLevel(label: string): 'short-window' | 'weekly' | 'monthly' | 'unknown' {
-  if (label.includes('5 小时')) return 'short-window'
-  if (label.includes('本周')) return 'weekly'
-  if (label.includes('本月')) return 'monthly'
-  return 'unknown'
-}
-
-/** 智谱：limits 直接带 5h/周/月三类窗口。 */
-export function zhipuCard(status: { credentialConfigured: boolean } | null, dashboard: ZhipuDashboard): OverviewCardState {
-  const periods = dashboard.limits
-    .filter((limit) => limit.kind !== 'unknown')
-    .map((limit) => {
-      const usedPercent = Math.max(0, Math.min(100, limit.usedPercent ?? (limit.used !== undefined && limit.total !== undefined && limit.total > 0 ? limit.used / limit.total * 100 : 0)))
-      const label = limit.kind === 'tokens-5h' ? '5 小时额度' : limit.kind === 'tokens-week' ? '本周额度' : '本月工具额度'
-      const resetAt = typeof limit.nextResetTime === 'number' ? limit.nextResetTime : undefined
-      return { label, usedPercent, detail: percentText(usedPercent), resetAt }
-    })
-  return {
-    phase: 'ready',
-    configured: status?.credentialConfigured ?? false,
-    badge: dashboard.level ?? '',
-    periods,
-    warnings: dashboard.warnings,
-  }
-}
-
-/** MiniMax：官方给的是剩余百分比，换算成已用；每模型 5h/周两行。 */
-export function minimaxCard(status: { credentialConfigured: boolean } | null, dashboard: MiniMaxDashboard): OverviewCardState {
-  const periods: OverviewPeriod[] = []
-  for (const model of dashboard.models.filter((entry) => entry.included).slice(0, 3)) {
-    if (model.intervalRemainingPercent !== undefined) {
-      const usedPercent = Math.max(0, Math.min(100, 100 - model.intervalRemainingPercent))
-      periods.push({ label: model.name + ' · 5 小时', usedPercent, detail: percentText(usedPercent), resetAt: model.intervalEndAt })
-    }
-    if (model.weeklyRemainingPercent !== undefined) {
-      const usedPercent = Math.max(0, Math.min(100, 100 - model.weeklyRemainingPercent))
-      periods.push({ label: model.name + ' · 本周', usedPercent, detail: percentText(usedPercent), resetAt: model.weeklyEndAt })
-    }
-  }
-  return {
-    phase: 'ready',
-    configured: status?.credentialConfigured ?? false,
-    subscribed: dashboard.models.some((entry) => entry.included),
-    planName: dashboard.planName,
-    badge: dashboard.planName ?? '',
-    periods,
-    warnings: dashboard.warnings,
-  }
-}
-
-/** 方舟：Agent Plan 的 5h/周/月三段；Coding Plan 未订阅时不占位。 */
-export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigured: boolean; usageSecretKeyConfigured: boolean } | null, dashboard: ArkUsageDashboard): OverviewCardState {
-  const usageConfigured = (status?.usageAccessKeyConfigured ?? false) && (status?.usageSecretKeyConfigured ?? false)
-  const periods: OverviewPeriod[] = []
-  for (const plan of dashboard.plans) {
-    if (!plan.subscribed) continue
-    const planLabel = plan.product === 'agent-plan' ? 'Agent Plan' : 'Coding Plan'
-    for (const period of plan.periods) {
-      const label = period.level === '5h' ? planLabel + ' · 5 小时' : period.level === 'weekly' ? planLabel + ' · 本周' : planLabel + ' · 本月'
-      const usedPercent = Math.max(0, Math.min(100, period.usedPercent ?? 0))
-      periods.push({ label, usedPercent, detail: percentText(usedPercent), resetAt: period.resetAt })
-    }
-  }
-  return {
-    phase: 'ready',
-    configured: usageConfigured,
-    subscribed: dashboard.plans.some((plan) => plan.subscribed),
-    badge: usageConfigured ? 'AK/SK 已配置' : '待配置控制面 AK/SK',
-    periods,
-    warnings: dashboard.warnings,
-  }
-}
+export { INITIAL_CARD, arkCard, minimaxCard, zhipuCard, zhipuCardFromUsages } from './overview-cards.ts'
+export type { OverviewCardState, OverviewCards, OverviewPeriod, OverviewProvider } from './overview-cards.ts'
 
 export interface CodingPlanAsideUsageProps {
   cards: OverviewCards
@@ -193,9 +85,9 @@ function AsideUsageGroup({ provider, title, card, now, expanded, onToggleExpand,
           <button type="button" className={css['asideUsageGo']} onClick={() => onNavigate(provider)}>去配置</button>
         </p>
       )}
-      {card.phase === 'ready' && card.configured && rows.length === 0 && <p className={css['asideUsageEmpty']}>暂无用量数据</p>}
-      {(expanded || rows.length <= 1) && rows.map((row) => (
-        <div key={row.label} className={css['asideUsageRow']}>
+      {card.phase === 'ready' && card.configured && rows.length === 0 && card.warnings.length === 0 && <p className={css['asideUsageEmpty']}>暂无用量数据</p>}
+      {(expanded || rows.length <= 1) && rows.map((row, index) => (
+        <div key={index + ':' + row.label} className={css['asideUsageRow']}>
           <div className={css['asideUsageTop']}>
             <span className={css['asideUsageLabel']} title={row.label}>{row.label}</span>
             <span className={css['asideUsageValue']}>{Math.round(row.usedPercent)}% 已用</span>
@@ -207,6 +99,10 @@ function AsideUsageGroup({ provider, title, card, now, expanded, onToggleExpand,
             <span className={css['asideUsageReset']} data-urgency={row.urgency} title={row.resetText}>{row.resetText}</span>
           </div>
         </div>
+      ))}
+      {/* 渠道级警示（如某把 Key 用量读取失败）独立于窗口行展示，不受展开/收起影响。 */}
+      {card.phase === 'ready' && card.warnings.map((warning, index) => (
+        <p key={index + ':' + warning} className={css['asideUsageWarn']}>{warning}</p>
       ))}
     </div>
   )

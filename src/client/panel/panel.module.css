@@ -375,6 +375,7 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .asideUsageReset[data-urgency="danger"] { color: var(--dsw-alias-state-error-primary, #dc2626); font-weight: 600; }
 .asideUsageEmpty { margin: 0; font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-secondary, #667085); }
 .asideUsageError { margin: 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; color: var(--dsw-alias-state-error-primary, #dc2626); }
+.asideUsageWarn { margin: 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; color: var(--dsw-alias-state-warning-primary, #ca8a04); }
 .asideUsageGo { padding: 0; font: inherit; font-size: 11px; color: var(--dsw-alias-state-business-primary, #2563eb); background: transparent; border: none; cursor: pointer; }
 .asideUsageGo:hover { text-decoration: underline; }
 .asideUsageGo:disabled { opacity: .45; cursor: default; }
