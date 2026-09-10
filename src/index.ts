@@ -549,8 +549,10 @@ export function apply(ctx: Context, config?: Config): void {
   // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）；凭据同样走 Key 池第一把。
   ragService.setReranker(new ZhipuReranker(zhipuPoolCredential('尚未配置智谱 API Key（Key 池为空），RAG 精排不可用。')))
 
-  /** 默认模型路由文本生成（记忆提炼/重排打分/工作流共用；凭据由宿主 Provider 体系承载）。 */
-  const generateText = async (input: { system: string; user: string; maxTokens?: number; provider?: string; model?: string }): Promise<string> => {
+  /** 默认模型路由文本生成（记忆提炼/重排打分/工作流共用；凭据由宿主 Provider 体系承载）。
+   *  `onFinish` 回传宿主结束原因：只有它能把「被 token 上限截断」和「真的调用失败」区分开，
+   *  提炼侧据此自动扩容重试，否则截断中止会被当成模型故障白等下一轮。 */
+  const generateText = async (input: { system: string; user: string; maxTokens?: number; provider?: string; model?: string; onFinish?: (reason: string) => void }): Promise<string> => {
     const selectionHost = ctx as unknown as { agentDefaultModel?: { currentSelection?: () => { provider: string; model: string } } }
     const selection = selectionHost.agentDefaultModel?.currentSelection?.()
     const provider = input.provider ?? selection?.provider ?? ''
@@ -565,6 +567,7 @@ export function apply(ctx: Context, config?: Config): void {
       maxTokens: input.maxTokens ?? 800,
     })) assembler.push(chunk)
     const finish = assembler.finish
+    input.onFinish?.(finish.kind)
     if (finish.kind === 'error' || finish.kind === 'aborted') {
       const failure = (finish as { failure?: { message?: string } }).failure
       throw new Error('模型调用失败：' + String(failure?.message ?? finish.kind))
@@ -572,6 +575,34 @@ export function apply(ctx: Context, config?: Config): void {
     return assembler.blocks().filter((block) => block.type === 'text').map((block) => (block as { text: string }).text).join('')
   }
   ragService.setRerankLlm((system, user) => generateText({ system, user, maxTokens: 500 }))
+
+  /** 记忆提炼单次输出预算（候选 5 条 + task 复盘 JSON）。 */
+  const REFLECT_BASE_TOKENS = 700
+  /** 被 token 上限截断时的自动扩容倍数：700 → 1600 → 3200，都用满仍失败才交给批次重试。 */
+  const REFLECT_TOKEN_STEPS = [1, 2, 4] as const
+
+  /**
+   * 记忆提炼/复盘生成：截断自动扩容重试。
+   *
+   * 硬教训（2026-09-11 生产实况）：MiniMax 等思考型模型输出被 maxTokens 截断时，宿主以
+   * "stream ended without a stop reason" 收尾——与真实故障同形。此前写法直接抛错，
+   * 沉淀 12 次全失败、任务复盘一条都落不下来。现在按宿主结束原因识别截断并扩容重试，
+   * 复盘链路自动恢复，不需要人工换模型。
+   */
+  const generateReflectionText = async (input: { system: string; user: string; provider?: string; model?: string }): Promise<string> => {
+    let lastError: unknown
+    for (const step of REFLECT_TOKEN_STEPS) {
+      let finishReason = ''
+      try {
+        return await generateText({ ...input, maxTokens: REFLECT_BASE_TOKENS * step, onFinish: (reason) => { finishReason = reason } })
+      } catch (error) {
+        lastError = error
+        // 只有「被 token 上限截断」才值得扩容重试；真实调用故障直接交给批次重试，避免三倍空跑。
+        if (finishReason !== '' && finishReason !== 'max-tokens' && finishReason !== 'length') throw error
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  }
 
   // ---- 会话记忆层：沉淀（turn/end）+ 主动注入（agent/pre-step）----
   const memorySettingsRead = (): MemorySettings => {
@@ -599,7 +630,8 @@ export function apply(ctx: Context, config?: Config): void {
   const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => {
     // 沉淀路由可独立配置（0.26.6）：全局默认路由故障（503 等）时，面板指到健康模型即可，不再被聊天路由绑架。
     const route = memorySettingsRead()
-    return generateText({ system, user, maxTokens: 700, ...(route.sedimentProvider !== '' ? { provider: route.sedimentProvider } : {}), ...(route.sedimentModel !== '' ? { model: route.sedimentModel } : {}) })
+    // token 预算与截断扩容重试都在 generateReflectionText 内部（0.29.4）：复盘不能因一次截断整批作废。
+    return generateReflectionText({ system, user, ...(route.sedimentProvider !== '' ? { provider: route.sedimentProvider } : {}), ...(route.sedimentModel !== '' ? { model: route.sedimentModel } : {}) })
   }, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }

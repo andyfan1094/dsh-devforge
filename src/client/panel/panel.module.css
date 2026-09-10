@@ -758,11 +758,44 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .rowDetail { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; font-size: 12px; background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 4%, var(--dsw-alias-bg-layer-1, #fff)); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 18%, transparent); border-left: 3px solid var(--dsw-alias-state-business-primary, #2563eb); border-radius: var(--dv-radius-card, 8px); }
 .rowDetailContent { line-height: 1.65; color: var(--dsw-alias-label-primary, #1f2329); white-space: pre-wrap; word-break: break-word; }
 
-/* 页签内容网格：策略页 3:2（左表单右状态），治理页治理卡全宽 + 右侧运维列。 */
+/* 页签内容网格：策略页 3:2（左表单右状态），治理页治理主区 + 右侧运维列。 */
 .policyGrid, .opsGrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
 .govGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
 
-@media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid, .policyGrid, .opsGrid, .govGrid { grid-template-columns: minmax(0, 1fr); } }
+/* 治理看板：左列承载需要动作的两块（复核队列 / 任务复盘），右列是只读与运维工具。
+   宽度按 3:2 分配；窄屏（见 960px 断点）自动落回单列。 */
+.govBoard { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: var(--dv-grid-gap); min-width: 0; align-items: start; }
+.govColumn { display: flex; min-width: 0; flex-direction: column; gap: var(--dv-grid-gap); }
+/* 治理概览条：一条紧凑指标带，替代原先每项一张大卡片的堆叠（看板密度 12~16px）。 */
+.govStats { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; font-size: 12px; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: var(--dv-radius-card, 8px); }
+.govStats > span { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 9px; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-separator-primary, #edf0f2); border-radius: 999px; }
+.govStats b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.govStats > span[data-kind='warning'] b { color: var(--dsw-alias-state-warning-primary, #d97706); }
+.govStats > span[data-kind='success'] b { color: var(--dsw-alias-state-success-primary, #16a34a); }
+.govStats > span[data-kind='muted'] b { color: var(--dsw-alias-label-secondary, #667085); }
+/* 候选卡片：一行一件事，左文右按钮；冲突原因落在元信息行，不再挤进表格列里错位。 */
+.govCandidateList, .govEpisodeList, .govRecallList, .govArchiveList { display: flex; min-width: 0; flex-direction: column; }
+.govCandidate { display: flex; min-width: 0; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.govCandidateMain { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.govCandidateText { line-height: 1.55; color: var(--dsw-alias-label-primary, #1f2329); overflow-wrap: anywhere; }
+.govCandidateMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; font-variant-numeric: tabular-nums; }
+.govCandidateAction { display: flex; flex: none; gap: 6px; }
+/* 复盘行：结果标签固定在左，目标与工具证据成一块，不再「结果/工具」各占一张窄列。 */
+.govEpisode { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px 10px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.govEpisodeBody { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.govEpisodeGoal { line-height: 1.5; color: var(--dsw-alias-label-primary, #1f2329); overflow-wrap: anywhere; }
+.govEpisodeMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* 召回轨迹行：窄栏专用变体，命中与反馈按钮自成一行，不再挤在同一格里换行。 */
+.govRecall { display: flex; min-width: 0; flex-direction: column; gap: 5px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.govRecallTop { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.govRecallMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; font-variant-numeric: tabular-nums; }
+.govArchive { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
+.govArchiveText { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-primary, #1f2329); }
+/* 治理页空态：一行说明 + 可选行动按钮，不再用 30px 上下大留白把卡片撑高。 */
+.govEmpty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px dashed var(--dsw-alias-border-l1, #e5e7eb); border-radius: var(--dv-radius-card, 8px); }
+.govEmpty > span { flex: 1 1 220px; min-width: 0; }
+
+@media (max-width: 960px) { .memoryStats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memoryGrid, .policyGrid, .opsGrid, .govGrid, .govBoard { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 620px) { .memoryStats, .compactFields { grid-template-columns: minmax(0, 1fr); } .memoryHeader, .panelHeading { align-items: flex-start; flex-direction: column; } .inlineForm { align-items: stretch; flex-direction: column; } .toolbar { align-items: stretch; flex-direction: column; } .toolbar .input { width: 100%; } }
 
 .endpointLayout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; min-width: 0; }

@@ -279,6 +279,20 @@ export class MemorySedimentService {
     return typeof last?.data?.turn === 'number' ? last.data.turn : 0
   }
 
+  /**
+   * 整理一条批次的复盘落点：提炼成功时完成轮次已由 runBatch 写详细复盘，这里只补未完成轮次；
+   * 提炼彻底失败时全部轮次都要落技术复盘，否则面板「任务复盘」在模型故障期完全空白。
+   */
+  private recordBatchFallback(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number, failed: boolean): void {
+    const targets = failed ? windows : windows.filter((window) => !window.completed)
+    this.recordTechnicalEpisodes(sessionId, targets, watermarkTurn, failed)
+  }
+
+  /** 批次失败（含重试用尽）：落技术复盘，让复盘链路不断档；待处理窗口保留，模型恢复后仍能补提炼。 */
+  private recordFailedBatch(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number): void {
+    this.recordBatchFallback(sessionId, windows, watermarkTurn, true)
+  }
+
   private async processSession(sessionId: string): Promise<void> {
     const entry = this.pending.get(sessionId)
     if (entry === undefined || entry.windows.length === 0) { this.pending.delete(sessionId); return }
@@ -295,6 +309,7 @@ export class MemorySedimentService {
       this.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200)
       this.lastOutcome = 'failed'
       if (entry.retries <= MAX_BATCH_RETRIES) this.armTimer(sessionId)
+      else this.recordFailedBatch(sessionId, entry.windows, maxTurn)
     }
   }
 
@@ -324,7 +339,7 @@ export class MemorySedimentService {
     const eligible = windows.filter((window) => window.completed)
     const assistantText = eligible.map((item) => item.assistantText).join('\n')
     if (assistantText.trim().length < 50) {
-      this.recordTechnicalEpisodes(sessionId, windows, watermarkTurn)
+      this.recordBatchFallback(sessionId, windows, watermarkTurn, false)
       this.lastOutcome = 'window-short'
       this.processedTurns.set(sessionId, watermarkTurn)
       return 0
@@ -427,7 +442,8 @@ export class MemorySedimentService {
         usedMemoryIds,
         createdAt: Date.now(),
       })
-      this.recordTechnicalEpisodes(sessionId, windows.filter((window) => !window.completed), watermarkTurn)
+      // 详细复盘已落：只给未完成轮次补技术复盘，避免同一轮次重复记账
+      this.recordBatchFallback(sessionId, windows, watermarkTurn, false)
     }
 
     this.processedTurns.set(sessionId, watermarkTurn)
@@ -440,11 +456,14 @@ export class MemorySedimentService {
     return stored
   }
 
-  /** 非 completed 轮次只留技术结果复盘，不产生任何记忆候选。 */
-  private recordTechnicalEpisodes(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number): void {
+  /** 技术复盘兜底：模型不可用时也按轮次留痕，保证任务复盘链路不断档。 */
+  private recordTechnicalEpisodes(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number, batchFailed: boolean): void {
     if (this.governance === undefined) return
     for (const window of windows) {
-      if (window.completed) continue
+      // 完成轮次（含提炼失败兜底）按工具成败判定结果，不给整轮扣失败帽子。
+      const toolFailed = window.toolFailures > window.toolSuccesses
+      // 整批提炼失败时全部轮次记失败：复盘没提炼出来本身就是一次复盘缺口，面板必须能一眼看出。
+      const outcome: 'success' | 'failure' = batchFailed || window.completed !== true || toolFailed ? 'failure' : 'success'
       this.governance.recordEpisode({
         id: sessionId + ':' + window.turn,
         sessionId,
@@ -452,7 +471,7 @@ export class MemorySedimentService {
         scope: window.scope,
         goal: normalizeMemoryText(window.userText).slice(0, 1000),
         summary: normalizeMemoryText(window.assistantText).slice(0, 3000),
-        outcome: 'failure',
+        outcome,
         toolNames: window.toolNames,
         toolSuccesses: window.toolSuccesses,
         toolFailures: window.toolFailures,

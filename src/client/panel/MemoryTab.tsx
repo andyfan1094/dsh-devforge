@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import { type BrainRouterCatalogProvider } from '../../brain-router/protocol.ts'
-import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type ProjectIndexResult } from '../../memory/protocol.ts'
+import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type NativeMemoryEntry } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
@@ -44,10 +44,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [graph, setGraph] = useState<MemoryGraph | null>(null)
   const [activeTag, setActiveTag] = useState('')
   const [selectedEntryId, setSelectedEntryId] = useState('')
-  const [projectPath, setProjectPath] = useState('')
   const [draftContent, setDraftContent] = useState('')
-  const [migrationStatus, setMigrationStatus] = useState<{ count: number; migrated: number; lastUpdatedAt: number } | null>(null)
-  const [report, setReport] = useState('')
   const [softError, setSoftError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -147,15 +144,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     if (mounted.current) setNotice({ kind: 'success', text: '内置记忆已删除。' })
   })
 
-  const indexProject = (): Promise<void> => run(async () => {
-    const path = projectPath.trim()
-    if (path === '') throw new Error('项目路径必填，请填写本机绝对路径。')
-    const result: ProjectIndexResult = await api.indexMemoryProject(path)
-    setReport('项目索引 · 扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 删除 ' + result.removed + ' · 跳过 ' + result.skipped + (result.errors.length > 0 ? ' · 错误 ' + result.errors.length : ''))
-    await reload()
-    if (mounted.current) setNotice({ kind: 'success', text: '项目索引完成。' })
-  })
-
   /** 手动补录一条长期记忆并清空输入。 */
   const saveNative = (): Promise<void> => run(async () => {
     const content = draftContent.trim()
@@ -164,26 +152,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
     if (mounted.current) setDraftContent('')
     await reload()
     if (mounted.current) setNotice({ kind: 'success', text: '长期记忆已保存。' })
-  })
-
-  /** 一键迁移外部记忆到内置主存储（幂等），完成后刷新迁移状态。 */
-  const migrateExternal = (kind: 'mnemon' | 'hindsight' | 'mneme'): Promise<void> => run(async () => {
-    const result = await api.migrateExternalMemory(kind)
-    const status = await api.getMemoryMigrationStatus()
-    if (mounted.current) {
-      setMigrationStatus(status)
-      const label = kind === 'mnemon' ? 'Mnemon' : kind === 'mneme' ? 'Mneme' : 'Hindsight'
-      setReport(label + ' 迁移：扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 跳过 ' + result.skipped)
-      setNotice({ kind: 'success', text: label + ' 迁移完成：新增 ' + result.added + '，更新 ' + result.updated + '。' })
-      await reload()
-    }
-  })
-
-  const syncMirror = (kind: 'mnemon' | 'hindsight'): Promise<void> => run(async () => {
-    const result: MirrorSyncResult = await api.syncMemoryMirror(kind)
-    setReport((kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 镜像 · 扫描 ' + result.scanned + ' · 新增 ' + result.added + ' · 更新 ' + result.updated + ' · 跳过 ' + result.skipped + (result.errors.length > 0 ? ' · 错误 ' + result.errors.length : ''))
-    await reload()
-    if (mounted.current) setNotice({ kind: 'success', text: (kind === 'mnemon' ? 'Mnemon' : 'Hindsight') + ' 镜像同步完成。' })
   })
 
   /** 手动触发一轮做梦整理：裁决在服务端异步执行（数十秒），轮询刷新直到出结果。 */
@@ -368,22 +336,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         </div>
       </div>}
 
-      {tab === 'ops' && <div className={css['opsGrid']}>
-        <MemoryGovernance api={api} />
-        <div className={css['memoryStack']}>
-          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>项目知识索引</h3><p className={css['sectionHint']}>尊重 .gitignore，增量更新到 RAG 知识库。</p></div></div><div className={css['inlineForm']}><input className={css['input']} value={projectPath} placeholder="/Users/andyfan/Documents/ds/项目" onChange={(e) => setProjectPath(e.target.value)}/><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void indexProject() }}>开始索引</button></div></section>
-          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部记忆迁移（幂等）</h3><p className={css['sectionHint']}>迁移进内置主存储：Mneme 活跃记忆整库搬家、Mnemon 分条入库、Hindsight 整页入库；重复执行只更新不重复。</p></div>{migrationStatus !== null && <span className={css['badge']}>已迁移 {migrationStatus.migrated}/{migrationStatus.count}</span>}</div>
-            <div className={css['inlineActions']}>
-              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void migrateExternal('mneme') }}>迁移 Mneme 记忆（替代旧插件）</button>
-              <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('mnemon') }}>迁移 Mnemon 记忆</button>
-              <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void migrateExternal('hindsight') }}>迁移 Hindsight 知识</button>
-            </div>
-            {report !== '' && <p className={css['operationReport']}>{report}</p>}
-          </section>
-          {/* 卡片一律平级，禁止嵌套：只读镜像是独立能力，不再塞进迁移卡片内部造成双层边框。 */}
-          <section className={css['memoryPanel']}><div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>外部只读镜像</h3><p className={css['sectionHint']}>当前仍保留只读同步，迁移完成前不删除外部数据。</p></div></div><div className={css['inlineActions']}><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('mnemon') }}>同步 Mnemon</button><button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void syncMirror('hindsight') }}>同步 Hindsight</button></div></section>
-        </div>
-      </div>}
+      {tab === 'ops' && <MemoryGovernance api={api} />}
     </section>
   )
 }

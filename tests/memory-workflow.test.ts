@@ -22,7 +22,7 @@ import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
 import type { RagDocument, RagSearchHit } from '../src/rag/protocol.ts'
 import type { RagService } from '../src/rag/service.ts'
 
-const SETTINGS = { enabled: true, autoSediment: true, autoInject: true, autoActivate: true, projectProfile: true, topK: 4, threshold: 0.3, maxChars: 1200 }
+const SETTINGS = { enabled: true, autoSediment: true, autoInject: true, autoReflect: true, autoActivate: true, projectProfile: true, topK: 4, threshold: 0.3, maxChars: 1200 }
 
 function hit(id: string, score: number, text = '内容' + id): RagSearchHit {
   return { chunkId: id, docId: 'd' + id, kbId: 'kb1', fileName: 'f.md', headingPath: '', text, score }
@@ -259,6 +259,69 @@ describe('会话记忆沉淀', () => {
       assert.equal(active2.length, 1, '取代后仍只有一条活跃事实')
       assert.ok(active2[0]?.content.includes('10.0.0.3'))
       assert.equal(active2[0]?.supersedes.length, 1, '保留取代链可追溯')
+    } finally {
+      closeDb(join(dir, 'store.db'))
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  test('复盘自动化：提炼成功即写任务复盘（目标/结果/工具/教训）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sed-episode-'))
+    const ragStore = new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db'))
+    const native = new NativeMemoryStore(ragStore)
+    const governance = new MemoryGovernanceService(ragStore, native)
+    try {
+      const rag = fakeRag({ listDocs: () => [], listChunks: () => [] })
+      // 模型输出同时带 task 复盘段：这是唯一的复盘数据来源，缺了就只能退化成技术复盘。
+      const reply = '{"task":{"goal":"给项目配好数据库","summary":"已改 config.yaml 并重启服务","outcome":"success","lessons":["改完配置要重启"],"usedMemoryIds":[]},"items":[{"content":"项目数据库地址是 10.0.0.2:3306","category":"fact","confidence":0.9}]}'
+      const session = { id: 's5', events: [
+        { type: 'user/message', data: { content: [{ type: 'text', text: '把项目数据库配好' }] } },
+        { type: 'tool/call', data: { callId: 'c1', name: 'read' } },
+        { type: 'tool/result', data: { message: { source: { callId: 'c1' } }, content: [{ type: 'text', text: 'config.yaml: host: 10.0.0.2' }] } },
+        { type: 'assistant/message', data: { content: [{ type: 'text', text: '数据库配置已经完成：先改好了 config.yaml 里的连接串，再重启了后端服务，健康检查接口返回 200，本次改动可以交付。本句是测试构造的长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
+        { type: 'turn/end', data: { turn: 1 } },
+      ] }
+      const sediment = new MemorySedimentService(rag, () => 'kb1', async () => reply, () => SETTINGS, native, undefined, { governance, scopeOf: () => ({ kind: 'global' }) })
+      await sediment.process(session, 's5', 1)
+      const episodes = governance.listEpisodes(10)
+      assert.equal(episodes.length, 1, '每轮提炼成功都要留下一条任务复盘')
+      assert.equal(episodes[0]?.goal, '给项目配好数据库')
+      assert.equal(episodes[0]?.outcome, 'success')
+      assert.deepEqual(episodes[0]?.toolNames, ['read'])
+      assert.deepEqual(episodes[0]?.lessons, ['改完配置要重启'])
+    } finally {
+      closeDb(join(dir, 'store.db'))
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  test('复盘自动化：模型失败也不能断档，落技术复盘并保留待提炼窗口', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sed-fail-'))
+    const ragStore = new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db'))
+    const native = new NativeMemoryStore(ragStore)
+    const governance = new MemoryGovernanceService(ragStore, native)
+    try {
+      const rag = fakeRag({ listDocs: () => [], listChunks: () => [] })
+      const session = { id: 's6', events: [
+        { type: 'user/message', data: { content: [{ type: 'text', text: '跑一遍部署检查' }] } },
+        { type: 'tool/call', data: { callId: 'c1', name: 'bash' } },
+        { type: 'tool/result', data: { message: { source: { callId: 'c1' } }, content: [{ type: 'text', text: '检查脚本输出：全部通过' }] } },
+        { type: 'assistant/message', data: { turn: 1, content: [{ type: 'text', text: '部署检查已经跑完：端口、依赖版本、磁盘余量与备份任务四项全部通过，没有发现阻塞项，可以进入下一步交付流程。本句是测试构造的长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
+        { type: 'turn/end', data: { turn: 1 } },
+      ] }
+      const sediment = new MemorySedimentService(rag, () => 'kb1', async () => { throw new Error('模型调用失败：stream ended without a stop reason') }, () => SETTINGS, native, undefined, { governance, scopeOf: () => ({ kind: 'global' }), delayMs: 5 })
+      const context = { on: (_event: string, listener: (session: unknown, event: unknown) => void) => { void listener(session, { type: 'turn/end', data: { turn: 1 } }); return () => { /* 卸载 */ } } }
+      assert.equal(governance.listEpisodes(10).length, 0)
+      sediment.attach(context)
+      // 模型连续失败三次（初次 + 两次重试）后仍必须留下复盘记录，否则面板上「任务复盘」永远空白；
+      // 该记录按失败计：复盘缺口必须显式可见，不能伪装成成功。
+      for (let attempt = 0; attempt < 60 && governance.listEpisodes(10).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25))
+      const episodes = governance.listEpisodes(10)
+      assert.equal(episodes.length, 1, '模型失败也必须落一条待复盘记录')
+      assert.equal(episodes[0]?.outcome, 'failure')
+      assert.equal(episodes[0]?.goal, '跑一遍部署检查')
+      assert.deepEqual(episodes[0]?.toolNames, ['bash'], '工具证据必须保留，复盘才可核对')
+      assert.equal(episodes[0]?.toolSuccesses, 1)
+      assert.equal(governance.listPendingWindows().length, 1, '待处理窗口保留：模型恢复后仍要补提炼，不能丢记忆')
+      sediment.dispose()
     } finally {
       closeDb(join(dir, 'store.db'))
       rmSync(dir, { recursive: true, force: true })
