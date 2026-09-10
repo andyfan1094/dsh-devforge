@@ -21,7 +21,7 @@ const IMPORTS = [
  * 校验已审查的上游产物并生成独立接口名；依赖解析由调用方提供。
  * @param {string} source 上游完整模块源码。
  * @param {{version:string,presetId:string,resolveImport:(name:string)=>string}} options 版本、预设标识和依赖 URL 解析函数。
- * @returns {string} 仅修改注册边界和导入地址的模块源码。
+ * @returns {string} 仅修改注册命名空间和导入地址的模块源码。
  */
 export function buildPresetCordisModule(source, options) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(options.presetId)) throw new Error('预设标识不合法');
@@ -29,10 +29,13 @@ export function buildPresetCordisModule(source, options) {
   const hash = createHash('sha256').update(source).digest('hex');
   if (hash !== SUPPORTED_SHA256) throw new Error('上游源码哈希不符，停止生成');
   if (source.split(REGISTRATION).length !== 2) throw new Error('上游注册边界不唯一');
-  const prefix = JSON.stringify(`${options.presetId}/`);
-  let result = source.replace(REGISTRATION, `for (const provider of hostInspectProviders(ctx)) {
-    // 每个预设拥有独立注册，卸载只释放自身接口，不接管其他预设的生命周期。
-    const registration = { ...provider, manifest: { ...provider.manifest, id: ${prefix} + provider.manifest.id } };
+  // 每次挂载代随机命名空间：同预设新旧两代并存（编辑预设文件时）不撞全局注册表，
+  // 各代卸载只释放自身；跨预设同样隔离。
+  let result = source.replace(REGISTRATION, `// 每个挂载代使用独立命名空间注册检查接口：跨预设、同预设新旧代互不冲突，
+  // 卸载只释放本代注册，接口能力与查询路径保持不变。
+  const inspectNamespace = ${JSON.stringify(options.presetId)} + '/' + randomUUID().slice(0, 8);
+  for (const provider of hostInspectProviders(ctx)) {
+    const registration = { ...provider, manifest: { ...provider.manifest, id: inspectNamespace + '/' + provider.manifest.id } };
     ctx.effect(() => ctx.cordisInspect.register(registration), \`tool-cordis: inspect \${registration.manifest.id}\`);
   }`);
   for (const name of IMPORTS) {
@@ -42,13 +45,13 @@ export function buildPresetCordisModule(source, options) {
     if (!url.startsWith('file:')) throw new Error('依赖必须指向同一宿主的本机已安装模块');
     result = result.replace(needle, `from ${JSON.stringify(url)};`);
   }
-  return `// 本机生成的预设兼容产物；来源 @deepseek-ai/dsh-tool-cordis ${SUPPORTED_VERSION}，MIT 许可证见 LICENSE.cordis-tool。\n// 上游 SHA-256：${SUPPORTED_SHA256}。升级 DSH 后须重新校验生成。\n${result}`;
+  return `// 本机生成的预设兼容产物；来源 @deepseek-ai/dsh-tool-cordis ${SUPPORTED_VERSION}，MIT 许可证见 LICENSE.cordis-tool。\n// 上游 SHA-256：${SUPPORTED_SHA256}。升级 DSH 后须重新校验生成。\nimport { randomUUID } from "node:crypto";\n${result}`;
 }
 
 /**
  * 生成兼容模块和来源记录；目标只允许是用户自定义预设目录。
  * @param {{upstreamPackageJson:string,presetDir:string,presetId:string}} options 已安装上游包和目标预设。
- * @returns {Promise<{modulePath:string,metadataPath:string}>} 生成文件路径。
+ * @returns {Promise<{modulePath:string,metadataPath:string,importName:string}>} 生成文件路径与应写入组合的行名。
  */
 export async function generatePresetCordisModule(options) {
   const upstream = await realpath(options.upstreamPackageJson);
@@ -72,9 +75,9 @@ export async function generatePresetCordisModule(options) {
   });
   const modulePath = join(presetDir, 'cordis-tools.compat.mjs');
   const metadataPath = join(presetDir, 'cordis-tools.provenance.json');
-  // 不覆盖已有产物；重新生成应采用新预设并重新执行加载验证。
-  await mkdir(presetDir, { recursive: true });
-  const license = await readFile(join(dirname(upstream), 'LICENSE'));
+  // Node 按完整 URL 缓存 ESM：同一文件路径换代不会重新加载，必须用 ?v= 换缓存键。
+  // 重新生成后必须把 agent.cordis.yml 里 tool-cordis 行的 name 同步成新的 importName。
+  const importName = './cordis-tools.compat.mjs?v=' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
   const metadata = JSON.stringify({
     presetId: options.presetId,
     upstreamPackage: packageJson.name,
@@ -82,7 +85,10 @@ export async function generatePresetCordisModule(options) {
     upstreamSha256: SUPPORTED_SHA256,
     generatedSha256: createHash('sha256').update(output).digest('hex'),
     dependencies,
+    importName,
   }, null, 2) + '\n';
+  await mkdir(presetDir, { recursive: true });
+  const license = await readFile(join(dirname(upstream), 'LICENSE'));
   const created = [];
   try {
     // 模块最后落盘；发生冲突时只移除本次成功创建的文件，保留既有文件。
@@ -94,7 +100,7 @@ export async function generatePresetCordisModule(options) {
     await Promise.all(created.map(path => unlink(path)));
     throw error;
   }
-  return { modulePath, metadataPath };
+  return { modulePath, metadataPath, importName };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

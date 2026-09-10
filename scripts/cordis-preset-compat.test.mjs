@@ -60,52 +60,82 @@ function mount(module, registry, runner = {}) {
 }
 
 /** 查询始终携带实际调用方标识，专门检测是否误用挂载方作用域。 */
-function query(registry, prefix, index, id = 'agent-a') {
-  return registry.query('host', prefix + kinds[index], methods[index], undefined, { id }, new AbortController().signal);
+function query(registry, provider, index, id = 'agent-a') {
+  return registry.query('host', provider, methods[index], undefined, { id }, new AbortController().signal);
+}
+
+/** 副本接口按挂载代随机命名，精确 id 必须从注册表现查。 */
+function compatProviders(registry, index) {
+  const suffix = '/' + kinds[index];
+  return registry.list().map(item => item.id).filter(id => id.startsWith('cordis-250k/') && id.endsWith(suffix));
+}
+
+function compatProvider(registry, index) {
+  const matches = compatProviders(registry, index);
+  assert.equal(matches.length, 1, '副本应恰好注册一个 ' + kinds[index]);
+  return matches[0];
 }
 
 for (const reverse of [false, true]) {
-  test(reverse ? '先挂载前缀副本再挂载原版，两组接口均可查询' : '先挂载原版再挂载前缀副本，两组接口均可查询', async t => {
+  test(reverse ? '先挂载副本再挂载原版，两组接口均可查询' : '先挂载原版再挂载副本，两组接口均可查询', async t => {
     const registry = createRegistry(t);
     const modules = reverse ? [compat, native] : [native, compat];
     const mounts = modules.map(module => mount(module, registry));
     t.after(() => mounts.forEach(item => item.dispose()));
-    assert.deepEqual(registry.list().map(item => item.id).sort(), [...kinds, ...kinds.map(kind => 'cordis-250k/' + kind)].sort());
+    assert.equal(registry.list().length, 8);
     for (let index = 0; index < kinds.length; index++) {
-      assert.deepEqual(await query(registry, 'cordis-250k/', index), await query(registry, '', index));
+      assert.deepEqual(await query(registry, compatProvider(registry, index), index), await query(registry, kinds[index], index));
     }
   });
 }
 
-test('仅前缀副本冷加载时，四个接口及调用方工具作用域均完整', async t => {
+test('仅副本冷加载时，四个接口及调用方工具作用域均完整', async t => {
   const registry = createRegistry(t);
   const mounted = mount(compat, registry);
   t.after(mounted.dispose);
-  for (let index = 0; index < kinds.length; index++) assert.ok(await query(registry, 'cordis-250k/', index));
-  assert.deepEqual(await query(registry, 'cordis-250k/', 3, '甲'), { tools: [{ name: 'tool-for-甲', parameters: {} }] });
-  assert.deepEqual(await query(registry, 'cordis-250k/', 3, '乙'), { tools: [{ name: 'tool-for-乙', parameters: {} }] });
+  for (let index = 0; index < kinds.length; index++) assert.ok(await query(registry, compatProvider(registry, index), index));
+  assert.deepEqual(await query(registry, compatProvider(registry, 3), 3, '甲'), { tools: [{ name: 'tool-for-甲', parameters: {} }] });
+  assert.deepEqual(await query(registry, compatProvider(registry, 3), 3, '乙'), { tools: [{ name: 'tool-for-乙', parameters: {} }] });
 });
 
 for (const removeNative of [true, false]) {
-  test(removeNative ? '卸载原版后前缀接口继续工作' : '卸载前缀副本后原版接口继续工作', async t => {
+  test(removeNative ? '卸载原版后副本接口继续工作' : '卸载副本后原版接口继续工作', async t => {
     const registry = createRegistry(t);
     const original = mount(native, registry);
     const copied = mount(compat, registry);
     t.after(() => { original.dispose(); copied.dispose(); });
     (removeNative ? original : copied).dispose();
-    const prefix = removeNative ? 'cordis-250k/' : '';
     assert.equal(registry.list().length, 4);
-    for (let index = 0; index < kinds.length; index++) assert.ok(await query(registry, prefix, index));
+    for (let index = 0; index < kinds.length; index++) {
+      assert.ok(await query(registry, removeNative ? compatProvider(registry, index) : kinds[index], index));
+    }
   });
 }
 
-test('同前缀重复挂载仍拒绝，首次注册不受失败回滚影响', async t => {
+test('同预设两代并发挂载互不冲突，卸载一代不影响另一代', async t => {
   const registry = createRegistry(t);
   const first = mount(compat, registry);
-  t.after(first.dispose);
-  assert.throws(() => mount(compat, registry), /already registered/);
+  const second = mount(compat, registry);
+  t.after(() => { first.dispose(); second.dispose(); });
+  assert.equal(registry.list().length, 8);
+  for (let index = 0; index < kinds.length; index++) {
+    const ids = compatProviders(registry, index);
+    assert.equal(ids.length, 2, '两代各自注册一个 ' + kinds[index]);
+    assert.deepEqual(await query(registry, ids[0], index), await query(registry, ids[1], index));
+  }
+  first.dispose();
   assert.equal(registry.list().length, 4);
-  assert.ok(await query(registry, 'cordis-250k/', 0));
+  for (let index = 0; index < kinds.length; index++) assert.ok(await query(registry, compatProvider(registry, index), index));
+});
+
+test('注册表仍拒绝重复 id，首次注册不受失败回滚影响', async t => {
+  const registry = createRegistry(t);
+  const mounted = mount(compat, registry);
+  t.after(mounted.dispose);
+  const forged = { id: compatProvider(registry, 0), description: '伪造接口', methods: [{ name: 'listService', description: '查询服务', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, outputSchema: { description: 'JSON data' } }] };
+  assert.throws(() => registry.register({ manifest: forged, query: async () => ({}) }), /already registered/);
+  assert.equal(registry.list().length, 4);
+  assert.ok(await query(registry, compatProvider(registry, 0), 0));
 });
 
 test('所有工具名称、参数、输出结构、描述和系统提示词与原版严格一致', t => {
