@@ -45,7 +45,7 @@ export const BUILTIN_TEMPLATES: ForgeTemplate[] = [
     id: 'web-service',
     name: 'Web 服务（规范约束）',
     description: '按挂载规范生成一个 Web/API 服务：目录结构、入口、中文注释、异常边界全部按规范执行。',
-    defaultStandardIds: ['v1/common.zh', 'v1/api.zh', 'v1/web-service.zh'],
+    defaultStandardIds: ['v1/common.zh', 'v1/api.zh', 'v1/web-service.zh', 'v1/delivery.zh'],
     promptTemplate: [
       '你是服务生成子代理，必须严格遵循系统提示中的开发规范完成以下任务。',
       '目标目录：{targetDir}',
@@ -60,7 +60,7 @@ export const BUILTIN_TEMPLATES: ForgeTemplate[] = [
     id: 'frontend-app',
     name: '前端应用（规范约束）',
     description: '按挂载规范生成前端应用脚手架与核心页面，内置设计 token 与美观基线，交付即可演示。',
-    defaultStandardIds: ['v1/common.zh', 'v1/frontend.zh'],
+    defaultStandardIds: ['v1/common.zh', 'v1/frontend.zh', 'v1/delivery.zh'],
     promptTemplate: [
       '你是前端生成子代理，必须严格遵循系统提示中的开发规范完成以下任务。',
       '目标目录：{targetDir}',
