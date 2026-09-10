@@ -10,9 +10,8 @@ import { TokenUsageBoard } from './TokenUsageBoard.tsx'
 import { MiniMaxCodingPlanTab } from './MiniMaxCodingPlanTab.tsx'
 import { OpenAiGatewayTab } from './OpenAiGatewayTab.tsx'
 import { SiliconFlowCodingPlanTab } from './SiliconFlowCodingPlanTab.tsx'
-import { CodingPlanAsideUsage } from './CodingPlanAsideUsage.tsx'
-import { INITIAL_CARD, arkCard, minimaxCard, zhipuCardFromUsages } from './overview-cards.ts'
-import type { OverviewCardState, OverviewCards, OverviewProvider } from './overview-cards.ts'
+import { CodingPlanAsideUsage, INITIAL_CARD, arkCard, minimaxCard, zhipuCard } from './CodingPlanAsideUsage.tsx'
+import type { OverviewCardState, OverviewCards, OverviewProvider } from './CodingPlanAsideUsage.tsx'
 import { ZhipuCodingPlanTab } from './ZhipuCodingPlanTab.tsx'
 import css from './panel.module.css'
 
@@ -81,9 +80,8 @@ export function CodingPlanTab({ api }: CodingPlanTabProps): JSX.Element {
   // ---- 三家用量加载：原先在 UsageOverviewTab 内部，提升到本组件供侧栏速览共用 ----
   const loadZhipu = useCallback(async (): Promise<void> => {
     try {
-      // 按 Key 池逐渠道查询：侧栏可同时展示多把 Key（多渠道）的 5 小时/本周额度。
-      const [status, usages] = await Promise.all([api.getZhipuStatus(), api.getZhipuDashboards('day')])
-      if (usageMounted.current) setCards((prev) => ({ ...prev, zhipu: zhipuCardFromUsages(status, usages) }))
+      const [status, dashboard] = await Promise.all([api.getZhipuStatus(), api.getZhipuDashboard('day')])
+      if (usageMounted.current) setCards((prev) => ({ ...prev, zhipu: zhipuCard(status, dashboard) }))
     } catch (cause) {
       if (usageMounted.current) setCards((prev) => ({ ...prev, zhipu: { ...INITIAL_CARD, phase: 'error', error: errorMessage(cause) } }))
     }
