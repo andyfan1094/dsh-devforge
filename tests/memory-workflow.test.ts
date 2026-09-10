@@ -11,6 +11,7 @@ import { collectFiles, ProjectIndexer } from '../src/rag/project-indexer.ts'
 import { collectPageRefs, listMnemonMarkdowns, mnemonDataRoot, readHindsightConfig, resolveBankId } from '../src/rag/mirror.ts'
 import { buildRerankRequestBody, LlmReranker, parseRerankResponse } from '../src/rag/rerank.ts'
 import { extractLastTurnWindow, MemorySedimentService, normalizeMemoryText, sessionEventsOf } from '../src/memory/sediment.ts'
+import { generateReflectionWithTokenSteps } from '../src/memory/reflect.ts'
 import { buildMemoryQuery, messageText, MemoryInjectionService, RELATIVE_KEEP_RATIO, renderMemoryContext, renderNativeContext, stripBoilerplate } from '../src/memory/inject.ts'
 import { normalizeMemorySettings, DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
 import { MemoryStatsStore } from '../src/memory/stats.ts'
@@ -378,6 +379,37 @@ describe('会话记忆沉淀', () => {
       closeDb(join(dir, 'store.db'))
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+  test('提炼生成：截断自动扩容，成功返回也必须核对结束原因', async () => {
+    // 生产实况（0.29.8）：思考型模型 700 预算被 thinking 吃掉大半，正文 JSON 写一半，
+    // 宿主对截断的形态是「正常返回 + finish.kind=max-tokens」而不抛错——
+    // 旧写法在成功路径直接 return，半截 JSON 换来「提炼输出无法解析为 JSON」。
+    const calls: number[] = []
+    const generate = async (input: { maxTokens: number; onFinish?: (reason: string) => void }) => {
+      calls.push(input.maxTokens)
+      if (input.maxTokens < 2800) {
+        input.onFinish?.('max-tokens')
+        return '{"task":{"goal":"半截JSON'
+      }
+      input.onFinish?.('stop')
+      return '{"task":{"goal":"完整输出"},"items":[]}'
+    }
+    const text = await generateReflectionWithTokenSteps(generate, { system: 's', user: 'u' }, 700, [1, 2, 4])
+    assert.deepEqual(calls, [700, 1400, 2800], '截断必须逐档扩容，不能把半截 JSON 交给解析器')
+    assert.ok(text.includes('完整输出'))
+  })
+  test('提炼生成：抛错路径只有截断才扩容，真实故障直接上抛', async () => {
+    let calls = 0
+    const generate = async (input: { onFinish?: (reason: string) => void }) => {
+      calls += 1
+      input.onFinish?.('error')
+      throw new Error('模型调用失败：Anthropic stream ended without a stop reason')
+    }
+    await assert.rejects(
+      () => generateReflectionWithTokenSteps(generate, { system: 's', user: 'u' }, 700, [1, 2, 4]),
+      /模型调用失败/,
+    )
+    assert.equal(calls, 1, '非截断故障不扩容，避免三倍空跑')
   })
 })
 

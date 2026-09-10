@@ -48,6 +48,7 @@ import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
 import { ZhipuReranker } from './rag/rerank.ts'
 import { MemoryDreamService } from './memory/dream.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
+import { generateReflectionWithTokenSteps } from './memory/reflect.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { MemoryGovernanceService } from './memory/governance.ts'
@@ -578,31 +579,27 @@ export function apply(ctx: Context, config?: Config): void {
 
   /** 记忆提炼单次输出预算（候选 5 条 + task 复盘 JSON）。 */
   const REFLECT_BASE_TOKENS = 700
-  /** 被 token 上限截断时的自动扩容倍数：700 → 1600 → 3200，都用满仍失败才交给批次重试。 */
+  /** 被 token 上限截断时的自动扩容倍数：700 → 1400 → 2800，都用满仍失败才交给批次重试。 */
   const REFLECT_TOKEN_STEPS = [1, 2, 4] as const
 
   /**
    * 记忆提炼/复盘生成：截断自动扩容重试。
    *
-   * 硬教训（2026-09-11 生产实况）：MiniMax 等思考型模型输出被 maxTokens 截断时，宿主以
-   * "stream ended without a stop reason" 收尾——与真实故障同形。此前写法直接抛错，
-   * 沉淀 12 次全失败、任务复盘一条都落不下来。现在按宿主结束原因识别截断并扩容重试，
-   * 复盘链路自动恢复，不需要人工换模型。
+   * 硬教训一（2026-09-11 生产实况）：思考型模型输出被 maxTokens 截断时，宿主曾以
+   * "stream ended without a stop reason" 收尾，沉淀 12 次全失败——0.29.4 据此按
+   * 结束原因识别截断并扩容重试。
+   * 硬教训二（2026-09-10 生产实况）：MiniMax 调通后发现宿主对截断的另一种形态是
+   * 「正常返回 + finish.kind='max-tokens'」而不抛错——旧写法在成功返回路径直接
+   * return，半截 JSON 交给解析器，沉淀报「提炼输出无法解析为 JSON」。
+   * 两种形态统一交给 generateReflectionWithTokenSteps 处理（0.29.8）。
    */
-  const generateReflectionText = async (input: { system: string; user: string; provider?: string; model?: string }): Promise<string> => {
-    let lastError: unknown
-    for (const step of REFLECT_TOKEN_STEPS) {
-      let finishReason = ''
-      try {
-        return await generateText({ ...input, maxTokens: REFLECT_BASE_TOKENS * step, onFinish: (reason) => { finishReason = reason } })
-      } catch (error) {
-        lastError = error
-        // 只有「被 token 上限截断」才值得扩容重试；真实调用故障直接交给批次重试，避免三倍空跑。
-        if (finishReason !== '' && finishReason !== 'max-tokens' && finishReason !== 'length') throw error
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError))
-  }
+  const generateReflectionText = (input: { system: string; user: string; provider?: string; model?: string }): Promise<string> =>
+    generateReflectionWithTokenSteps(
+      (call) => generateText({ ...input, maxTokens: call.maxTokens, onFinish: call.onFinish }),
+      { system: input.system, user: input.user },
+      REFLECT_BASE_TOKENS,
+      REFLECT_TOKEN_STEPS,
+    )
 
   // ---- 会话记忆层：沉淀（turn/end）+ 主动注入（agent/pre-step）----
   const memorySettingsRead = (): MemorySettings => {
