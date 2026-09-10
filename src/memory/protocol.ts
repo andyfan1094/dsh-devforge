@@ -66,6 +66,8 @@ export interface MemorySettings {
   maxChars: number
   /** 做梦总开关：定期让模型整理记忆库（合并重复、归档过期），默认关闭需显式开启。 */
   dreamEnabled: boolean
+  /** 做梦治理建议只出不错（等待人工审核）；显式关闭即全自动应用（软删除可恢复 + 审计可回滚兜底）。 */
+  dreamProposalOnly: boolean
   /** 库静默多少分钟后才允许做梦（避免与正在进行的写入互相打断）。 */
   dreamIdleMinutes: number
   /** 两次做梦之间的最小间隔（小时）；无变化的库不会重复做梦。 */

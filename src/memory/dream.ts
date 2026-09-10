@@ -322,6 +322,8 @@ export class MemoryDreamService {
   /** 执行一轮做梦：快照 → 裁决 → 应用 → 审计。任何失败都落为 failed 审计，绝不外抛。 */
   async run(manual: boolean): Promise<MemoryDreamRun> {
     const settings = this.config()
+    // 治理建议是否只出不错：每轮读最新设置（面板改开关热生效），构造参数只兜底旧调用方。
+    const proposalOnly = settings.dreamProposalOnly ?? this.proposalOnly
     const run: MemoryDreamRun = {
       id: 'dream-' + Date.now() + '-' + randomUUID().slice(0, 8),
       manual, startedAt: Date.now(), finishedAt: 0,
@@ -374,7 +376,7 @@ export class MemoryDreamService {
           return run
         }
       }
-      if (this.proposalOnly) {
+      if (proposalOnly) {
         // 安全建议模式：模型只负责发现治理机会，任何正文修改/归档都必须人工确认。
         run.proposals = decisions.slice(0, 12)
         run.status = 'ok'
@@ -398,7 +400,7 @@ export class MemoryDreamService {
         this.statsNote(run)
       }
       this.saveRun(run)
-      this.log('dsh-devforge 记忆做梦：' + run.status + ' 快照 ' + run.snapshot + ' 条' + (this.proposalOnly ? '，治理建议 ' + (run.proposals?.length ?? 0) + ' 条（等待人工审核）' : '，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length))
+      this.log('dsh-devforge 记忆做梦：' + run.status + ' 快照 ' + run.snapshot + ' 条' + (proposalOnly ? '，治理建议 ' + (run.proposals?.length ?? 0) + ' 条（等待人工审核）' : '，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length))
     }
   }
 

@@ -651,7 +651,9 @@ export function apply(ctx: Context, config?: Config): void {
     listDomain: (domain) => ragStore.listDomainDocs(domain),
     putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
-    // 做梦只生成治理建议；模型不能直接改写、合并或归档可信事实。
+    // 裁决默认只出治理建议（红线：自动化动库必须用户点头）；记忆策略里显式关闭「治理建议自动应用」
+    // 即全自动生效（软删除可恢复 + 审计可回滚 + 钉选条目永不触碰）。此构造值只是配置未指定时的兜底，
+    // 每轮 run 都会读 memory.settings 最新值，面板改开关热生效。
     proposalOnly: true,
   })
   // 运行完成回写持久化统计（面板做梦卡片展示口径；含失败，便于发现"做梦一直失败"）。

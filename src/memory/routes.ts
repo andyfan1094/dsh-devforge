@@ -46,6 +46,9 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   maxChars: 1200,
   // 做梦默认关闭：整理动作由用户显式开启（红线：自动化动库必须用户点头）。
   dreamEnabled: false,
+  // 做梦默认只出治理建议（红线延伸：动库方式也要用户点头）；显式关闭此开关即全自动应用，
+  // 兜底是软删除可恢复 + 审计可回滚 + 钉选条目永不触碰。
+  dreamProposalOnly: true,
   dreamIdleMinutes: 10,
   dreamMinIntervalHours: 6,
   // 模型路由缺省跟随会话默认模型；建议配置专用裁决路由（如 minimax-cn + MiniMax-M2.7-highspeed）。
@@ -114,6 +117,7 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     dreamMinIntervalHours: clampNumber(body.dreamMinIntervalHours, 1, 168, current.dreamMinIntervalHours),
     dreamProvider: cleanRoute(body.dreamProvider, current.dreamProvider),
     dreamModel: cleanRoute(body.dreamModel, current.dreamModel),
+    dreamProposalOnly: typeof body.dreamProposalOnly === 'boolean' ? body.dreamProposalOnly : current.dreamProposalOnly,
     dreamMaxTokens: clampNumber(body.dreamMaxTokens, 1024, 65536, current.dreamMaxTokens),
     dreamMaxEntries: clampNumber(body.dreamMaxEntries, 20, 1000, current.dreamMaxEntries),
     dreamMaxChars: clampNumber(body.dreamMaxChars, 60, 2000, current.dreamMaxChars),

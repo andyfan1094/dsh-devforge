@@ -134,7 +134,7 @@ test('MemoryDreamService：全流程裁决-应用-审计-统计回调', async ()
       assert.equal(input.maxTokens, 8192)
       return '[{"action":"merge","ids":["' + dup1 + '","' + dup2 + '"],"content":"备份：store.db 用 6 位密码加密。","reason":"重复"},{"action":"archive","ids":["' + dup2 + '"],"reason":"已并入"}]'
     },
-    config: () => settings({ dreamEnabled: true }),
+    config: () => settings({ dreamEnabled: true, dreamProposalOnly: false }),
     listDomain: (domain) => ragStore.listDomainDocs(domain),
     putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
@@ -151,6 +151,46 @@ test('MemoryDreamService：全流程裁决-应用-审计-统计回调', async ()
   assert.equal(status.runs.length, 1)
   assert.equal(status.runs[0].manual, true)
   assert.equal(status.runs[0].model, '会话默认模型')
+})
+
+test('MemoryDreamService：dreamProposalOnly 开关决定全自动应用还是只出建议（0.30.0）', async () => {
+  // 辉哥 2026-09-10 决策：治理建议全自动应用，不再等人工审核；软删除可恢复 + 审计可回滚兜底。
+  // 设置显式优先于构造兜底：构造 proposalOnly=true 但 settings 关掉 → 全自动。
+  const auto = makeStore()
+  const a1 = seed(auto.store, '备份用 6 位密码加密 store.db')
+  const a2 = seed(auto.store, '备份加密采用 6 位密码保护 store.db')
+  for (let i = 0; i < 8; i++) seed(auto.store, '自动应用独立记忆 ' + i + '：内容各不相同不重复')
+  const autoDream = new MemoryDreamService({
+    native: auto.store,
+    generate: async () => '[{"action":"merge","ids":["' + a1 + '","' + a2 + '"],"content":"备份：store.db 用 6 位密码加密。","reason":"重复"}]',
+    config: () => settings({ dreamEnabled: true, dreamProposalOnly: false }),
+    listDomain: (domain) => auto.ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => auto.ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => auto.ragStore.deleteDomainDoc(domain, id),
+    proposalOnly: true,
+  })
+  const autoRun = await autoDream.run(true)
+  assert.equal(autoRun.proposals, undefined, '全自动模式不得产出待审建议')
+  assert.equal(autoRun.merged, 1, '全自动模式直接落库')
+  assert.equal(auto.store.list().length, 9, '合并后库条数减少')
+
+  // 反向：构造兜底 false，settings 显式开建议模式 → 只出建议不改库。
+  const manual = makeStore()
+  const m1 = seed(manual.store, '备份用 6 位密码加密 store.db')
+  for (let i = 0; i < 8; i++) seed(manual.store, '人工审核独立记忆 ' + i + '：内容各不相同不重复')
+  const manualDream = new MemoryDreamService({
+    native: manual.store,
+    generate: async () => '[{"action":"archive","ids":["' + m1 + '"],"reason":"测试建议"}]',
+    config: () => settings({ dreamEnabled: true, dreamProposalOnly: true }),
+    listDomain: (domain) => manual.ragStore.listDomainDocs(domain),
+    putDomain: (domain, id, data) => manual.ragStore.putDomainDoc(domain, id, data),
+    deleteDomain: (domain, id) => manual.ragStore.deleteDomainDoc(domain, id),
+    proposalOnly: false,
+  })
+  const manualRun = await manualDream.run(true)
+  assert.equal(manualRun.proposals?.length, 1, '建议模式只出建议')
+  assert.equal(manualRun.archived, 0, '建议模式不得直接归档')
+  assert.equal(manual.store.list().length, 9, '建议模式不改库')
 })
 
 test('MemoryDreamService：模型抛错与无数组输出都落 failed 且不改库', async () => {
@@ -227,7 +267,7 @@ test('MemoryDreamService：首次解析失败自动重试一次成功', async ()
       assert.ok(input.user.includes('补充硬性要求'))
       return '[{"action":"archive","ids":["' + store.list()[0].id + '"],"reason":"过期"}]'
     },
-    config: () => settings({ dreamEnabled: true }),
+    config: () => settings({ dreamEnabled: true, dreamProposalOnly: false }),
     listDomain: (domain) => ragStore.listDomainDocs(domain),
     putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
