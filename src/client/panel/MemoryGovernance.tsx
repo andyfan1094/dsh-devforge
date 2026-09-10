@@ -1,5 +1,5 @@
 /**
- * 记忆治理工作台：候选审核、质量统计、任务复盘、召回轨迹反馈与归档恢复。
+ * 记忆治理工作台：冲突候选处理、质量统计、任务复盘、召回轨迹反馈与归档恢复。
  * 数据职责：全部通过 DevforgeApi 访问同源治理路由；失败逐块降级，不拖垮主面板。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -25,7 +25,7 @@ function candidateBadge(candidate: MemoryCandidate): string {
   if (candidate.state === 'auto-activated') return '自动生效'
   if (candidate.state === 'approved') return '已通过'
   if (candidate.state === 'rejected') return '已拒绝'
-  return '待审核'
+  return '待处理'
 }
 
 export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
@@ -120,7 +120,7 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
           <span className={css['categoryBadge']}>{candidateBadge(candidate)}</span>
           <span className={css['inlineActions']}><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void approve(candidate) }}>{candidate.conflictIds.length > 0 ? '批准并取代冲突' : '批准'}</button><button type="button" className={css['dangerButton']} disabled={busy} onClick={() => { void reject(candidate) }}>拒绝</button></span>
         </div>)}
-      </div> : <div className={css['empty']}>没有待审核候选。会话沉淀中值得长期保存的内容会先进入这里，经确认后才参与召回。</div>}
+      </div> : <div className={css['empty']}>队列干净：自动沉淀直接生效，不会停留在这里；只有候选之间发生冲突（同一记忆键内容不一致）时才会进入本队列待处理。</div>}
 
       {episodes.length > 0 ? <div className={css['memoryTable']} data-cols="4">
         <div className={css['memoryTableHead']}><span>任务复盘</span><span>结果</span><span>工具</span><span>时间</span></div>
