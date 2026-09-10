@@ -9,6 +9,7 @@ import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type Mem
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
+import { MemoryGovernance } from './MemoryGovernance.tsx'
 
 type Notice = { kind: 'success' | 'error'; text: string }
 
@@ -317,7 +318,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
                 <label className={css['compactField']}><span className={css['fieldLabel']}>裁决服务商（空=跟随默认路由）</span><select className={css['input']} value={settings.dreamProvider} onChange={(e) => updateSettings({ dreamProvider: e.target.value, dreamModel: '' })}><option value="">跟随默认路由</option>{catalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.name || provider.id}</option>)}{settings.dreamProvider !== '' && !catalog.some((provider) => provider.id === settings.dreamProvider) && <option value={settings.dreamProvider}>{settings.dreamProvider}（已存，目录中暂无）</option>}</select></label>
                 <label className={css['compactField']}><span className={css['fieldLabel']}>裁决模型（空=跟随默认）</span><select className={css['input']} value={settings.dreamModel} disabled={settings.dreamProvider === ''} onChange={(e) => updateSettings({ dreamModel: e.target.value })}><option value="">跟随默认</option>{(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}{settings.dreamProvider !== '' && settings.dreamModel !== '' && !(catalog.find((provider) => provider.id === settings.dreamProvider)?.models ?? []).some((model) => model.id === settings.dreamModel) && <option value={settings.dreamModel}>{settings.dreamModel}（已存，目录中暂无）</option>}</select></label>
               </div>
-              <label className={css['toggleRow']}><input type="checkbox" checked={settings.dreamEnabled} onChange={(e) => updateSettings({ dreamEnabled: e.target.checked })}/><span><strong>做梦整理</strong><small>库静默后让模型合并重复、归档过期记忆（软删除，可恢复）；钉选条目绝不触碰。</small></span></label>
+              <label className={css['toggleRow']}><input type="checkbox" checked={settings.dreamEnabled} onChange={(e) => updateSettings({ dreamEnabled: e.target.checked })}/><span><strong>做梦整理（仅产生治理建议）</strong><small>模型只负责发现重复/过期记忆并给出建议，任何合并、归档都必须在下方「记忆治理」人工确认后才生效。</small></span></label>
               <div className={css['formFooter']}><span className={css['sectionHint']}>设置存入本地 store.db，不依赖外部记忆插件。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveSettings() }}>保存策略</button></div>
             </div>}
           </section>
@@ -330,10 +331,12 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
               {dream.runs.slice(0, 6).map((run) => <div key={run.id} className={css['memoryTableRow']}>
                 <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
                 <span className={css['categoryBadge']}>{run.status}</span>
-                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
+                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : Array.isArray(run.proposals) ? '快照 ' + run.snapshot + ' · 治理建议 ' + run.proposals.length + ' 条（待人工审核）' : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
               </div>)}
             </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
           </section>
+
+          <MemoryGovernance api={api} />
 
           <section className={css['memoryPanel']}>
             <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置记忆搜索与新增</h3><p className={css['sectionHint']}>关键词检索长期记忆主存储；也可以手动补录重要信息。</p></div><span className={css['badge']} data-kind="success">已上线</span></div>

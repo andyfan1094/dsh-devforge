@@ -7,7 +7,7 @@ import { RagStore } from '../src/rag/rag-store.ts'
 import { NativeMemoryStore } from '../src/memory/native.ts'
 import { memoryManageTool } from '../src/memory/tools.ts'
 
-test('memory_manage 保存、检索、更新和删除内置记忆', async () => {
+test('memory_manage 保存、检索、更新和软归档内置记忆', async () => {
   const store = new NativeMemoryStore(new RagStore(join(mkdtempSync(join(tmpdir(), 'dsh-memory-tools-')), 'rag.db')))
   const tool = memoryManageTool(store) as any
   const saved = await tool.execute({ action: 'save', content: '抖音媒体接口为空时，先检查浏览器媒体缓存。', category: 'insight', tags: ['抖音', '踩坑'], pinned: true, source: 'user-confirmed' })
@@ -19,7 +19,12 @@ test('memory_manage 保存、检索、更新和删除内置记忆', async () => 
   assert.equal(updated.entry.pinned, undefined)
   const deleted = await tool.execute({ action: 'delete', id: saved.entry.id })
   assert.equal(deleted.ok, true)
-  assert.equal((await tool.execute({ action: 'get', id: saved.entry.id })).ok, false)
+  // 软归档语义：get 仍可读但状态变为 archived，检索不再命中。
+  const archived = await tool.execute({ action: 'get', id: saved.entry.id })
+  assert.equal(archived.ok, true)
+  assert.equal(archived.entry.state, 'archived')
+  const searched = await tool.execute({ action: 'search', query: '浏览器媒体缓存' })
+  assert.equal(searched.entries.length, 0)
 })
 
 test('memory_manage 校验保存内容', async () => {

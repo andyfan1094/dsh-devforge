@@ -15,7 +15,7 @@ import { MINIMAX_API, type MiniMaxDashboard, type MiniMaxStatus } from '../minim
 import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageDashboard } from '../ark/protocol.ts'
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayModelPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
-import { MEMORY_API, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEpisode, type MemoryGraph, type MemoryQualityStats, type MemoryRecallFeedback, type MemoryRecallTrace, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
 import { BRAIN_ROUTER_API, type BrainRouterCatalogProvider, type BrainRouterSettings, type BrainRouterStatus } from '../brain-router/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
@@ -811,6 +811,55 @@ export class DevforgeApi {
   /** 手动触发一轮记忆做梦整理（异步执行，结果经 getMemoryDreamStatus 轮询）。 */
   async runMemoryDream(signal?: AbortSignal): Promise<{ started: boolean; message: string }> {
     return await readJson<{ started: boolean; message: string }>(await fetch(MEMORY_API.dreamRun, { method: 'POST', signal }))
+  }
+
+  /** 读取可信记忆质量统计（状态/信任/候选/反馈分列）。 */
+  async getMemoryQuality(signal?: AbortSignal): Promise<MemoryQualityStats> {
+    const data = await readJson<{ quality: MemoryQualityStats }>(await fetch(MEMORY_API.quality, { signal }))
+    return data.quality
+  }
+
+  /** 读取待审核候选（states 缺省返回 pending 与 needs-resolution）。 */
+  async listMemoryCandidates(states?: string[], signal?: AbortSignal): Promise<MemoryCandidate[]> {
+    const query = states === undefined ? '' : '?states=' + encodeURIComponent(states.join(','))
+    const data = await readJson<{ candidates: MemoryCandidate[] }>(await fetch(MEMORY_API.candidates + query, { signal }))
+    return data.candidates
+  }
+
+  /** 人工审核候选：approve 激活（冲突需附 supersedesIds），reject 拒绝。 */
+  async decideMemoryCandidate(input: { id: string; action: 'approve' | 'reject'; reason?: string; supersedesIds?: string[]; content?: string; scope?: { kind: string; id?: string; label?: string } }, signal?: AbortSignal): Promise<{ candidate: MemoryCandidate; entry?: NativeMemoryEntry }> {
+    return await readJson(await fetch(MEMORY_API.candidateDecision, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
+  }
+
+  /** 读取归档/隔离/已取代条目（默认仅人工归档）。 */
+  async listArchivedMemories(states?: string[], signal?: AbortSignal): Promise<NativeMemoryEntry[]> {
+    const query = states === undefined ? '' : '?states=' + encodeURIComponent(states.join(','))
+    const data = await readJson<{ entries: NativeMemoryEntry[] }>(await fetch(MEMORY_API.archived + query, { signal }))
+    return data.entries
+  }
+
+  /** 恢复人工归档的条目（superseded/quarantined 不可直接恢复）。 */
+  async restoreArchivedMemory(id: string, signal?: AbortSignal): Promise<NativeMemoryEntry> {
+    const data = await readJson<{ entry: NativeMemoryEntry }>(await fetch(MEMORY_API.restore, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }), signal }))
+    return data.entry
+  }
+
+  /** 对真实注入过的记忆提交质量反馈（同一次注入同一记忆只计一次）。 */
+  async submitMemoryFeedback(input: { recallId: string; entryId: string; verdict: 'useful' | 'irrelevant' | 'incorrect' | 'outdated'; note?: string }, signal?: AbortSignal): Promise<MemoryRecallFeedback> {
+    const data = await readJson<{ feedback: MemoryRecallFeedback }>(await fetch(MEMORY_API.feedback, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
+    return data.feedback
+  }
+
+  /** 读取任务复盘（新到旧）。 */
+  async listMemoryEpisodes(limit = 50, signal?: AbortSignal): Promise<MemoryEpisode[]> {
+    const data = await readJson<{ episodes: MemoryEpisode[] }>(await fetch(MEMORY_API.episodes + '?limit=' + limit, { signal }))
+    return data.episodes
+  }
+
+  /** 读取召回轨迹（新到旧，含降级原因与逐命中明细）。 */
+  async listMemoryRecalls(limit = 50, signal?: AbortSignal): Promise<MemoryRecallTrace[]> {
+    const data = await readJson<{ recalls: MemoryRecallTrace[] }>(await fetch(MEMORY_API.recalls + '?limit=' + limit, { signal }))
+    return data.recalls
   }
 
   /** 写入受管凭据到 $DSH_HOME/.credentials.yaml（loopback 围栏）。 */

@@ -14,10 +14,11 @@ import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror
 import { collectHindsightItems, collectMnemeItems, collectMnemonItems } from './migrate.ts'
 import { buildMemoryGraph } from './graph.ts'
 import type { MemoryDreamService } from './dream.ts'
+import type { MemoryGovernanceService } from './governance.ts'
 import type { MemorySedimentService } from './sediment.ts'
 import type { MemoryStatsStore } from './stats.ts'
 import type { MemoryInjectionService } from './inject.ts'
-import { NativeMemoryStore, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
+import { NativeMemoryStore, type NativeMemoryCategory, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
 import { DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './profile.ts'
 import type { MemorySettings } from './protocol.ts'
 export type { MemorySettings }
@@ -30,6 +31,12 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   enabled: true,
   autoSediment: true,
   autoInject: true,
+  autoReflect: true,
+  autoAcceptExplicit: true,
+  semanticRecall: true,
+  scopeIsolation: true,
+  feedbackTracking: true,
+  semanticWeight: 0.35,
   topK: 4,
   threshold: 0.35,
   maxChars: 1200,
@@ -87,6 +94,12 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     enabled: typeof body.enabled === 'boolean' ? body.enabled : current.enabled,
     autoSediment: typeof body.autoSediment === 'boolean' ? body.autoSediment : current.autoSediment,
     autoInject: typeof body.autoInject === 'boolean' ? body.autoInject : current.autoInject,
+    autoReflect: typeof body.autoReflect === 'boolean' ? body.autoReflect : current.autoReflect,
+    autoAcceptExplicit: typeof body.autoAcceptExplicit === 'boolean' ? body.autoAcceptExplicit : current.autoAcceptExplicit,
+    semanticRecall: typeof body.semanticRecall === 'boolean' ? body.semanticRecall : current.semanticRecall,
+    scopeIsolation: typeof body.scopeIsolation === 'boolean' ? body.scopeIsolation : current.scopeIsolation,
+    feedbackTracking: typeof body.feedbackTracking === 'boolean' ? body.feedbackTracking : current.feedbackTracking,
+    semanticWeight: typeof body.semanticWeight === 'number' && body.semanticWeight >= 0 && body.semanticWeight <= 0.8 ? body.semanticWeight : current.semanticWeight,
     topK: typeof body.topK === 'number' && body.topK > 0 ? Math.min(20, Math.floor(body.topK)) : current.topK,
     threshold: typeof body.threshold === 'number' && body.threshold >= 0 && body.threshold <= 1 ? body.threshold : current.threshold,
     maxChars: typeof body.maxChars === 'number' && body.maxChars >= 300 ? Math.min(4000, Math.floor(body.maxChars)) : current.maxChars,
@@ -116,6 +129,8 @@ export interface MemoryRouteDeps {
   getProfile: () => MemoryUserProfile
   putProfile: (next: MemoryUserProfile) => void
   native: NativeMemoryStore
+  /** 候选审核、任务复盘、召回轨迹与质量统计。 */
+  governance: MemoryGovernanceService
   /** 做梦整理服务：状态查询与手动触发入口。 */
   dream: MemoryDreamService
 }
@@ -128,8 +143,94 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native, injection, stats, getProfile, putProfile, dream } = deps
+  const { rag, sediment, native, injection, stats, getProfile, putProfile, dream, governance } = deps
   return [
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/quality',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { writeJson(res, 200, { ok: true, quality: governance.quality() }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/candidates',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          const url = new URL(req.url ?? '', 'http://localhost')
+          const states = (url.searchParams.get('states') ?? 'pending,needs-resolution').split(',').filter(Boolean) as Array<'pending' | 'needs-resolution' | 'approved' | 'rejected' | 'deduped'>
+          writeJson(res, 200, { ok: true, candidates: governance.listCandidates({ states, limit: Number(url.searchParams.get('limit') ?? 200) }) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/candidates/decision',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          if (body === null || typeof body.id !== 'string' || (body.action !== 'approve' && body.action !== 'reject')) { writeJson(res, 400, { ok: false, error: 'id 与 action(approve/reject) 必填' }); return }
+          writeJson(res, 200, { ok: true, ...governance.review(body as never) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/archived',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          const url = new URL(req.url ?? '', 'http://localhost')
+          const rawStates = (url.searchParams.get('states') ?? 'archived').split(',').filter(Boolean)
+          const states = rawStates.filter((state): state is 'archived' | 'superseded' | 'quarantined' => state === 'archived' || state === 'superseded' || state === 'quarantined')
+          writeJson(res, 200, { ok: true, entries: native.listArchived({ limit: 1000, ...(states.length > 0 ? { states } : {}) }) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/restore',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try { const body = await readJsonBody(req); const id = typeof body?.id === 'string' ? body.id : ''; if (id === '') { writeJson(res, 400, { ok: false, error: 'id 必填' }); return }; writeJson(res, 200, { ok: true, entry: native.archive(id, false) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/feedback',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const verdicts = new Set(['useful', 'irrelevant', 'incorrect', 'outdated'])
+          if (body === null || typeof body.recallId !== 'string' || typeof body.entryId !== 'string' || !verdicts.has(String(body.verdict))) { writeJson(res, 400, { ok: false, error: 'recallId、entryId 与 verdict 无效' }); return }
+          writeJson(res, 200, { ok: true, feedback: governance.submitFeedback(body as never) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/episodes',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { const url = new URL(req.url ?? '', 'http://localhost'); writeJson(res, 200, { ok: true, episodes: governance.listEpisodes(Number(url.searchParams.get('limit') ?? 100)) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      kind: 'exact', path: '/api/dsh-devforge/memory/recalls',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { const url = new URL(req.url ?? '', 'http://localhost'); writeJson(res, 200, { ok: true, recalls: governance.listRecalls(Number(url.searchParams.get('limit') ?? 100)) }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/profile',
       handler: async (req, res) => {
@@ -150,8 +251,16 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res)) return
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
-        try { writeJson(res, 200, { ok: true, entries: native.list({ limit: 200 }) }) }
-        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+        try {
+          const url = new URL(req.url ?? '', 'http://localhost')
+          const query = url.searchParams.get('q') ?? ''
+          const category = url.searchParams.get('category')
+          const limit = Number(url.searchParams.get('limit') ?? 200)
+          const entries = query.trim() === ''
+            ? native.list({ limit, ...(category !== null && category !== '' ? { category: category as NativeMemoryCategory } : {}) })
+            : native.search(query, { limit, ...(category !== null && category !== '' ? { category: category as NativeMemoryCategory } : {}) })
+          writeJson(res, 200, { ok: true, entries, total: native.activeCount() })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },
     },
     {
@@ -195,8 +304,13 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res)) return
         if (req.method !== 'DELETE') { writeJson(res, 405, { ok: false, error: 'DELETE only' }); return }
-        try { const body = await readJsonBody(req); const id = typeof body?.id === 'string' ? body.id : ''; if (body === null || id === '') { writeJson(res, 400, { ok: false, error: 'id 必填且请求体合法' }); return }; if (!native.delete(id)) { writeJson(res, 404, { ok: false, error: '记忆不存在' }); return }; writeJson(res, 200, { ok: true }) }
-        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+        try {
+          const body = await readJsonBody(req)
+          const id = typeof body?.id === 'string' ? body.id : ''
+          if (body === null || id === '') { writeJson(res, 400, { ok: false, error: 'id 必填且请求体合法' }); return }
+          // 工作台删除一律软归档（可恢复）；硬删除只保留给底层清理，不暴露给面板。
+          writeJson(res, 200, { ok: true, entry: native.archive(id, true) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },
     },
     {
@@ -280,6 +394,7 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               lastDreamAt: stats.read().lastDreamAt,
               lastDreamStatus: stats.read().lastDreamStatus,
               lastDreamSummary: stats.read().lastDreamSummary,
+              quality: governance.quality(),
               mirror: {
                 mnemonRootExists: existsSync(mnemonRoot),
                 hindsightConfigured: hindsight !== undefined,

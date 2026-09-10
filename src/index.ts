@@ -50,6 +50,9 @@ import { MemoryDreamService } from './memory/dream.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
+import { MemoryGovernanceService } from './memory/governance.ts'
+import { MemoryRecallService } from './memory/recall.ts'
+import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
 import { UserProfileInjectionService, DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './memory/profile.ts'
@@ -535,6 +538,14 @@ export function apply(ctx: Context, config?: Config): void {
   const ragStore = new RagStore()
   const ragService = new RagService(ragStore, ragEmbedders)
   const nativeMemory = new NativeMemoryStore(ragStore)
+  const memoryGovernance = new MemoryGovernanceService(ragStore, nativeMemory)
+  const memoryRecall = new MemoryRecallService(nativeMemory, ragService, ragStore)
+  /** 会话 cwd 是作用域唯一可信来源；项目 id 来自 Host 项目登记表。 */
+  const memoryScopeOfSession = (session: unknown) => {
+    const cwd = (session as { header?: { cwd?: unknown } } | null)?.header?.cwd
+    return resolveMemoryScope(typeof cwd === 'string' ? cwd : undefined, listProjects())
+  }
+  const memoryScopeOfAgent = (agent: unknown) => memoryScopeOfSession((agent as { session?: unknown } | null)?.session)
   // 精排：智谱 rerank 首选，LLM 打分兜底（跟随默认模型路由）；凭据同样走 Key 池第一把。
   ragService.setReranker(new ZhipuReranker(zhipuPoolCredential('尚未配置智谱 API Key（Key 池为空），RAG 精排不可用。')))
 
@@ -592,11 +603,11 @@ export function apply(ctx: Context, config?: Config): void {
   }, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
-  }, nativeMemory, memoryStats)
+  }, nativeMemory, memoryStats, { governance: memoryGovernance, scopeOf: memoryScopeOfSession })
   const injection = new MemoryInjectionService(ragService, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
-  }, nativeMemory, memoryStats)
+  }, nativeMemory, memoryStats, { recall: memoryRecall, governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent })
 
   // ---- 记忆库做梦整理：静默窗口触发的合并/归档，审计落 store.db memory.dreamrun 域 ----
   const dream = new MemoryDreamService({
@@ -611,6 +622,8 @@ export function apply(ctx: Context, config?: Config): void {
     listDomain: (domain) => ragStore.listDomainDocs(domain),
     putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
+    // 做梦只生成治理建议；模型不能直接改写、合并或归档可信事实。
+    proposalOnly: true,
   })
   // 运行完成回写持久化统计（面板做梦卡片展示口径；含失败，便于发现"做梦一直失败"）。
   dream.onRunFinished = (run) => {
@@ -618,7 +631,9 @@ export function apply(ctx: Context, config?: Config): void {
       ? '失败：' + (run.error ?? '未知原因')
       : run.status === 'skipped'
         ? (run.error ?? '未达触发条件')
-        : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length + (run.retried === true ? '（解析重试后成功）' : '')
+        : run.proposals !== undefined
+          ? '快照 ' + run.snapshot + ' 条，产生治理建议 ' + run.proposals.length + ' 条（仅建议不落库，等待人工审核）' + (run.retried === true ? '（解析重试后成功）' : '')
+          : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length + (run.retried === true ? '（解析重试后成功）' : '')
     memoryStats.update((prev) => ({ ...prev, dreamTotal: prev.dreamTotal + 1, lastDreamAt: run.finishedAt, lastDreamStatus: run.status, lastDreamSummary: summary.slice(0, 200) }))
   }
   dream.start()
@@ -685,7 +700,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, dream }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
     // 主脑路由（0.26.0）：面板读写设置 + 模型目录；委派拦截在 apply 阶段一次性挂载。
@@ -696,7 +711,7 @@ export function apply(ctx: Context, config?: Config): void {
       wrapperInstalled: () => brainRouterWrapperInstalled,
     }),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), memoryManageTool(nativeMemory), devforgeProjectTool(), devforgeWorkspaceTool()]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

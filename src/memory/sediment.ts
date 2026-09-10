@@ -1,41 +1,36 @@
 /**
- * 会话记忆自动沉淀 —— turn/end 驱动的记忆提炼入库。
+ * 会话记忆自动沉淀与任务复盘。
  *
- * - 订阅宿主 session/event（turn/end），轮次提交后立即提取该轮不可变窗口入队，
- *   静默期（默认 15s，测试可注入更短值）后把该会话全部未处理窗口合并成
- *   一次提炼（一次模型调用，最多 5 条候选）；
- * - 与库内已有记忆做规范化文本去重（全等或互含），命中即跳过（防重复入库）；
- * - memory.entry（内置长期记忆）为唯一事实源：有内置存储时只写 native，
- *   不再双写 RAG 文档——RAG 副本在整理/更新时不会同步失效，是「旧事实
- *   反复召回」的根因之一；RAG 记忆库仅保留 legacy 兜底路径（无 native 时）。
- * 红线：不落任何凭据；提炼失败只计数，绝不影响会话本身。
- *
- * 0.26.4 修复（记忆系统失效根因，均有回归测试）：
- * 1. 旧实现读取 session.events——宿主公共 API 是 snapshotEvents()，属性不存在
- *    导致提炼定时器每次空转，自动沉淀实际从未执行（生产 lastSedimentAt=0）；
- * 2. 旧实现 60s 防抖期内新轮次不断重置定时器、只提炼最后一轮，活跃会话的
- *    中间轮次永久丢失。现在 turn/end 立即提取窗口入队，不再互相覆盖；
- * 3. 提炼窗口过滤插件/工具来源消息：记忆注入快照绝不能回流成「记忆」，
- *    否则旧事实被改写再入库，形成自我强化回路；
- * 4. 失败可观测：尝试/失败计数与脱敏原因挂在服务实例上，经 status 路由暴露。
+ * turn/end 到达时立即把不可变窗口写入持久化待处理域，静默期后批量调用模型。
+ * 新版接入 MemoryGovernanceService 时，模型输出只能成为待审核候选；没有治理服务的
+ * 旧测试/回滚环境保留 legacy 直写路径。记忆快照自身永不回流进提炼窗口。
  */
 import { createHash } from 'node:crypto'
 import type { RagService } from '../rag/service.ts'
-import type { MemorySettings } from './protocol.ts'
+import type { MemoryGovernanceService } from './governance.ts'
+import type { MemorySettings, MemoryEvidence, MemoryScopeContext, NativeMemoryCategory } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryStatsStore } from './stats.ts'
 
-/** 记忆提炼用的文本生成适配器（接线层用 ctx.llm.stream 实现；测试注入 fake）。 */
 export type MemoryGenerateFn = (system: string, user: string) => Promise<string>
 
-/** 提炼候选（模型 JSON 输出）。 */
-interface MemoryCandidate {
+interface ExtractedCandidate {
   content: string
+  category?: NativeMemoryCategory
   importance: 'critical' | 'normal' | 'low'
+  confidence?: number
+  reason?: string
+  memoryKey?: string
 }
 
-/** 从会话事件里读取事件清单：优先宿主公共 API snapshotEvents()，旧版 session.events 兜底。
- * 0.26.4 关键修复：真实 Session 没有 events 属性，旧实现因此永远拿不到事件。 */
+interface ReflectionTask {
+  goal?: string
+  summary?: string
+  outcome?: 'success' | 'partial' | 'failure' | 'unknown'
+  lessons?: string[]
+  usedMemoryIds?: string[]
+}
+
 export function sessionEventsOf(session: unknown): readonly unknown[] {
   const record = session as { snapshotEvents?: unknown; events?: unknown } | null
   if (record === null || typeof record !== 'object') return []
@@ -43,111 +38,164 @@ export function sessionEventsOf(session: unknown): readonly unknown[] {
     try {
       const events = (record.snapshotEvents as () => readonly unknown[])()
       return Array.isArray(events) ? events : []
-    } catch { /* snapshot 异常按空处理，让上层走无事件分支 */ }
+    } catch { /* snapshot 异常按空处理 */ }
   }
   return Array.isArray(record.events) ? record.events : []
 }
 
-/** 判断事件来源是否为本插件注入的记忆快照（只有这类消息不是用户意图，不得进入提炼窗口）。
- * 0.26.5 修正：后台任务通知（如 tool-jobs）也是 plugin 来源，但它们承载的正是
- * 「智能体干活」的轮次——干活的总结恰恰来自这些轮次，不能一刀切排除；
- * 只排除本插件的记忆快照，防止旧记忆回流再入库。 */
 function isMemorySnapshotSource(data: unknown): boolean {
   const source = (data as { source?: { kind?: unknown; plugin?: unknown } } | undefined)?.source
-  if (source === null || typeof source !== 'object') return false
-  const record = source as { kind?: unknown; plugin?: unknown }
-  return record.kind === 'plugin' && record.plugin === 'dsh-devforge'
+  return source !== null && typeof source === 'object' && source.kind === 'plugin' && source.plugin === 'dsh-devforge'
 }
 
-/** 从会话事件里提取最近一轮的用户/助手文本窗口（导出供单测）。
- * 本插件记忆快照一律排除，防止旧记忆回流；其余 plugin 消息（任务通知等）
- * 作为对话上下文保留——没有真实用户输入的工作轮次同样成立。 */
-export function extractLastTurnWindow(events: readonly unknown[], maxChars = 9000): { userText: string; assistantText: string } {
-  let lastEnd = -1
-  for (let i = events.length - 1; i >= 0; i--) {
-    if ((events[i] as { type?: unknown })?.type === 'turn/end') { lastEnd = i; break }
+function contentText(data: unknown): string {
+  const record = data as { content?: unknown; message?: { content?: unknown } } | undefined
+  const content = Array.isArray(record?.content) ? record.content : Array.isArray(record?.message?.content) ? record.message.content : []
+  return content.map((block) => {
+    const value = block as { type?: unknown; text?: unknown }
+    return value?.type === 'text' && typeof value.text === 'string' ? value.text : ''
+  }).join('')
+}
+
+function lastTurnBounds(events: readonly unknown[]): { start: number; end: number } | undefined {
+  let end = -1
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if ((events[index] as { type?: unknown })?.type === 'turn/end') { end = index; break }
   }
-  if (lastEnd < 0) return { userText: '', assistantText: '' }
+  if (end < 0) return undefined
   let start = 0
-  for (let i = lastEnd - 1; i >= 0; i--) {
-    if ((events[i] as { type?: unknown })?.type === 'turn/end') { start = i + 1; break }
+  for (let index = end - 1; index >= 0; index -= 1) {
+    if ((events[index] as { type?: unknown })?.type === 'turn/end') { start = index + 1; break }
   }
+  return { start, end }
+}
+
+/** 提取最近一轮用户/助手文本；插件记忆快照必须排除，其他后台通知保留。 */
+export function extractLastTurnWindow(events: readonly unknown[], maxChars = 9000): { userText: string; assistantText: string } {
+  const bounds = lastTurnBounds(events)
+  if (bounds === undefined) return { userText: '', assistantText: '' }
   const userParts: string[] = []
   const assistantParts: string[] = []
-  for (const raw of events.slice(start, lastEnd)) {
+  for (const raw of events.slice(bounds.start, bounds.end)) {
     const event = raw as { type?: unknown; data?: unknown }
-    const data = event.data as { content?: unknown; message?: unknown } | undefined
-    const content = Array.isArray(data?.content) ? data?.content : Array.isArray((data?.message as { content?: unknown })?.content) ? (data?.message as { content: unknown[] }).content : undefined
-    if (!Array.isArray(content)) continue
-    const text = content.map((block) => {
-      const b = block as { type?: unknown; text?: unknown }
-      return b?.type === 'text' && typeof b.text === 'string' ? b.text : ''
-    }).join('')
-    if (text.trim() === '') continue
-    if (event.type === 'user/message') {
-      if (isMemorySnapshotSource(event.data)) continue
-      userParts.push(text)
-    }
+    if (isMemorySnapshotSource(event.data)) continue
+    const text = contentText(event.data)
+    if (text === '') continue
+    if (event.type === 'user/message') userParts.push(text)
     else if (event.type === 'assistant/message') assistantParts.push(text)
   }
-  return { userText: userParts.join('\n').slice(-maxChars), assistantText: assistantParts.join('\n').slice(0, maxChars) }
+  return { userText: userParts.join('\n').slice(-maxChars), assistantText: assistantParts.join('\n').slice(-maxChars) }
 }
 
-/** 记忆规范化（去重键）：压空白去首尾。 */
+/** 压空白后的内容键，供 legacy 去重与测试复用。 */
 export function normalizeMemoryText(text: string): string {
   return text.replace(/\s+/gu, ' ').trim()
 }
 
-/** 强临时状态信号：命中即视为「一次性任务进度」，不沉淀。
- * 这类条目（未提交/未推送/待验收等）很快过期，却会在之后的每轮检索里反复被
- * 命中注入，是「注入不相关」的高发来源；宁可漏存也不存噪音（提示词约束之外的双保险）。 */
 const TRANSIENT_STATE_PATTERN = /(未提交|尚未提交|暂未提交|未推送|暂未推送|尚未推送|待验收|稍后继续|下次继续|回头再)/u
 
-/** 提炼静默期默认值：轮次提交后等 15s 无新轮次才提炼（活跃对话合并批处理；
- * 测试经 options.delayMs 注入毫秒级短值）。 */
+/** 只有宿主明确报告的中断/失败才算未完成轮次；缺省（unknown）按正常完成处理。
+ * 真实宿主的 turn/end 事件往往不带 reason.kind，白名单会让自动沉淀整体失效。 */
+const NON_COMPLETED_REASONS = new Set(['aborted', 'error', 'cancelled', 'canceled', 'interrupted', 'timeout', 'failed'])
+
+export function isCompletedReason(reason: string): boolean {
+  return !NON_COMPLETED_REASONS.has(reason.toLocaleLowerCase())
+}
+
 export const DEFAULT_SEDIMENT_DELAY_MS = 15_000
-
-/** 单会话待处理窗口上限：防止持续失败的会话无限堆积（超出丢最旧）。 */
-const MAX_PENDING_WINDOWS = 20
-
-/** 批处理失败后的自动重试上限：超过后保留窗口待下一次 turn/end 自然再试。 */
+const MAX_PENDING_WINDOWS = 100
 const MAX_BATCH_RETRIES = 2
 
-/** 已完成但尚未提炼的轮次窗口（turn/end 提交时立即提取的不可变快照）。 */
-interface PendingWindow { turn: number; userText: string; assistantText: string }
+interface PendingWindow {
+  pendingId?: string
+  turn: number
+  userText: string
+  assistantText: string
+  completed: boolean
+  endReason: string
+  scope: MemoryScopeContext
+  evidence: MemoryEvidence[]
+  toolNames: string[]
+  toolSuccesses: number
+  toolFailures: number
+}
 
-/** 沉淀服务构造选项（测试注入短静默期）。 */
-export interface MemorySedimentOptions { delayMs?: number }
+export interface MemorySedimentOptions {
+  delayMs?: number
+  governance?: MemoryGovernanceService
+  scopeOf?: (session: unknown) => MemoryScopeContext
+}
+
+/** 从轮次事件构造脱敏证据与工具结果统计。 */
+function turnDetails(events: readonly unknown[], sessionId: string, scope: MemoryScopeContext, reason: string): Omit<PendingWindow, 'pendingId' | 'turn'> {
+  const bounds = lastTurnBounds(events)
+  const window = extractLastTurnWindow(events)
+  const evidence: MemoryEvidence[] = []
+  const toolNames = new Map<string, string>()
+  let toolSuccesses = 0
+  let toolFailures = 0
+  if (bounds !== undefined) {
+    for (const raw of events.slice(bounds.start, bounds.end)) {
+      const event = raw as { seq?: unknown; type?: unknown; data?: unknown }
+      const data = event.data as Record<string, unknown> | undefined
+      if (event.type === 'tool/call') {
+        const callId = typeof data?.callId === 'string' ? data.callId : ''
+        const name = typeof data?.name === 'string' ? data.name : ''
+        if (callId !== '' && name !== '') toolNames.set(callId, name)
+      }
+      if (event.type === 'user/message') {
+        const source = data?.source as { kind?: unknown } | undefined
+        if (source?.kind !== 'user') continue
+        const quote = normalizeMemoryText(contentText(data)).slice(0, 500)
+        const messageId = typeof data?.id === 'string' ? data.id : ''
+        if (quote !== '' && messageId !== '') evidence.push({ kind: 'user', quote, sessionId, messageId, ...(typeof event.seq === 'number' ? { eventSeq: event.seq } : {}), digest: createHash('sha256').update(quote).digest('hex'), createdAt: Date.now() })
+      }
+      if (event.type === 'tool/result') {
+        const message = data?.message as { source?: { callId?: unknown } } | undefined
+        const callId = typeof message?.source?.callId === 'string' ? message.source.callId : ''
+        const quote = normalizeMemoryText(contentText(data)).slice(0, 500)
+        const failed = data?.error !== undefined
+        if (failed) toolFailures += 1
+        else toolSuccesses += 1
+        if (quote !== '') evidence.push({ kind: 'tool', quote, sessionId, ...(callId === '' ? {} : { callId }), ...(typeof event.seq === 'number' ? { eventSeq: event.seq } : {}), digest: createHash('sha256').update(quote).digest('hex'), createdAt: Date.now() })
+      }
+    }
+  }
+  return { ...window, completed: isCompletedReason(reason), endReason: reason, scope, evidence: evidence.slice(0, 8), toolNames: [...new Set(toolNames.values())].slice(0, 50), toolSuccesses, toolFailures }
+}
 
 /** 会话记忆沉淀服务。 */
 export class MemorySedimentService {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
-  /** 每会话待处理窗口队列 + 重试计数：turn/end 立即入队，静默期后批量提炼。 */
   private readonly pending = new Map<string, { windows: PendingWindow[]; retries: number }>()
-  /** 已成功提炼的水位（会话 → 最大轮次）：防止同一轮重复提炼。 */
   private processedTurns = new Map<string, number>()
   private existingKeys: Set<string> | undefined
   sedimentCount = 0
   lastSedimentAt = 0
-  /** 本次进程运行期提炼尝试次数（含失败；观测自动沉淀是否真的在跑）。 */
   attemptCount = 0
-  /** 本次进程运行期提炼失败次数（模型/解析异常；面板可见）。 */
   failureCount = 0
-  /** 最近一次失败原因（脱敏截断；空串 = 无失败）。 */
   lastError = ''
-  /** 最近一次提炼批处理的判定结果（stored:N / no-candidates / filtered-or-deduped / window-short / failed），面板可见。 */
   lastOutcome = ''
   private readonly delayMs: number
   private readonly disposers: Array<() => void> = []
-
   private readonly rag: RagService
   private readonly getKbId: () => string
   private readonly generate: MemoryGenerateFn
   private readonly config: () => MemorySettings
   private readonly native?: NativeMemoryStore
   private readonly stats?: MemoryStatsStore
+  private readonly governance?: MemoryGovernanceService
+  private readonly scopeOf: (session: unknown) => MemoryScopeContext
 
-  constructor(rag: RagService, getKbId: () => string, generate: MemoryGenerateFn, config: () => MemorySettings, native?: NativeMemoryStore, stats?: MemoryStatsStore, options?: MemorySedimentOptions) {
+  constructor(
+    rag: RagService,
+    getKbId: () => string,
+    generate: MemoryGenerateFn,
+    config: () => MemorySettings,
+    native?: NativeMemoryStore,
+    stats?: MemoryStatsStore,
+    options?: MemorySedimentOptions,
+  ) {
     this.rag = rag
     this.getKbId = getKbId
     this.generate = generate
@@ -155,13 +203,19 @@ export class MemorySedimentService {
     this.native = native
     this.stats = stats
     this.delayMs = Math.max(0, Math.floor(options?.delayMs ?? DEFAULT_SEDIMENT_DELAY_MS))
+    this.governance = options?.governance
+    this.scopeOf = options?.scopeOf ?? (() => ({ kind: 'global' }))
   }
 
-  /** 挂到宿主上下文（防御式解析 on）；dispose 解除全部监听与待处理定时器。
-   * turn/end 提交后事件里就有轮次号：立即提取该轮窗口入队，不再依赖
-   * 「定时器触发时再回读会话」——那是旧实现丢轮次与拿不到事件的根源。 */
+  /** 挂载事件并恢复重启前已经落盘的待处理窗口。 */
   attach(ctx: unknown): void {
     try {
+      for (const row of this.governance?.listPendingWindows<PendingWindow>() ?? []) {
+        const entry = this.pending.get(row.sessionId) ?? { windows: [], retries: 0 }
+        entry.windows.push({ ...row.data, pendingId: row.id })
+        this.pending.set(row.sessionId, entry)
+        this.armTimer(row.sessionId)
+      }
       const holder = ctx as { on?: (event: string, listener: (...args: never[]) => unknown) => unknown }
       const off = holder.on?.('session/event', (session: unknown, event: { type?: unknown; data?: unknown }) => {
         if (event?.type !== 'turn/end') return
@@ -169,17 +223,15 @@ export class MemorySedimentService {
         if (!settings.enabled || !settings.autoSediment) return
         const id = this.sessionIdOf(session)
         if (id === undefined) return
-        const data = event.data as { turn?: unknown } | undefined
+        const data = event.data as { turn?: unknown; reason?: { kind?: unknown } } | undefined
         const turn = typeof data?.turn === 'number' ? data.turn : this.turnOf(session)
-        // 轮次提交即快照：此刻事件日志已包含完整一轮，提取结果不可变。
-        // 0.26.5：工作轮次常常没有真实用户输入（后台任务通知触发），只要
-        // 有实质助手产出就成立——干活的总结正是来自这些轮次。
-        const window = extractLastTurnWindow(sessionEventsOf(session))
-        if (window.assistantText.trim() === '') return
-        this.enqueue(id, turn, window)
+        const reason = typeof data?.reason?.kind === 'string' ? data.reason.kind : 'unknown'
+        const details = turnDetails(sessionEventsOf(session), id, this.scopeOf(session), reason)
+        if (details.assistantText.trim() === '') return
+        this.enqueue(id, turn, details)
       })
       if (typeof off === 'function') this.disposers.push(off as () => void)
-    } catch { /* 事件不可用时静默降级为不沉淀 */ }
+    } catch { /* 事件不可用时不影响主会话 */ }
   }
 
   dispose(): void {
@@ -190,35 +242,35 @@ export class MemorySedimentService {
     this.pending.clear()
   }
 
-  /** 窗口入队：同轮覆盖（以最终快照为准），单会话窗口数有上限，随后重置静默期定时器。 */
-  private enqueue(sessionId: string, turn: number, window: { userText: string; assistantText: string }): void {
+  private enqueue(sessionId: string, turn: number, details: Omit<PendingWindow, 'pendingId' | 'turn'>): void {
     const entry = this.pending.get(sessionId) ?? { windows: [], retries: 0 }
-    const existingIndex = entry.windows.findIndex((item) => item.turn === turn)
-    const item: PendingWindow = { turn, userText: window.userText, assistantText: window.assistantText }
+    const pendingId = sessionId + ':' + turn
+    const item: PendingWindow = { pendingId, turn, ...details }
+    const existingIndex = entry.windows.findIndex((window) => window.turn === turn)
     if (existingIndex >= 0) entry.windows[existingIndex] = item
-    else {
-      entry.windows.push(item)
-      if (entry.windows.length > MAX_PENDING_WINDOWS) entry.windows.shift()
-    }
+    else entry.windows.push(item)
+    entry.windows.sort((a, b) => a.turn - b.turn)
+    if (entry.windows.length > MAX_PENDING_WINDOWS) entry.windows = entry.windows.slice(-MAX_PENDING_WINDOWS)
     this.pending.set(sessionId, entry)
+    this.governance?.savePendingWindow(sessionId, item)
     this.armTimer(sessionId)
   }
 
-  /** 静默期定时器：期内无新轮次才提炼（同会话新轮次会重置，实现批处理合并）。 */
   private armTimer(sessionId: string): void {
     const previous = this.timers.get(sessionId)
     if (previous !== undefined) clearTimeout(previous)
     const timer = setTimeout(() => {
       this.timers.delete(sessionId)
-      void this.processSession(sessionId).catch(() => { /* 单会话失败不影响其他会话 */ })
+      void this.processSession(sessionId).catch(() => { /* 失败已在服务内记数 */ })
     }, this.delayMs)
     timer.unref?.()
     this.timers.set(sessionId, timer)
   }
 
   private sessionIdOf(session: unknown): string | undefined {
-    const record = session as { id?: unknown } | null
-    return record !== null && typeof record === 'object' && typeof record.id === 'string' ? record.id : undefined
+    const record = session as { id?: unknown; header?: { id?: unknown } } | null
+    if (record === null || typeof record !== 'object') return undefined
+    return typeof record.id === 'string' ? record.id : typeof record.header?.id === 'string' ? record.header.id : undefined
   }
 
   private turnOf(session: unknown): number {
@@ -227,18 +279,17 @@ export class MemorySedimentService {
     return typeof last?.data?.turn === 'number' ? last.data.turn : 0
   }
 
-  /** 处理一个会话的全部待处理窗口（静默期触发；失败按上限重试）。 */
   private async processSession(sessionId: string): Promise<void> {
     const entry = this.pending.get(sessionId)
     if (entry === undefined || entry.windows.length === 0) { this.pending.delete(sessionId); return }
     const settings = this.config()
-    if (!settings.enabled || !settings.autoSediment) { this.pending.delete(sessionId); return }
+    if (!settings.enabled || !settings.autoSediment) return
     const maxTurn = entry.windows.reduce((max, item) => Math.max(max, item.turn), 0)
     try {
       await this.runBatch(sessionId, entry.windows, maxTurn)
+      this.governance?.deletePendingWindows(entry.windows.map((item) => item.pendingId).filter((id): id is string => id !== undefined))
       this.pending.delete(sessionId)
     } catch (error) {
-      // 失败可观测：计数 + 脱敏原因；有界重试，超过上限保留窗口待下次触发。
       entry.retries += 1
       this.failureCount += 1
       this.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200)
@@ -247,102 +298,172 @@ export class MemorySedimentService {
     }
   }
 
-  /** 直接提炼一个会话（兼容旧签名：测试与面板手动触发路径）。
-   * 若该会话有待处理窗口则立即批处理，否则从事件现取最近一轮。 */
+  /** 兼容测试与面板手动路径；未挂治理服务时维持旧版 active 写入行为。 */
   async process(session: unknown, sessionId: string, turn: number): Promise<number> {
     if (turn > 0 && this.processedTurns.get(sessionId) === turn) return 0
     const queued = this.pending.get(sessionId)
     if (queued !== undefined && queued.windows.length > 0) {
       const maxTurn = queued.windows.reduce((max, item) => Math.max(max, item.turn), 0)
       const stored = await this.runBatch(sessionId, queued.windows, maxTurn)
+      this.governance?.deletePendingWindows(queued.windows.map((item) => item.pendingId).filter((id): id is string => id !== undefined))
       this.pending.delete(sessionId)
       return stored
     }
-    const window = extractLastTurnWindow(sessionEventsOf(session))
-    if (window.assistantText.trim() === '') return 0
-    return this.runBatch(sessionId, [{ turn, userText: window.userText, assistantText: window.assistantText }], turn)
+    const events = sessionEventsOf(session)
+    const end = [...events].reverse().find((raw) => (raw as { type?: unknown })?.type === 'turn/end') as { data?: { reason?: { kind?: unknown } } } | undefined
+    const reason = typeof end?.data?.reason?.kind === 'string' ? end.data.reason.kind : 'completed'
+    const details = turnDetails(events, sessionId, this.scopeOf(session), reason)
+    if (details.assistantText.trim() === '') return 0
+    return this.runBatch(sessionId, [{ turn, ...details }], turn)
   }
 
-  /** 执行一次提炼批处理（多轮窗口合并为一次模型调用）。失败抛出交调用方计数。
-   * 0.26.5：窗口有效性只看助手产出（工作轮次常无新用户输入）；无用户输入时
-   * 提示词改用占位说明。每次判定的结果写入 lastOutcome 供面板观测。 */
   private async runBatch(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number): Promise<number> {
     const settings = this.config()
     if (!settings.enabled || !settings.autoSediment) return 0
     this.attemptCount += 1
-    const assistantText = windows.map((item) => item.assistantText).join('\n')
-    if (assistantText.trim().length < 50) { this.lastOutcome = 'window-short'; return 0 }
-    const dialog = windows.map((item) => (item.userText.trim() !== '' ? '【用户】' + item.userText + '\n【助手】' : '【用户】（本轮无新用户输入，由后台任务/通知触发的智能体工作轮次）\n【助手】') + item.assistantText).join('\n\n')
-    const system = '你是记忆管理员。从对话里提炼值得长期保存的记忆条目（用户偏好、项目决策、环境事实、踩坑教训、智能体完成的工作成果）。跳过：寒暄、纯进度播报（「已挂起任务」「等待用户回复」）、问题本身、原始代码、密钥；「工作区有未提交改动、尚未推送、待验收、稍后继续」这类很快过期的临时状态一律不要保存。最多 5 条，每条一句独立中文陈述。只输出 JSON，不输出解释。'
-    const user = '对话窗口（共 ' + windows.length + ' 轮）：\n' + dialog + '\n\n返回 JSON：{"items":[{"content":"...","importance":"critical|normal|low"}]}'
+    const eligible = windows.filter((window) => window.completed)
+    const assistantText = eligible.map((item) => item.assistantText).join('\n')
+    if (assistantText.trim().length < 50) {
+      this.recordTechnicalEpisodes(sessionId, windows, watermarkTurn)
+      this.lastOutcome = 'window-short'
+      this.processedTurns.set(sessionId, watermarkTurn)
+      return 0
+    }
+    const dialog = eligible.map((item) => (item.userText.trim() !== '' ? '【用户】' + item.userText + '\n【助手】' : '【用户】（本轮无新用户输入，由后台任务/通知触发的智能体工作轮次）\n【助手】') + item.assistantText).join('\n\n')
+    const system = [
+      '你是可信记忆候选提炼器和任务复盘员。只生成待人工审核的候选，不得声称它们已被用户确认。',
+      '从对话中识别长期偏好、稳定决策、环境事实、经工具验证的结果和可复用踩坑经验；跳过寒暄、问题本身、临时进度、待验收/未提交/未推送状态、凭据和原始代码。',
+      '候选必须有 category、confidence、reason；可变配置或状态必须给稳定 memoryKey，便于发现新旧冲突。confidence 只是参考，不能决定生效。',
+      '同时输出 task 复盘：目标、结果摘要、success/partial/failure/unknown、可复用 lessons、实际使用的 injected memory id。没有证据时 outcome=unknown。',
+      '最多 5 条候选，每条一句独立中文陈述。只输出 JSON。',
+    ].join('\n')
+    const user = '对话窗口（共 ' + eligible.length + ' 轮）：\n' + dialog + '\n\n返回 JSON：{"task":{"goal":"...","summary":"...","outcome":"success|partial|failure|unknown","lessons":["..."],"usedMemoryIds":[]},"items":[{"content":"...","category":"preference|decision|fact|insight|context|general","importance":"critical|normal|low","confidence":0.0,"reason":"证据说明","memoryKey":"可选稳定事实键"}]}'
     let raw: string
     try { raw = await this.generate(system, user) } catch (error) { throw new Error('提炼模型调用失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
-    let candidates: MemoryCandidate[] = []
+    let candidates: ExtractedCandidate[] = []
+    let task: ReflectionTask = {}
     try {
       const start = raw.indexOf('{')
       const end = raw.lastIndexOf('}')
-      const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : '{}') as { items?: MemoryCandidate[] }
+      const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : '{}') as { items?: ExtractedCandidate[]; task?: ReflectionTask }
       candidates = (parsed.items ?? []).filter((item) => typeof item.content === 'string' && normalizeMemoryText(item.content).length >= 6)
+      task = parsed.task ?? {}
     } catch { throw new Error('提炼输出无法解析为 JSON') }
-    if (candidates.length === 0) { this.lastOutcome = 'no-candidates'; return 0 }
+
+    const scope = eligible[eligible.length - 1]?.scope ?? { kind: 'workspace' }
+    const evidence = eligible.flatMap((item) => item.evidence).slice(-8)
+    const candidateIds: string[] = []
     const keys = this.existingKeysOf()
     const kbId = this.getKbId()
     let stored = 0
     for (const candidate of candidates.slice(0, 5)) {
       const content = normalizeMemoryText(candidate.content)
-      // 临时状态硬过滤：见 TRANSIENT_STATE_PATTERN 注释（提示词约束之外的双保险）。
       if (TRANSIENT_STATE_PATTERN.test(content)) continue
-      // 去重键统一为规范化内容：全等或互含都视为重复（旧实现拿内容哈希去对
-      // 「含头的切块文本」集合，哈希分支恒不命中，只剩脆弱的互含判断）。
-      if (keys.has(content)) continue
-      let duplicated = false
-      for (const existing of keys) {
-        if (existing.includes(content) || content.includes(existing)) { duplicated = true; break }
-      }
-      if (duplicated) continue
       const importance = candidate.importance === 'critical' || candidate.importance === 'low' ? candidate.importance : 'normal'
-      const contentHash = createHash('sha256').update(content).digest('hex')
+      const contentDigest = createHash('sha256').update(content).digest('hex')
       try {
+        if (this.governance !== undefined) {
+          const proposed = this.governance.propose({
+            content,
+            category: candidate.category,
+            importance: importance === 'critical' ? 5 : importance === 'low' ? 2 : 3,
+            confidence: candidate.confidence,
+            reason: candidate.reason,
+            scope,
+            memoryKey: candidate.memoryKey,
+            evidence,
+            source: 'session-reflection',
+            sourceId: 'session:' + sessionId + ':' + watermarkTurn + ':' + contentDigest,
+            sessionId,
+            turn: watermarkTurn,
+          })
+          candidateIds.push(proposed.id)
+          if (proposed.state === 'pending' || proposed.state === 'needs-resolution') stored += 1
+          continue
+        }
+        if (keys.has(content) || [...keys].some((existing) => existing.includes(content) || content.includes(existing))) continue
         if (this.native !== undefined) {
-          // memory.entry 是唯一事实源：只写内置记忆，不再双写 RAG 文档
-          // （RAG 副本在整理/归档时不随动，会让旧事实在注入里永生）。
-          this.native.migrate([{ content, category: 'general', source: 'session', sourceId: sessionId, importance: importance === 'critical' ? 5 : importance === 'low' ? 2 : 3, migrationKey: 'session:' + sessionId + ':' + watermarkTurn + ':' + contentHash }])
+          this.native.migrate([{ content, category: candidate.category ?? 'general', source: 'session', sourceId: sessionId, importance: importance === 'critical' ? 5 : importance === 'low' ? 2 : 3, migrationKey: 'session:' + sessionId + ':' + watermarkTurn + ':' + contentDigest }])
         } else {
-          // legacy 兜底：无内置存储时按旧路径写 RAG 记忆库（保持既有数据面兼容）。
           const fileName = 'mem-' + Date.now() + '-' + stored + '.md'
           const text = '重要性: ' + importance + '\n来源会话: ' + sessionId + '\n沉淀时间: ' + new Date().toISOString() + '\n\n' + content
           await this.rag.ingestText(kbId, fileName, text, { source: 'memory' })
         }
         keys.add(content)
-        this.existingKeys = undefined // 下次重建
+        this.existingKeys = undefined
         stored += 1
-      } catch { /* 单条失败继续 */ }
+      } catch { /* 单条失败继续，批次其他候选仍可保存 */ }
     }
+
+    if (this.governance !== undefined && settings.autoReflect !== false) {
+      const recalls = this.governance.listRecalls(200).filter((trace) => trace.sessionId === sessionId && trace.turn <= watermarkTurn)
+      const allowedUsed = new Set(recalls.flatMap((trace) => trace.hits.filter((hit) => hit.included && hit.layer !== 'mirror').map((hit) => hit.entryId)))
+      const usedMemoryIds = (Array.isArray(task.usedMemoryIds) ? task.usedMemoryIds : []).filter((id): id is string => typeof id === 'string' && allowedUsed.has(id))
+      const injectedMemoryIds = [...allowedUsed]
+      const allTools = [...new Set(eligible.flatMap((item) => item.toolNames))]
+      this.governance.recordEpisode({
+        id: sessionId + ':' + watermarkTurn,
+        sessionId,
+        turn: watermarkTurn,
+        scope,
+        goal: normalizeMemoryText(typeof task.goal === 'string' ? task.goal : eligible[0]?.userText ?? '').slice(0, 1000),
+        summary: normalizeMemoryText(typeof task.summary === 'string' ? task.summary : assistantText).slice(0, 3000),
+        outcome: ['success', 'partial', 'failure'].includes(String(task.outcome)) ? task.outcome as 'success' | 'partial' | 'failure' : 'unknown',
+        toolNames: allTools,
+        toolSuccesses: eligible.reduce((sum, item) => sum + item.toolSuccesses, 0),
+        toolFailures: eligible.reduce((sum, item) => sum + item.toolFailures, 0),
+        lessons: Array.isArray(task.lessons) ? task.lessons.filter((item): item is string => typeof item === 'string').map((item) => normalizeMemoryText(item).slice(0, 500)).slice(0, 10) : [],
+        candidateIds,
+        injectedMemoryIds,
+        usedMemoryIds,
+        createdAt: Date.now(),
+      })
+      this.recordTechnicalEpisodes(sessionId, windows.filter((window) => !window.completed), watermarkTurn)
+    }
+
     this.processedTurns.set(sessionId, watermarkTurn)
-    this.lastOutcome = stored > 0 ? 'stored:' + stored : 'filtered-or-deduped'
+    this.lastOutcome = stored > 0 ? (this.governance === undefined ? 'stored:' : 'candidates:') + stored : candidates.length === 0 ? 'no-candidates' : 'filtered-or-deduped'
     if (stored > 0) {
       this.sedimentCount += stored
       this.lastSedimentAt = Date.now()
-      // 持久化累计口径：跨重启与沉淀库总量保持一致，卡片不再自相矛盾。
       this.stats?.update((prev) => ({ ...prev, sedimentTotal: prev.sedimentTotal + stored, lastSedimentAt: this.lastSedimentAt }))
     }
     return stored
   }
 
-  /** 已有记忆的规范化内容键集合（懒加载）：
-   * 有内置存储时从 memory.entry 活跃条目构建（真实事实源）；
-   * 无内置存储时退回 RAG 记忆库切块（legacy 数据面）。 */
+  /** 非 completed 轮次只留技术结果复盘，不产生任何记忆候选。 */
+  private recordTechnicalEpisodes(sessionId: string, windows: readonly PendingWindow[], watermarkTurn: number): void {
+    if (this.governance === undefined) return
+    for (const window of windows) {
+      if (window.completed) continue
+      this.governance.recordEpisode({
+        id: sessionId + ':' + window.turn,
+        sessionId,
+        turn: window.turn,
+        scope: window.scope,
+        goal: normalizeMemoryText(window.userText).slice(0, 1000),
+        summary: normalizeMemoryText(window.assistantText).slice(0, 3000),
+        outcome: 'failure',
+        toolNames: window.toolNames,
+        toolSuccesses: window.toolSuccesses,
+        toolFailures: window.toolFailures,
+        lessons: [],
+        candidateIds: [],
+        injectedMemoryIds: [],
+        usedMemoryIds: [],
+        createdAt: Date.now(),
+      })
+    }
+    void watermarkTurn
+  }
+
   private existingKeysOf(): Set<string> {
     if (this.existingKeys !== undefined) return this.existingKeys
     const keys = new Set<string>()
     if (this.native !== undefined) {
       for (const entry of this.native.dreamSnapshot(1000)) keys.add(normalizeMemoryText(entry.content))
     } else {
-      for (const doc of this.rag.listDocs(this.getKbId())) {
-        for (const chunk of this.rag.listChunks(doc.id)) {
-          keys.add(normalizeMemoryText(chunk.text))
-        }
-      }
+      for (const doc of this.rag.listDocs(this.getKbId())) for (const chunk of this.rag.listChunks(doc.id)) keys.add(normalizeMemoryText(chunk.text))
     }
     this.existingKeys = keys
     return keys

@@ -39,6 +39,7 @@ function defaultVecDbPath(mainDbPath: string): string {
 export class RagStore {
   private readonly db: DatabaseSync
   private readonly vecDb: DatabaseSync
+  private domainTransactionDepth = 0
 
   constructor(mainDbPath?: string, vecDbPath?: string) {
     const main = mainDbPath ?? defaultDbPath()
@@ -155,6 +156,17 @@ export class RagStore {
   /** 删除某域一条数据。 */
   deleteDomainDoc(domain: string, id: string): void {
     this.db.prepare('DELETE FROM docs WHERE domain = ? AND id = ?').run(domain, id)
+  }
+
+  /**
+   * 在主 store.db 上执行一个同步事务。
+   * 记忆取代需要同时写正文、sidecar 与关系，任何一步失败都必须整体回滚。
+   */
+  withDomainTransaction<T>(task: () => T): T {
+    if (this.domainTransactionDepth > 0) return task()
+    this.domainTransactionDepth += 1
+    try { return withTransaction(this.db, task) }
+    finally { this.domainTransactionDepth -= 1 }
   }
 
   // ── 内部 ──

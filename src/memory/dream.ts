@@ -243,6 +243,8 @@ export interface MemoryDreamServiceDeps {
   listDomain: (domain: string) => Array<{ id: string; data: unknown }>
   putDomain: (domain: string, id: string, data: unknown) => void
   deleteDomain: (domain: string, id: string) => void
+  /** true 时只记录治理建议，模型无权直接修改或归档活跃记忆。 */
+  proposalOnly?: boolean
 }
 
 /** 记忆库做梦服务：定时 tick 三重门槛触发，单轮全流程裁决-应用-审计。 */
@@ -259,6 +261,7 @@ export class MemoryDreamService {
   private readonly listDomain: (domain: string) => Array<{ id: string; data: unknown }>
   private readonly putDomain: (domain: string, id: string, data: unknown) => void
   private readonly deleteDomain: (domain: string, id: string) => void
+  private readonly proposalOnly: boolean
 
   constructor(deps: MemoryDreamServiceDeps) {
     this.native = deps.native
@@ -268,6 +271,7 @@ export class MemoryDreamService {
     this.listDomain = deps.listDomain
     this.putDomain = deps.putDomain
     this.deleteDomain = deps.deleteDomain
+    this.proposalOnly = deps.proposalOnly === true
   }
 
   /** 启动定时巡检（60s 一次，进程空闲不占事件循环：unref）。 */
@@ -370,6 +374,12 @@ export class MemoryDreamService {
           return run
         }
       }
+      if (this.proposalOnly) {
+        // 安全建议模式：模型只负责发现治理机会，任何正文修改/归档都必须人工确认。
+        run.proposals = decisions.slice(0, 12)
+        run.status = 'ok'
+        return run
+      }
       const applied = applyDreamDecisions(this.native, decisions)
       run.archived = applied.archived
       run.merged = applied.merged
@@ -388,7 +398,7 @@ export class MemoryDreamService {
         this.statsNote(run)
       }
       this.saveRun(run)
-      this.log('dsh-devforge 记忆做梦：' + run.status + ' 快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length)
+      this.log('dsh-devforge 记忆做梦：' + run.status + ' 快照 ' + run.snapshot + ' 条' + (this.proposalOnly ? '，治理建议 ' + (run.proposals?.length ?? 0) + ' 条（等待人工审核）' : '，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length))
     }
   }
 
@@ -462,6 +472,7 @@ function asRun(data: unknown, id: string): MemoryDreamRun | undefined {
     skipped: Array.isArray(value.skipped)
       ? value.skipped.slice(0, MAX_SKIPPED_RECORDS).map((item) => ({ ids: Array.isArray(item?.ids) ? item.ids : [], reason: typeof item?.reason === 'string' ? item.reason : '' }))
       : [],
+    ...(Array.isArray(value.proposals) ? { proposals: value.proposals.slice(0, 12) } : {}),
     ...(typeof value.error === 'string' && value.error !== '' ? { error: value.error } : {}),
   }
 }

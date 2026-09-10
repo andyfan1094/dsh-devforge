@@ -13,10 +13,13 @@
  * - 常驻块独立预算（不侵占检索注入预算）；内置条目渲染更新日期，
  *   整条装入预算、绝不截半条。
  */
+import { createHash, randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSearchHit } from '../rag/protocol.ts'
 import type { RagService } from '../rag/service.ts'
-import type { MemorySettings, NativeMemoryEntry } from './protocol.ts'
+import type { MemoryRecallTrace, MemoryScopeContext, MemorySettings, NativeMemoryEntry } from './protocol.ts'
+import type { MemoryGovernanceService } from './governance.ts'
+import type { MemoryRecallService } from './recall.ts'
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryStatsStore } from './stats.ts'
 import { normalizeMemoryText } from './sediment.ts'
@@ -92,157 +95,231 @@ function entryDateStamp(entry: NativeMemoryEntry): string {
  * - 每条带更新日期：模型可据此判断时效（旧事实不冒充现状）；
  * - 整条装入预算，装不下整条就停止（绝不截半条——半条比缺条更误导）；
  * - 仅当首条单独超预算时才截断首条，保证有内容可注入。 */
-export function renderNativeContext(entries: NativeMemoryEntry[], maxChars: number): string {
-  if (entries.length === 0) return ''
+interface RenderedEntries { text: string; includedIds: Set<string> }
+
+function renderNativeContextDetailed(entries: NativeMemoryEntry[], maxChars: number): RenderedEntries {
+  if (entries.length === 0 || maxChars <= 0) return { text: '', includedIds: new Set() }
   const header = '[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关，请自行取舍；版本号、路径、发布状态等可变事实以条目日期与实时核验为准：'
   const lines: string[] = [header]
+  const includedIds = new Set<string>()
   let used = header.length
-  let included = 0
   for (const entry of entries) {
     const stamp = entryDateStamp(entry)
     const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.source + ' · ' + entry.category + '] ' + entry.content
-    if (used + line.length + 1 > maxChars && included > 0) break
+    if (used + line.length + 1 > maxChars) {
+      if (includedIds.size === 0) {
+        lines.push(line.slice(0, Math.max(0, maxChars - header.length - 1)))
+        includedIds.add(entry.id)
+      }
+      break
+    }
     lines.push(line)
+    includedIds.add(entry.id)
     used += line.length + 1
-    included += 1
   }
-  if (included === 0 && entries.length > 0) {
-    const stamp = entryDateStamp(entries[0]!)
-    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entries[0]!.source + ' · ' + entries[0]!.category + '] ' + entries[0]!.content
-    lines.push(line.slice(0, Math.max(0, maxChars - header.length)))
-  }
-  const text = lines.join('\n')
-  return text.length > maxChars ? text.slice(0, maxChars) : text
+  return { text: lines.join('\n').slice(0, maxChars), includedIds }
+}
+
+export function renderNativeContext(entries: NativeMemoryEntry[], maxChars: number): string {
+  return renderNativeContextDetailed(entries, maxChars).text
 }
 
 /** 常驻记忆条数上限：与检索注入相互独立，防止常驻层无限膨胀挤占上下文。 */
 export const PINNED_MAX_ENTRIES = 6
 
-/** 常驻记忆字符预算（独立于检索注入预算；超出截断最旧条目内容）。 */
+/** 常驻记忆字符预算（独立于检索注入预算）。 */
 export const PINNED_MAX_CHARS = 600
 
-/** 渲染常驻记忆块（每轮固定加载，不参与检索相关性过滤；导出供单测）。
- * 常驻资格由 NativeMemoryStore.listPinned 决定：仅显式钉选（pinned）。
- * 这与用户身份卡同哲学——「每轮必须知道」的红线与长期约定，不能指望检索
- * 每次都召回；也不做 importance 自动常驻（critical 会通膨，会把噪音焊死在每轮）。 */
-export function renderPinnedContext(entries: NativeMemoryEntry[], maxChars: number): string {
-  if (entries.length === 0) return ''
-  const lines: string[] = ['[常驻记忆] 以下是每轮固定加载的记忆（钉选条目，必须遵守）：']
+function renderPinnedContextDetailed(entries: NativeMemoryEntry[], maxChars: number): RenderedEntries {
+  if (entries.length === 0 || maxChars <= 0) return { text: '', includedIds: new Set() }
+  const header = '[常驻记忆] 以下是每轮固定加载的记忆（钉选条目，必须遵守）：'
+  const lines: string[] = [header]
+  const includedIds = new Set<string>()
+  let used = header.length
   for (const entry of entries) {
-    lines.push('[' + entry.source + ' · ' + entry.category + '] ' + entry.content)
+    const line = '[' + entry.source + ' · ' + entry.category + '] ' + entry.content
+    if (used + line.length + 1 > maxChars) {
+      if (includedIds.size === 0) {
+        lines.push(line.slice(0, Math.max(0, maxChars - header.length - 1)))
+        includedIds.add(entry.id)
+      }
+      break
+    }
+    lines.push(line)
+    includedIds.add(entry.id)
+    used += line.length + 1
   }
-  const text = lines.join('\n')
-  return text.length > maxChars ? text.slice(0, maxChars) : text
+  return { text: lines.join('\n').slice(0, maxChars), includedIds }
 }
 
-/** 注入决策明细：text 为空时 reason 说明跳过原因，供可观测统计区分"未启用/无命中"。 */
-export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit' }
+/** 渲染常驻记忆块（每轮固定加载，不参与检索相关性过滤；导出供单测）。 */
+export function renderPinnedContext(entries: NativeMemoryEntry[], maxChars: number): string {
+  return renderPinnedContextDetailed(entries, maxChars).text
+}
+
+/** 注入决策明细：text 为空时 reason 说明跳过原因；traceId 可关联人工反馈。 */
+export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit'; traceId?: string }
+
+export interface MemoryInjectionOptions {
+  recall?: MemoryRecallService
+  governance?: MemoryGovernanceService
+  scopeOfAgent?: (agent: unknown) => MemoryScopeContext
+}
 
 /** 记忆主动注入服务。 */
 export class MemoryInjectionService {
   injectCount = 0
-
   private readonly rag: RagService
   private readonly config: () => MemorySettings
   private readonly native?: NativeMemoryStore
   private readonly stats?: MemoryStatsStore
+  private readonly recall?: MemoryRecallService
+  private readonly governance?: MemoryGovernanceService
+  private readonly scopeOfAgent: (agent: unknown) => MemoryScopeContext
 
-  constructor(rag: RagService, config: () => MemorySettings, native?: NativeMemoryStore, stats?: MemoryStatsStore) {
+  constructor(
+    rag: RagService,
+    config: () => MemorySettings,
+    native?: NativeMemoryStore,
+    stats?: MemoryStatsStore,
+    options?: MemoryInjectionOptions,
+  ) {
     this.rag = rag
     this.config = config
     this.native = native
     this.stats = stats
+    this.recall = options?.recall
+    this.governance = options?.governance
+    this.scopeOfAgent = options?.scopeOfAgent ?? (() => ({ kind: 'global' }))
   }
 
-  /** RAG 可选增强范围：仅 mirror 镜像库（Mnemon/Hindsight）。
-   * memory 会话记忆库已不是事实源（0.26.4 起自动记忆唯一落 memory.entry），
-   * 不再参与自动注入：同内容双份只会重复占用预算，且旧文档永不随整理失效。 */
+  /** RAG 可选增强范围只包含外部 mirror，遗留 memory RAG 库永不回流。 */
   enhancementKbIds(): string[] {
     return this.rag.listKbs().filter((kb) => kb.source === 'mirror').map((kb) => kb.id)
   }
 
-  /** 兼容旧名：历史调用方语义即「自动注入检索的库清单」。 */
-  memoryKbIds(): string[] {
-    return this.enhancementKbIds()
-  }
+  memoryKbIds(): string[] { return this.enhancementKbIds() }
 
-  /** 对一次 pre-step 做注入决策，带跳过原因（导出便于单测与可观测统计）。
-   * 分层与降级：常驻/内置记忆不依赖 RAG；RAG 镜像增强独立 try——
-   * 向量、嵌入或网络故障只损失增强层，绝不拖死硬规则与词法召回。 */
-  async decideDetailed(messages: readonly unknown[]): Promise<InjectDecision> {
+  /**
+   * 作用域过滤发生在 topK 之前；内置记忆走词法+语义融合，语义或镜像失败只记降级。
+   * 每次决策保存逐命中轨迹，后续反馈只能引用真正装入上下文的 entryId。
+   */
+  async decideDetailed(messages: readonly unknown[], context?: { scope?: MemoryScopeContext; sessionId?: string; turn?: number }): Promise<InjectDecision> {
     const settings = this.config()
     if (!settings.enabled || !settings.autoInject) return { reason: 'disabled' }
+    const startedAt = Date.now()
     const query = buildMemoryQuery(messages)
-    if (query === '') return { reason: 'no-hit' }
-    // 1) 常驻钉选最先读：显式钉选是「每轮必须知道」的红线，不依赖任何检索服务。
+    const scope = context?.scope ?? { kind: 'global' }
+    const traceId = randomUUID()
+    const trace = (outcome: MemoryRecallTrace['outcome'], hits: MemoryRecallTrace['hits'], degradedLayers: string[]): void => {
+      this.governance?.recordRecall({
+        id: traceId,
+        sessionId: context?.sessionId ?? 'unknown',
+        turn: context?.turn ?? 0,
+        queryHash: createHash('sha256').update(query).digest('hex'),
+        queryPreview: query.replace(/\s+/gu, ' ').slice(0, 160),
+        scope,
+        latencyMs: Date.now() - startedAt,
+        outcome,
+        degradedLayers,
+        hits,
+        createdAt: Date.now(),
+      })
+    }
+    if (query === '') { trace('empty-query', [], []); return { reason: 'no-hit', traceId } }
+
+    const degradedLayers: string[] = []
     let pinnedEntries: NativeMemoryEntry[] = []
-    try { pinnedEntries = this.native?.listPinned({ limit: PINNED_MAX_ENTRIES }) ?? [] } catch { /* 常驻清单失败不影响检索注入 */ }
-    // 2) 内置词法检索：同步本地扫描 memory.entry，不依赖向量与知识库存在性。
+    try { pinnedEntries = this.native?.listPinned({ limit: PINNED_MAX_ENTRIES, scope, isolateScope: settings.scopeIsolation !== false }) ?? [] }
+    catch (error) { degradedLayers.push('pinned:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
+
     let nativeEntries: NativeMemoryEntry[] = []
-    try { nativeEntries = this.native?.search(query, { limit: settings.topK }) ?? [] } catch { /* 内置检索失败不影响常驻注入 */ }
-    // 常驻条目已在常驻块出现，不再重复占用检索块预算。
+    let nativeScores = new Map<string, number>()
+    let nativeLayers = new Map<string, 'native' | 'semantic'>()
+    try {
+      if (this.recall !== undefined) {
+        const result = await this.recall.recall({ query, scope, isolateScope: settings.scopeIsolation !== false, semantic: settings.semanticRecall !== false, semanticWeight: settings.semanticWeight ?? 0.35, threshold: settings.threshold, limit: settings.topK })
+        degradedLayers.push(...result.degradedLayers)
+        nativeEntries = result.hits.map((hit) => hit.entry)
+        nativeScores = new Map(result.hits.map((hit) => [hit.entry.id, hit.score]))
+        nativeLayers = new Map(result.hits.map((hit) => [hit.entry.id, hit.lexicalScore === 0 && hit.semanticScore > 0 ? 'semantic' as const : 'native' as const]))
+      } else {
+        const ranked = this.native?.searchDetailed(query, { limit: settings.topK, scope, isolateScope: settings.scopeIsolation !== false }) ?? []
+        const topScore = ranked[0]?.score ?? 0
+        const floor = Math.max(settings.threshold, topScore * RELATIVE_KEEP_RATIO)
+        const hits = ranked.filter((hit) => hit.score >= floor)
+        nativeEntries = hits.map((hit) => hit.entry)
+        nativeScores = new Map(hits.map((hit) => [hit.entry.id, hit.score]))
+        nativeLayers = new Map(hits.map((hit) => [hit.entry.id, 'native' as const]))
+      }
+    } catch (error) { degradedLayers.push('native:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
+
     if (pinnedEntries.length > 0) {
       const pinnedIds = new Set(pinnedEntries.map((entry) => entry.id))
       nativeEntries = nativeEntries.filter((entry) => !pinnedIds.has(entry.id))
     }
-    // 3) RAG 镜像库可选增强：独立 try，失败静默降级为空。
-    let good: RagSearchHit[] = []
+
+    let mirrorHits: RagSearchHit[] = []
     try {
       const kbIds = this.enhancementKbIds()
       if (kbIds.length > 0) {
         const hits = await this.rag.search({ query, kbIds, topK: settings.topK, vectorWeight: 0.5 })
-        // 双重阈值：绝对线（settings.threshold）兜底，相对线砍掉与本次最高分差距过大的弱命中，
-        // 避免话题只是沾边的记忆以低分混进注入块（见 RELATIVE_KEEP_RATIO 注释）。
         const topScore = hits.reduce((max, hit) => Math.max(max, hit.score), 0)
         const floor = Math.max(settings.threshold, 0.01, topScore * RELATIVE_KEEP_RATIO)
-        // 与内置记忆按规范化内容去重：同一事实不双份占用预算。
-        const nativeNorms = new Set(nativeEntries.map((entry) => normalizeMemoryText(entry.content)))
-        good = hits.filter((hit) => hit.score >= floor && !nativeNorms.has(normalizeMemoryText(hit.text)))
+        const nativeNorms = new Set([...pinnedEntries, ...nativeEntries].map((entry) => normalizeMemoryText(entry.content)))
+        mirrorHits = hits.filter((hit) => hit.score >= floor && !nativeNorms.has(normalizeMemoryText(hit.text)))
       }
-    } catch { good = [] /* 镜像增强失败：只损失增强层 */ }
-    if (pinnedEntries.length === 0 && good.length === 0 && nativeEntries.length === 0) return { reason: 'no-hit' }
-    // 预算：常驻块独立预算优先；检索预算内内置记忆优先、镜像增强兜底
-    // （旧实现 RAG 先渲染，长文档会把精确的内置候选挤到零预算）。
-    const pinnedText = renderPinnedContext(pinnedEntries, PINNED_MAX_CHARS)
+    } catch (error) { degradedLayers.push('mirror:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
+
+    if (pinnedEntries.length === 0 && mirrorHits.length === 0 && nativeEntries.length === 0) {
+      trace(degradedLayers.length > 0 ? 'degraded' : 'no-hit', [], degradedLayers)
+      return { reason: 'no-hit', traceId }
+    }
+
+    const pinnedRendered = renderPinnedContextDetailed(pinnedEntries, PINNED_MAX_CHARS)
     let remaining = settings.maxChars
-    const nativeText = renderNativeContext(nativeEntries, remaining)
-    remaining = Math.max(0, remaining - nativeText.length)
-    const ragText = renderMemoryContext(good, remaining)
-    const combined = [pinnedText, nativeText, ragText].filter((part) => part !== '').join('\n---\n')
-    return combined === '' ? { reason: 'no-hit' } : { text: combined }
+    const nativeRendered = renderNativeContextDetailed(nativeEntries, remaining)
+    remaining = Math.max(0, remaining - nativeRendered.text.length)
+    const ragText = renderMemoryContext(mirrorHits, remaining)
+    const combined = [pinnedRendered.text, nativeRendered.text, ragText].filter((part) => part !== '').join('\n---\n')
+    const hits: MemoryRecallTrace['hits'] = [
+      ...pinnedEntries.map((entry) => ({ entryId: entry.id, layer: 'pinned' as const, score: 1, included: pinnedRendered.includedIds.has(entry.id), ...(pinnedRendered.includedIds.has(entry.id) ? {} : { skipReason: 'pinned-budget' }) })),
+      ...nativeEntries.map((entry) => ({ entryId: entry.id, layer: nativeLayers.get(entry.id) ?? 'native', score: nativeScores.get(entry.id) ?? 0, included: nativeRendered.includedIds.has(entry.id), ...(nativeRendered.includedIds.has(entry.id) ? {} : { skipReason: 'native-budget' }) })),
+      ...mirrorHits.map((hit) => ({ entryId: hit.chunkId, layer: 'mirror' as const, score: hit.score, included: ragText.includes(hit.text), ...(ragText.includes(hit.text) ? {} : { skipReason: 'mirror-budget' }) })),
+    ]
+    trace(degradedLayers.length > 0 ? 'degraded' : 'hit', hits, degradedLayers)
+    return combined === '' ? { reason: 'no-hit', traceId } : { text: combined, traceId }
   }
 
-  /** 旧签名兼容：只取注入文本。 */
   async decide(messages: readonly unknown[]): Promise<string | undefined> {
     return (await this.decideDetailed(messages)).text
   }
 
-  /** 挂到宿主上下文；返回卸载函数。
-   * 注入消息按宿主正式协议声明 form:'snapshot' + sections：后快照替代前快照，
-   * 且沉淀窗口据此排除插件消息（阻断旧记忆回流再入库）。 */
+  /** pre-step 首步解析真实会话作用域并追加 snapshot；traceId 放入独立 section 供审计关联。 */
   attach(ctx: unknown): () => void {
     try {
       const holder = ctx as { on?: (event: string, listener: (...args: never[]) => unknown) => unknown }
-      const off = holder.on?.('agent/pre-step', async (payload: { messages?: unknown[]; step?: number; signal?: AbortSignal }, next: () => Promise<{ messages?: unknown[] }>) => {
+      const off = holder.on?.('agent/pre-step', async (payload: { agent?: unknown; messages?: unknown[]; turn?: number; step?: number; signal?: AbortSignal }, next: () => Promise<{ messages?: unknown[] }>) => {
         const decision = await next()
         try {
           if (payload.step !== 1 || payload.signal?.aborted === true) return decision
-          const detail = await this.decideDetailed(Array.isArray(payload.messages) ? payload.messages : [])
+          const agent = payload.agent as { session?: { id?: unknown; header?: { id?: unknown } } } | undefined
+          const sessionId = typeof agent?.session?.id === 'string' ? agent.session.id : typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : 'unknown'
+          const detail = await this.decideDetailed(Array.isArray(payload.messages) ? payload.messages : [], { scope: this.scopeOfAgent(payload.agent), sessionId, turn: payload.turn ?? 0 })
           if (detail.reason === 'disabled') return decision
           if (detail.text === undefined || detail.text === '') {
-            // 触发了但无命中：计入持久化跳过统计，与"功能未启用"可区分。
             this.stats?.update((prev) => ({ ...prev, injectNoHit: prev.injectNoHit + 1 }))
             return decision
           }
           const text = detail.text
           this.injectCount += 1
-          // 持久化注入可观测：累计次数 + 最近时间 + 内容预览，面板可一眼确认功能活着。
           this.stats?.update((prev) => ({ ...prev, injectTotal: prev.injectTotal + 1, lastInjectAt: Date.now(), lastInjectPreview: text.slice(0, 120) }))
+          const sections = [{ name: 'memory', text }, ...(detail.traceId === undefined ? [] : [{ name: 'memory-recall-id', text: detail.traceId }])]
           return {
             ...decision,
             messages: [...(decision.messages ?? []), createUserMessage({
               content: [{ type: 'text', text }],
-              source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text }] },
+              source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections },
             })],
           }
         } catch { return decision }
