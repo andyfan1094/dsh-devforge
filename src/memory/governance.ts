@@ -81,7 +81,7 @@ function parseCandidate(data: unknown, id: string): MemoryCandidate | undefined 
   if (data === null || typeof data !== 'object') return undefined
   const value = data as Partial<MemoryCandidate>
   if (typeof value.content !== 'string' || typeof value.createdAt !== 'number') return undefined
-  const state = ['pending', 'needs-resolution', 'approved', 'rejected', 'deduped'].includes(String(value.state)) ? value.state as MemoryCandidate['state'] : 'pending'
+  const state = ['pending', 'needs-resolution', 'approved', 'auto-activated', 'rejected', 'deduped'].includes(String(value.state)) ? value.state as MemoryCandidate['state'] : 'pending'
   return {
     id,
     content: value.content,
@@ -270,6 +270,47 @@ export class MemoryGovernanceService {
     if (candidate.state === 'deduped') return { candidate, entry: candidate.resultEntryId === undefined ? undefined : this.native.get(candidate.resultEntryId) }
     if (candidate.state === 'needs-resolution') return { candidate }
     return this.review({ id: candidate.id, action: 'approve', reason: 'Host 已验证直接用户明确保存请求' })
+  }
+
+  /**
+   * 全自动激活（辉哥 2026-09-10 决策）：沉淀与工具写入的候选无需人工审核，
+   * 直接进入 active memory.entry。信任等级按证据链分级：带工具/用户原话证据
+   * 为 verified，仅模型提炼为 inferred。同 scope + memoryKey 的旧事实自动取代，
+   * 但钉选条目是用户显式钉下的硬规则，自动沉淀不得覆盖（保留并由工作台治理）。
+   */
+  activateAuto(input: MemoryCandidateInput): { candidate: MemoryCandidate; entry?: NativeMemoryEntry } {
+    const candidate = this.propose(input)
+    if (candidate.state === 'deduped') return { candidate, entry: candidate.resultEntryId === undefined ? undefined : this.native.get(candidate.resultEntryId) }
+    if (candidate.state === 'rejected') return { candidate }
+    const now = Date.now()
+    const hasStrongEvidence = (candidate.evidence ?? []).some((item) => item.kind === 'tool' || item.kind === 'user')
+    const entryInput: Parameters<NativeMemoryStore['create']>[0] = {
+      content: candidate.content,
+      category: candidate.category,
+      tags: candidate.tags,
+      importance: candidate.importance,
+      source: candidate.source === 'unknown' ? 'session-reflection' : candidate.source,
+      sourceId: candidate.id,
+      trust: hasStrongEvidence ? 'verified' : 'inferred',
+      confidence: candidate.confidence,
+      scope: candidate.scope,
+      ...(candidate.memoryKey === undefined ? {} : { memoryKey: candidate.memoryKey }),
+      evidence: candidate.evidence,
+    }
+    const supersedeIds = candidate.conflictIds.filter((id) => {
+      const entry = this.native.get(id)
+      return entry !== undefined && entry.pinned !== true
+    })
+    const entry = supersedeIds.length > 0
+      ? this.native.supersede(supersedeIds, entryInput, '自动沉淀新证据取代旧事实', 'system')
+      : this.native.create(entryInput)
+    const resolutionReason = supersedeIds.length > 0 ? '自动激活并取代冲突旧事实' : '自动激活（无需人工审核）'
+    const activated = { ...candidate, state: 'auto-activated' as const, resolvedAt: now, resolutionReason, resultEntryId: entry.id }
+    this.rag.withDomainTransaction(() => {
+      this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, candidate.id, activated)
+      this.audit(supersedeIds.length > 0 ? 'auto-supersede' : 'auto-activate', [candidate.id, entry.id, ...supersedeIds], resolutionReason)
+    })
+    return { candidate: activated, entry }
   }
 
   recordEpisode(episode: MemoryEpisode): MemoryEpisode {

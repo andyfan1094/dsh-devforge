@@ -46,6 +46,10 @@ export interface MemorySettings {
   autoReflect: boolean
   /** 用户在原始消息中明确要求“记住/确认保存”时，允许 Host 校验后直接激活其原话。 */
   autoAcceptExplicit: boolean
+  /** 沉淀与工具写入的候选自动激活（无需人工审核）；关闭则回退到待审核工作流。 */
+  autoActivate: boolean
+  /** 会话工作目录命中登记项目时，无条件注入该项目已沉淀记忆的项目档案卡。 */
+  projectProfile: boolean
   /** 在词法召回基础上使用当前 RAG embedding 做语义融合，失败自动降级。 */
   semanticRecall: boolean
   /** 命中登记项目时只召回全局与同项目记忆，阻断跨项目污染。 */
@@ -314,7 +318,7 @@ export interface MemoryCandidate {
   sourceId?: string
   sessionId?: string
   turn?: number
-  state: 'pending' | 'needs-resolution' | 'approved' | 'rejected' | 'deduped'
+  state: 'pending' | 'needs-resolution' | 'approved' | 'auto-activated' | 'rejected' | 'deduped'
   createdAt: number
   resolvedAt?: number
   resolutionReason?: string
@@ -362,7 +366,7 @@ export interface MemoryRecallTrace {
   latencyMs: number
   outcome: 'hit' | 'no-hit' | 'empty-query' | 'degraded' | 'error'
   degradedLayers: string[]
-  hits: Array<{ entryId: string; layer: 'pinned' | 'native' | 'semantic' | 'mirror'; score: number; included: boolean; skipReason?: string }>
+  hits: Array<{ entryId: string; layer: 'pinned' | 'profile' | 'native' | 'semantic' | 'mirror'; score: number; included: boolean; skipReason?: string }>
   createdAt: number
 }
 

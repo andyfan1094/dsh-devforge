@@ -33,6 +33,10 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   autoInject: true,
   autoReflect: true,
   autoAcceptExplicit: true,
+  // 辉哥 2026-09-10 决策：沉淀与工具写入候选全自动激活，无需人工审核。
+  autoActivate: true,
+  // 项目档案卡：工作目录命中登记项目时全量注入该项目已沉淀记忆。
+  projectProfile: true,
   semanticRecall: true,
   scopeIsolation: true,
   feedbackTracking: true,
@@ -96,6 +100,8 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     autoInject: typeof body.autoInject === 'boolean' ? body.autoInject : current.autoInject,
     autoReflect: typeof body.autoReflect === 'boolean' ? body.autoReflect : current.autoReflect,
     autoAcceptExplicit: typeof body.autoAcceptExplicit === 'boolean' ? body.autoAcceptExplicit : current.autoAcceptExplicit,
+    autoActivate: typeof body.autoActivate === 'boolean' ? body.autoActivate : current.autoActivate,
+    projectProfile: typeof body.projectProfile === 'boolean' ? body.projectProfile : current.projectProfile,
     semanticRecall: typeof body.semanticRecall === 'boolean' ? body.semanticRecall : current.semanticRecall,
     scopeIsolation: typeof body.scopeIsolation === 'boolean' ? body.scopeIsolation : current.scopeIsolation,
     feedbackTracking: typeof body.feedbackTracking === 'boolean' ? body.feedbackTracking : current.feedbackTracking,
@@ -161,7 +167,7 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         try {
           const url = new URL(req.url ?? '', 'http://localhost')
-          const states = (url.searchParams.get('states') ?? 'pending,needs-resolution').split(',').filter(Boolean) as Array<'pending' | 'needs-resolution' | 'approved' | 'rejected' | 'deduped'>
+          const states = (url.searchParams.get('states') ?? 'pending,needs-resolution').split(',').filter(Boolean) as Array<'pending' | 'needs-resolution' | 'approved' | 'auto-activated' | 'rejected' | 'deduped'>
           writeJson(res, 200, { ok: true, candidates: governance.listCandidates({ states, limit: Number(url.searchParams.get('limit') ?? 200) }) })
         } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },

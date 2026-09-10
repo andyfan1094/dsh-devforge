@@ -12,7 +12,7 @@ import { closeDb } from '../src/store/db.ts'
 import { NativeMemoryStore, MEMORY_META_DOMAIN, NATIVE_MEMORY_DOMAIN } from '../src/memory/native.ts'
 import { MemoryGovernanceService } from '../src/memory/governance.ts'
 import { MemoryRecallService } from '../src/memory/recall.ts'
-import { MemoryInjectionService } from '../src/memory/inject.ts'
+import { MemoryInjectionService, renderProjectProfileDetailed } from '../src/memory/inject.ts'
 import { memoryManageTool } from '../src/memory/tools.ts'
 import { memoryScopeMatches, resolveMemoryScope } from '../src/memory/scope.ts'
 import { DEFAULT_RAG_SETTINGS, type RagEmbedder, type RagService } from '../src/rag/service.ts'
@@ -36,7 +36,7 @@ function projectEntry(id: string, path: string): ProjectEntry {
   return { id, name: id, path, machinePaths: {}, description: '', repoKind: 'none' as ProjectEntry['repoKind'], repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [] }
 }
 
-const SETTINGS: MemorySettings = { enabled: true, autoSediment: true, autoInject: true, autoReflect: true, autoAcceptExplicit: true, semanticRecall: true, scopeIsolation: true, feedbackTracking: true, semanticWeight: 0.35, topK: 4, threshold: 0.35, maxChars: 1200, dreamEnabled: false, dreamIdleMinutes: 10, dreamMinIntervalHours: 6, dreamProvider: '', dreamModel: '', dreamMaxTokens: 8192, dreamMaxEntries: 300, dreamMaxChars: 240, sedimentProvider: '', sedimentModel: '' }
+const SETTINGS: MemorySettings = { enabled: true, autoSediment: true, autoInject: true, autoReflect: true, autoAcceptExplicit: true, autoActivate: true, projectProfile: true, semanticRecall: true, scopeIsolation: true, feedbackTracking: true, semanticWeight: 0.35, topK: 4, threshold: 0.35, maxChars: 1200, dreamEnabled: false, dreamIdleMinutes: 10, dreamMinIntervalHours: 6, dreamProvider: '', dreamModel: '', dreamMaxTokens: 8192, dreamMaxEntries: 300, dreamMaxChars: 240, sedimentProvider: '', sedimentModel: '' }
 
 function entryScope(entry: NativeMemoryEntry | undefined): MemoryScopeContext { return entry?.scope ?? { kind: 'global' } }
 
@@ -74,14 +74,32 @@ test('pending 候选永不进入召回；去重候选直接关联现有条目', 
   } finally { cleanup(dir) }
 })
 
-test('memory_manage：无 Host 证据的写入只进候选，不激活', async () => {
+test('memory_manage：无 Host 证据的写入也自动激活（全自动决策），信任为 inferred', async () => {
   const { store, governance, dir } = makeRig()
   try {
     const tool = memoryManageTool(store, { governance, scopeOfAgent: () => ({ kind: 'global' }) }) as any
     const result = await tool.execute({ action: 'save', content: '模型声称用户已确认的独断内容' }, {})
     assert.equal(result.ok, true)
-    assert.ok(String(result.message).includes('待审核候选'))
-    assert.equal(store.list().length, 0, '无证据写入绝不直接激活')
+    assert.ok(result.entry, '全自动决策：无证据写入也直接激活')
+    assert.equal(result.entry.trust, 'inferred', '无工具/用户证据时信任等级为模型推断')
+    assert.equal(store.list().length, 1)
+    // 候选状态为 auto-activated，不再出现在待审核队列。
+    assert.equal(governance.listCandidates({ states: ['pending', 'needs-resolution'] }).length, 0)
+    assert.equal(governance.listCandidates({ states: ['auto-activated'] }).length, 1)
+  } finally { cleanup(dir) }
+})
+
+test('memory_manage：带工具证据的写入自动激活为 verified', async () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    const tool = memoryManageTool(store, { governance, scopeOfAgent: () => ({ kind: 'global' }) }) as any
+    const events = [{ seq: 1, type: 'user/message', data: { id: 'm1', source: { kind: 'user' }, content: [{ type: 'text', text: '随便聊点什么' }] } }]
+    const exec = { agent: { session: { id: 'sess-1', snapshotEvents: () => events } } }
+    const result = await tool.execute({ action: 'save', content: '项目发布走 CNB 推送到 modagentai.com' }, exec)
+    assert.ok(result.entry)
+    // verifyLatestUserRequest 回读到的用户消息构成证据链 → verified。
+    assert.equal(result.entry.trust, 'verified')
+    assert.ok(result.entry.evidence.length > 0)
   } finally { cleanup(dir) }
 })
 
@@ -307,7 +325,10 @@ test('召回轨迹与反馈：useful 只计数不改信任；incorrect 隔离；
     const recalls2 = governance.listRecalls(10)
     assert.equal(recalls2.length, 2)
     assert.ok(decision2.traceId !== undefined && decision2.traceId !== decision.traceId, '每次注入独立 trace')
-    governance.submitFeedback({ recallId: recalls2[0]!.id, entryId: 'fb-1', verdict: 'incorrect' })
+    // 两次注入可能落在同一毫秒，不能用排序下标取“最新”，必须按 traceId 精确关联。
+    const trace2 = recalls2.find((item) => item.id === decision2.traceId)
+    assert.ok(trace2 !== undefined, '第二次注入的召回轨迹必须存在')
+    governance.submitFeedback({ recallId: trace2.id, entryId: 'fb-1', verdict: 'incorrect' })
     assert.equal(store.get('fb-1')?.state, 'quarantined')
     assert.equal(store.get('fb-1')?.harmfulCount, 1)
     // 伪造 recallId / 未注入条目 → 拒绝。
@@ -327,4 +348,135 @@ test('质量统计：状态/信任/候选/作用域分列且与真实数据一�
     assert.equal(quality.scoped, 1)
     assert.equal(quality.legacy, 2)
   } finally { cleanup(dir) }
+})
+
+test('自动激活：带工具证据的候选直接成为 active 且信任为 verified', () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    const result = governance.activateAuto({
+      content: '项目发布走 CNB 推送到 modagentai.com',
+      category: 'fact',
+      scope: { kind: 'project', id: 'p1' },
+      source: 'session-reflection',
+      sourceId: 's:auto-1',
+      evidence: [{ kind: 'tool', quote: 'git remote -v 输出 origin cnb.cool/...', createdAt: Date.now() }],
+    })
+    assert.ok(result.entry, '自动激活必须产出活跃条目')
+    assert.equal(result.entry.state, 'active')
+    assert.equal(result.entry.trust, 'verified')
+    assert.equal(result.entry.scope.id, 'p1')
+    assert.equal(result.candidate.state, 'auto-activated')
+    assert.equal(result.candidate.resultEntryId, result.entry.id)
+    // 候选不再计入待审核队列，但保留在治理记录里。
+    assert.equal(governance.listCandidates({ states: ['pending', 'needs-resolution'] }).length, 0)
+    assert.equal(governance.listCandidates({ states: ['auto-activated'] }).length, 1)
+    // 自动激活的条目参与召回。
+    assert.equal(store.search('CNB 发布').length, 1)
+  } finally { cleanup(dir) }
+})
+
+test('自动激活：无证据候选激活为 inferred，不因缺证据被阻塞', () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    const result = governance.activateAuto({ content: '模型从对话推断的偏好', category: 'preference', scope: { kind: 'global' }, source: 'session-reflection', sourceId: 's:auto-2' })
+    assert.ok(result.entry)
+    assert.equal(result.entry.trust, 'inferred')
+    assert.equal(result.entry.category, 'preference', '偏好类同样全自动激活（辉哥决策）')
+  } finally { cleanup(dir) }
+})
+
+test('自动激活：同 memoryKey 冲突自动取代旧事实，取代链原子落库', () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    store.create({ content: '项目数据库地址是 10.0.0.1:3306', scope: { kind: 'project', id: 'p1' }, memoryKey: 'db-addr' }, 'old-db')
+    const result = governance.activateAuto({
+      content: '项目数据库地址已迁移到 10.0.0.2:3306',
+      category: 'fact',
+      scope: { kind: 'project', id: 'p1' },
+      memoryKey: 'db-addr',
+      source: 'session-reflection',
+      sourceId: 's:auto-3',
+      evidence: [{ kind: 'tool', quote: 'read config.yaml 输出 host: 10.0.0.2', createdAt: Date.now() }],
+    })
+    assert.ok(result.entry)
+    assert.equal(result.entry.supersedes.includes('old-db'), true)
+    const old = store.get('old-db')
+    assert.equal(old?.state, 'superseded', '旧事实被自动取代失效')
+    assert.equal(old?.supersededBy, result.entry.id)
+    // 召回只剩新事实。
+    const hits = store.search('数据库地址')
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0]?.id, result.entry.id)
+  } finally { cleanup(dir) }
+})
+
+test('自动激活：钉选条目受红线保护，不被自动取代', () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    store.create({ content: '生产重启必须辉哥明确确认', scope: { kind: 'global' }, memoryKey: 'restart-redline', pinned: true }, 'redline')
+    const result = governance.activateAuto({
+      content: '重启流程已简化无需确认',
+      category: 'fact',
+      scope: { kind: 'global' },
+      memoryKey: 'restart-redline',
+      source: 'session-reflection',
+      sourceId: 's:auto-4',
+    })
+    assert.ok(result.entry, '钉选冲突不阻塞自动激活')
+    assert.equal(result.entry.supersedes.length, 0, '钉选条目不在自动取代清单内')
+    assert.equal(store.get('redline')?.state, 'active', '钉选红线保持活跃')
+  } finally { cleanup(dir) }
+})
+
+test('项目档案卡：命中登记项目时全量注入，与话题相关性无关', async () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    store.create({ content: '悟空项目路径 /projects/wukong-game', scope: { kind: 'project', id: 'wukong' } }, 'wp-1')
+    store.create({ content: '悟空发布走 GitHub Pages 构建产物', scope: { kind: 'project', id: 'wukong' } }, 'wp-2')
+    store.create({ content: '其他项目无关内容', scope: { kind: 'project', id: 'other' } }, 'op-1')
+    const injection = new MemoryInjectionService(fakeRagService('fail'), () => SETTINGS, store, undefined, { governance, scopeOfAgent: () => ({ kind: 'global' }) })
+    // 话题与项目记忆毫无词法/语义重叠，档案卡也必须无条件在场。
+    const decision = await injection.decideDetailed([{ role: 'user', content: [{ type: 'text', text: '帮我写个问候语' }] }], { scope: { kind: 'project', id: 'wukong', label: '悟空伏魔录' }, sessionId: 's-prof', turn: 1 })
+    assert.ok(decision.text !== undefined)
+    assert.ok(decision.text.includes('[项目档案]'), '必须渲染档案卡头部')
+    assert.ok(decision.text.includes('悟空伏魔录'), '档案卡带项目名')
+    assert.ok(decision.text.includes('悟空项目路径'), '项目事实无条件注入')
+    assert.ok(decision.text.includes('悟空发布走 GitHub Pages'), '多条项目事实都在场')
+    assert.ok(!decision.text.includes('其他项目无关内容'), '跨项目条目绝不进入档案卡')
+    // 档案条目记入召回轨迹 layer=profile。
+    const traces = governance.listRecalls(10)
+    assert.ok(traces.some((trace) => trace.hits.some((hit) => hit.entryId === 'wp-1' && hit.layer === 'profile' && hit.included)))
+    // 非项目作用域（workspace/global）不注入档案卡。
+    const decision2 = await injection.decideDetailed([{ role: 'user', content: [{ type: 'text', text: '帮我写个问候语' }] }], { scope: { kind: 'global' }, sessionId: 's-prof2', turn: 1 })
+    assert.ok(decision2.text === undefined || !decision2.text.includes('[项目档案]'))
+  } finally { cleanup(dir) }
+})
+
+test('项目档案卡：整条装入预算，装不下即停且钉选剔除防重复', async () => {
+  const { store, governance, dir } = makeRig()
+  try {
+    store.create({ content: '项目钉选规则A', scope: { kind: 'project', id: 'p1' }, pinned: true }, 'pin-1')
+    store.create({ content: '项目事实A', scope: { kind: 'project', id: 'p1' } }, 'pa-1')
+    store.create({ content: '项目长事实C'.repeat(400), scope: { kind: 'project', id: 'p1' } }, 'pa-2')
+    const injection = new MemoryInjectionService(fakeRagService('fail'), () => SETTINGS, store, undefined, { governance, scopeOfAgent: () => ({ kind: 'global' }) })
+    const decision = await injection.decideDetailed([{ role: 'user', content: [{ type: 'text', text: '项目相关话题' }] }], { scope: { kind: 'project', id: 'p1', label: 'P1' }, sessionId: 's-prof3', turn: 1 })
+    assert.ok(decision.text !== undefined)
+    const profileSection = decision.text.split('\n---\n').find((part) => part.startsWith('[项目档案]')) ?? ''
+    assert.ok(!profileSection.includes('项目钉选规则A'), '钉选条目走常驻层，档案卡段落剔除')
+    assert.ok(decision.text.includes('项目钉选规则A'), '钉选条目仍通过常驻块注入（红线在场）')
+    assert.ok(profileSection.includes('项目事实A'))
+    assert.ok(!profileSection.includes('项目长事实C'.repeat(2)), '超预算条目整条丢弃，绝不截半条')
+  } finally { cleanup(dir) }
+})
+
+test('项目档案渲染：预算内整条装入，超预算条目整条丢弃不截半条', () => {
+  const entry = (id: string, content: string): NativeMemoryEntry => ({ id, content, category: 'fact', tags: [], source: 'session', importance: 3, state: 'active', revision: 1, supersedes: [], trust: 'legacy', confidence: 1, scope: { kind: 'project', id: 'p1' }, evidence: [], accessCount: 0, usedCount: 0, helpfulCount: 0, harmfulCount: 0, createdAt: 1, updatedAt: 1 })
+  const short = entry('e1', '短事实')
+  const long = entry('e2', '超长事实'.repeat(500))
+  const rendered = renderProjectProfileDetailed([short, long], 'P1', 200)
+  assert.ok(rendered.text.includes('短事实'))
+  assert.ok(!rendered.text.includes('超长事实'), '超过预算的条目整条丢弃')
+  assert.deepEqual([...rendered.includedIds], ['e1'])
+  const empty = renderProjectProfileDetailed([long], 'P1', 200)
+  assert.equal(empty.text === '' || !empty.text.includes('超长事实'), true, '首条超预算也不截半条')
 })

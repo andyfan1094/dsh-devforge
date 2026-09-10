@@ -17,11 +17,12 @@ import { MemoryStatsStore } from '../src/memory/stats.ts'
 import { NativeMemoryStore, type NativeMemoryEntry } from '../src/memory/native.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { closeDb } from '../src/store/db.ts'
+import { MemoryGovernanceService } from '../src/memory/governance.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
 import type { RagDocument, RagSearchHit } from '../src/rag/protocol.ts'
 import type { RagService } from '../src/rag/service.ts'
 
-const SETTINGS = { enabled: true, autoSediment: true, autoInject: true, topK: 4, threshold: 0.3, maxChars: 1200 }
+const SETTINGS = { enabled: true, autoSediment: true, autoInject: true, autoActivate: true, projectProfile: true, topK: 4, threshold: 0.3, maxChars: 1200 }
 
 function hit(id: string, score: number, text = '内容' + id): RagSearchHit {
   return { chunkId: id, docId: 'd' + id, kbId: 'kb1', fileName: 'f.md', headingPath: '', text, score }
@@ -223,6 +224,46 @@ describe('会话记忆沉淀', () => {
     assert.equal(storedCount, 0, '临时状态条目必须被硬过滤，不入库')
     assert.equal(stored.length, 0)
   })
+  test('沉淀全自动激活：候选直接成为 active，同 memoryKey 新证据自动取代', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sed-auto-'))
+    const ragStore = new RagStore(join(dir, 'store.db'), join(dir, 'rag-vec.db'))
+    const native = new NativeMemoryStore(ragStore)
+    const governance = new MemoryGovernanceService(ragStore, native)
+    try {
+      const rag = fakeRag({ listDocs: () => [], listChunks: () => [] })
+      const projectScope = { kind: 'project' as const, id: 'p1' }
+      const session = (id: string, host: string, answer: string) => ({ id, events: [
+        { type: 'user/message', data: { content: [{ type: 'text', text: '把项目数据库配好' }] } },
+        { type: 'tool/call', data: { callId: 'c1', name: 'read' } },
+        { type: 'tool/result', data: { message: { source: { callId: 'c1' } }, content: [{ type: 'text', text: 'config.yaml: host: ' + host }] } },
+        { type: 'assistant/message', data: { content: [{ type: 'text', text: answer + '。本句是测试构造的足够长答复，用于通过沉淀窗口的最小答复长度过滤判断。' }] } },
+        { type: 'turn/end', data: { turn: 1 } },
+      ] })
+      let reply = '{"items":[{"content":"项目数据库地址是 10.0.0.2:3306","category":"fact","memoryKey":"db-addr","confidence":0.9}]}'
+      const sediment = new MemorySedimentService(rag, () => 'kb1', async () => reply, () => SETTINGS, native, undefined, { governance, scopeOf: () => projectScope })
+      const first = await sediment.process(session('s3', '10.0.0.2', '数据库配置完成，地址 10.0.0.2'), 's3', 1)
+      assert.equal(first, 1, '自动激活计一次入库')
+      const active1 = native.list()
+      assert.equal(active1.length, 1)
+      assert.equal(active1[0]?.state, 'active')
+      assert.equal(active1[0]?.trust, 'verified', '带工具证据自动激活为 verified')
+      assert.equal(active1[0]?.memoryKey, 'db-addr')
+      assert.equal(governance.listCandidates({ states: ['pending', 'needs-resolution'] }).length, 0, '全自动后无待审核候选')
+      assert.equal(governance.listCandidates({ states: ['auto-activated'] }).length, 1)
+      assert.equal(sediment.lastOutcome, 'auto-stored:1')
+      // 第二次沉淀同 memoryKey 新值 → 自动取代旧事实，无人工介入。
+      reply = '{"items":[{"content":"项目数据库地址已迁移到 10.0.0.3:3306","category":"fact","memoryKey":"db-addr","confidence":0.9}]}'
+      const second = await sediment.process(session('s4', '10.0.0.3', '数据库迁移完成，新地址 10.0.0.3'), 's4', 1)
+      assert.equal(second, 1)
+      const active2 = native.list()
+      assert.equal(active2.length, 1, '取代后仍只有一条活跃事实')
+      assert.ok(active2[0]?.content.includes('10.0.0.3'))
+      assert.equal(active2[0]?.supersedes.length, 1, '保留取代链可追溯')
+    } finally {
+      closeDb(join(dir, 'store.db'))
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('记忆主动注入', () => {
@@ -237,10 +278,12 @@ describe('记忆主动注入', () => {
     assert.ok(rendered.length <= 50 + 1)
   })
   test('stripBoilerplate：剔除 system-reminder 块与记忆注入段', () => {
-    const text = '<system-reminder>技能目录与运行时上下文样板</system-reminder>\n[记忆中枢自动注入] 候选\n---\n真正的问题'
+    const text = '<system-reminder>技能目录与运行时上下文样板</system-reminder>\n[记忆中枢自动注入] 候选\n---\n[项目档案] 以下是「悟空」已沉淀的项目记忆\n---\n真正的问题'
     const cleaned = stripBoilerplate(text)
     assert.ok(!cleaned.includes('样板'))
     assert.ok(!cleaned.includes('自动注入'))
+    assert.ok(!cleaned.includes('项目档案'), '项目档案卡段同样必须从检索查询中剔除')
+    assert.ok(!cleaned.includes('悟空'))
     assert.ok(cleaned.includes('真正的问题'))
   })
   test('buildMemoryQuery：取最后一条用户消息、跳过插件快照并剔除样板段', () => {

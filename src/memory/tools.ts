@@ -112,7 +112,7 @@ export interface MemoryManageToolOptions {
 export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManageToolOptions) {
   return defineTool({
     name: 'memory_manage',
-    description: '管理天工造梦内置长期记忆（memory.entry）：save 保存用户明确确认的事实、偏好、决策或踩坑经验；未能由 Host 回读验证的写入只进入待审核候选。search/list/get/update/delete 用于检索和维护。需要每轮固定记住时 pinned=true。',
+    description: '管理天工造梦内置长期记忆（memory.entry）：save 保存记忆并自动激活（有明确用户指令时为确认信任，否则按证据链分级）；search/list/get/update/delete 用于检索和维护。需要每轮固定记住时 pinned=true。',
     parameters: {
       action: { type: 'string', enum: ['list', 'get', 'save', 'search', 'update', 'delete'], description: '操作类型，默认 list。' },
       id: { type: 'string', description: 'get/update/delete 使用的记忆 id。' },
@@ -165,8 +165,11 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
             if (accepted.entry !== undefined) return { ok: true, action, entry: accepted.entry }
             return { ok: true, action, message: '已识别用户明确保存请求，但与现有事实冲突，已进入待审核候选：' + accepted.candidate.id }
           }
-          const candidate = options.governance.propose(candidateInput)
-          return { ok: true, action, message: '未检测到可回读验证的用户明确保存指令，已创建待审核候选：' + candidate.id }
+          // 全自动路径（辉哥 2026-09-10 决策）：无明确指令的写入也直接激活，证据链决定信任等级。
+          const auto = options.governance.activateAuto(candidateInput)
+          if (auto.entry !== undefined && args.pinned === true && auto.entry.pinned !== true) return { ok: true, action, entry: store.update(auto.entry.id, { pinned: true }) }
+          if (auto.entry !== undefined) return { ok: true, action, entry: auto.entry }
+          return { ok: true, action, message: '已自动激活候选记忆：' + auto.candidate.id }
         }
         if (action === 'update') {
           if (!args.id) return { ok: false, action, message: 'update 需要 id' }
@@ -176,8 +179,9 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           const requestedContent = args.content ?? current.content
           const verified = verifyLatestUserRequest(exec, requestedContent, 'update')
           if (options?.governance !== undefined && !verified.explicit) {
-            const candidate = options.governance.propose({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] })
-            return { ok: true, action, message: '更新未通过 Host 用户确认校验，已创建待审核候选：' + candidate.id }
+            // 全自动路径：更新类写入也直接激活，同 memoryKey 旧事实自动取代。
+            const auto = options.governance.activateAuto({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] })
+            return auto.entry !== undefined ? { ok: true, action, entry: auto.entry } : { ok: true, action, message: '更新已自动激活为候选：' + auto.candidate.id }
           }
           const verifiedSourceId = verified.evidence === undefined ? args.sourceId : ['direct-user', verified.evidence.sessionId, verified.evidence.messageId, verified.evidence.digest].filter(Boolean).join(':')
           const governed = options?.governance === undefined ? {} : { source: 'user-confirmed', sourceId: verifiedSourceId, trust: 'confirmed' as const, confidence: 1, evidence: verified.evidence === undefined ? current.evidence : [...current.evidence, verified.evidence] }

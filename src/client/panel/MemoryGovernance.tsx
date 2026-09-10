@@ -18,10 +18,13 @@ function fmtTime(ts: number): string {
   return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
 }
 
-/** 候选状态徽标语义：pending=待审，needs-resolution=冲突待裁决。 */
+/** 候选状态徽标语义：pending=待审，needs-resolution=冲突待裁决，auto-activated=已自动生效。 */
 function candidateBadge(candidate: MemoryCandidate): string {
   if (candidate.state === 'needs-resolution') return '冲突 ' + candidate.conflictIds.length
   if (candidate.state === 'deduped') return '重复'
+  if (candidate.state === 'auto-activated') return '自动生效'
+  if (candidate.state === 'approved') return '已通过'
+  if (candidate.state === 'rejected') return '已拒绝'
   return '待审核'
 }
 

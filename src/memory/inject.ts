@@ -50,7 +50,7 @@ export function stripBoilerplate(text: string): string {
     .split(/\n---\n/)
     .filter((segment) => {
       const head = segment.slice(0, 40)
-      return !head.includes('自动注入') && !head.includes('长期记忆') && !head.includes('常驻记忆')
+      return !head.includes('自动注入') && !head.includes('长期记忆') && !head.includes('常驻记忆') && !head.includes('项目档案')
     })
     .join('\n---\n')
 }
@@ -130,6 +130,10 @@ export const PINNED_MAX_ENTRIES = 6
 /** 常驻记忆字符预算（独立于检索注入预算）。 */
 export const PINNED_MAX_CHARS = 600
 
+/** 项目档案卡字符预算（独立于检索注入预算）：工作目录命中登记项目时，
+ * 该项目已沉淀的活跃记忆全量注入，让新会话免于从头探索项目事实。 */
+export const PROFILE_MAX_CHARS = 1800
+
 function renderPinnedContextDetailed(entries: NativeMemoryEntry[], maxChars: number): RenderedEntries {
   if (entries.length === 0 || maxChars <= 0) return { text: '', includedIds: new Set() }
   const header = '[常驻记忆] 以下是每轮固定加载的记忆（钉选条目，必须遵守）：'
@@ -155,6 +159,33 @@ function renderPinnedContextDetailed(entries: NativeMemoryEntry[], maxChars: num
 /** 渲染常驻记忆块（每轮固定加载，不参与检索相关性过滤；导出供单测）。 */
 export function renderPinnedContext(entries: NativeMemoryEntry[], maxChars: number): string {
   return renderPinnedContextDetailed(entries, maxChars).text
+}
+
+/** 渲染项目档案卡（导出供单测）：
+ * - 工作目录命中登记项目时，该项目全部活跃记忆按更新时间倒序全量装入；
+ * - 与检索注入不同，档案卡不参与相关性过滤——项目事实无论本轮话题是什么都要在场；
+ * - 整条装入、装不下即停（绝不截半条），钉选条目由常驻层负责、此处剔除防重复。 */
+export function renderProjectProfileDetailed(entries: NativeMemoryEntry[], label: string, maxChars: number): RenderedEntries {
+  if (entries.length === 0 || maxChars <= 0) return { text: '', includedIds: new Set() }
+  const header = '[项目档案] 以下是「' + label + '」已沉淀的项目记忆（全量注入，按更新时间排序，无需重新探索即可直接使用）：'
+  const lines: string[] = [header]
+  const includedIds = new Set<string>()
+  let used = header.length
+  for (const entry of entries) {
+    if (entry.pinned === true) continue
+    const stamp = entryDateStamp(entry)
+    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.category + '] ' + entry.content
+    if (used + line.length + 1 > maxChars) break
+    lines.push(line)
+    includedIds.add(entry.id)
+    used += line.length + 1
+  }
+  return { text: lines.join('\n').slice(0, maxChars), includedIds }
+}
+
+/** 渲染项目档案卡文本（导出供单测）。 */
+export function renderProjectProfile(entries: NativeMemoryEntry[], label: string, maxChars: number): string {
+  return renderProjectProfileDetailed(entries, label, maxChars).text
 }
 
 /** 注入决策明细：text 为空时 reason 说明跳过原因；traceId 可关联人工反馈。 */
@@ -233,6 +264,14 @@ export class MemoryInjectionService {
     try { pinnedEntries = this.native?.listPinned({ limit: PINNED_MAX_ENTRIES, scope, isolateScope: settings.scopeIsolation !== false }) ?? [] }
     catch (error) { degradedLayers.push('pinned:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
 
+    // 项目档案卡：命中登记项目时该项目活跃记忆全量注入，不参与相关性过滤（钉选走常驻层）。
+    let profileEntries: NativeMemoryEntry[] = []
+    if (settings.projectProfile !== false && scope.kind === 'project') {
+      try {
+        profileEntries = (this.native?.list({ limit: 100, scope, isolateScope: settings.scopeIsolation !== false }) ?? []).filter((entry) => entry.pinned !== true)
+      } catch (error) { degradedLayers.push('profile:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
+    }
+
     let nativeEntries: NativeMemoryEntry[] = []
     let nativeScores = new Map<string, number>()
     let nativeLayers = new Map<string, 'native' | 'semantic'>()
@@ -266,25 +305,29 @@ export class MemoryInjectionService {
         const hits = await this.rag.search({ query, kbIds, topK: settings.topK, vectorWeight: 0.5 })
         const topScore = hits.reduce((max, hit) => Math.max(max, hit.score), 0)
         const floor = Math.max(settings.threshold, 0.01, topScore * RELATIVE_KEEP_RATIO)
-        const nativeNorms = new Set([...pinnedEntries, ...nativeEntries].map((entry) => normalizeMemoryText(entry.content)))
+        const nativeNorms = new Set([...pinnedEntries, ...profileEntries, ...nativeEntries].map((entry) => normalizeMemoryText(entry.content)))
         mirrorHits = hits.filter((hit) => hit.score >= floor && !nativeNorms.has(normalizeMemoryText(hit.text)))
       }
     } catch (error) { degradedLayers.push('mirror:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
 
-    if (pinnedEntries.length === 0 && mirrorHits.length === 0 && nativeEntries.length === 0) {
+    if (pinnedEntries.length === 0 && profileEntries.length === 0 && mirrorHits.length === 0 && nativeEntries.length === 0) {
       trace(degradedLayers.length > 0 ? 'degraded' : 'no-hit', [], degradedLayers)
       return { reason: 'no-hit', traceId }
     }
 
     const pinnedRendered = renderPinnedContextDetailed(pinnedEntries, PINNED_MAX_CHARS)
+    const profileRendered = renderProjectProfileDetailed(profileEntries, scope.label ?? scope.id ?? '本项目', PROFILE_MAX_CHARS)
+    const profileIds = new Set(profileRendered.includedIds)
+    const nativeForRender = nativeEntries.filter((entry) => !profileIds.has(entry.id))
     let remaining = settings.maxChars
-    const nativeRendered = renderNativeContextDetailed(nativeEntries, remaining)
+    const nativeRendered = renderNativeContextDetailed(nativeForRender, remaining)
     remaining = Math.max(0, remaining - nativeRendered.text.length)
     const ragText = renderMemoryContext(mirrorHits, remaining)
-    const combined = [pinnedRendered.text, nativeRendered.text, ragText].filter((part) => part !== '').join('\n---\n')
+    const combined = [pinnedRendered.text, profileRendered.text, nativeRendered.text, ragText].filter((part) => part !== '').join('\n---\n')
     const hits: MemoryRecallTrace['hits'] = [
       ...pinnedEntries.map((entry) => ({ entryId: entry.id, layer: 'pinned' as const, score: 1, included: pinnedRendered.includedIds.has(entry.id), ...(pinnedRendered.includedIds.has(entry.id) ? {} : { skipReason: 'pinned-budget' }) })),
-      ...nativeEntries.map((entry) => ({ entryId: entry.id, layer: nativeLayers.get(entry.id) ?? 'native', score: nativeScores.get(entry.id) ?? 0, included: nativeRendered.includedIds.has(entry.id), ...(nativeRendered.includedIds.has(entry.id) ? {} : { skipReason: 'native-budget' }) })),
+      ...profileEntries.map((entry) => ({ entryId: entry.id, layer: 'profile' as const, score: 1, included: profileRendered.includedIds.has(entry.id), ...(profileRendered.includedIds.has(entry.id) ? {} : { skipReason: 'profile-budget' }) })),
+      ...nativeEntries.map((entry) => ({ entryId: entry.id, layer: nativeLayers.get(entry.id) ?? 'native', score: nativeScores.get(entry.id) ?? 0, included: nativeRendered.includedIds.has(entry.id), ...(profileIds.has(entry.id) ? { skipReason: 'profile-dedup' } : nativeRendered.includedIds.has(entry.id) ? {} : { skipReason: 'native-budget' }) })),
       ...mirrorHits.map((hit) => ({ entryId: hit.chunkId, layer: 'mirror' as const, score: hit.score, included: ragText.includes(hit.text), ...(ragText.includes(hit.text) ? {} : { skipReason: 'mirror-budget' }) })),
     ]
     trace(degradedLayers.length > 0 ? 'degraded' : 'hit', hits, degradedLayers)

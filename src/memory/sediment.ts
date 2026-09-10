@@ -331,9 +331,9 @@ export class MemorySedimentService {
     }
     const dialog = eligible.map((item) => (item.userText.trim() !== '' ? '【用户】' + item.userText + '\n【助手】' : '【用户】（本轮无新用户输入，由后台任务/通知触发的智能体工作轮次）\n【助手】') + item.assistantText).join('\n\n')
     const system = [
-      '你是可信记忆候选提炼器和任务复盘员。只生成待人工审核的候选，不得声称它们已被用户确认。',
+      '你是记忆提炼员和任务复盘员。提炼结果会自动生效为长期记忆，必须只写对话中真实出现的内容。',
       '从对话中识别长期偏好、稳定决策、环境事实、经工具验证的结果和可复用踩坑经验；跳过寒暄、问题本身、临时进度、待验收/未提交/未推送状态、凭据和原始代码。',
-      '候选必须有 category、confidence、reason；可变配置或状态必须给稳定 memoryKey，便于发现新旧冲突。confidence 只是参考，不能决定生效。',
+      '每条候选必须有 category、confidence、reason；可变配置或状态必须给稳定 memoryKey，便于发现新旧冲突后自动取代。事实性内容尽量给出证据说明；无证据的推断 confidence 应降低。',
       '同时输出 task 复盘：目标、结果摘要、success/partial/failure/unknown、可复用 lessons、实际使用的 injected memory id。没有证据时 outcome=unknown。',
       '最多 5 条候选，每条一句独立中文陈述。只输出 JSON。',
     ].join('\n')
@@ -363,7 +363,7 @@ export class MemorySedimentService {
       const contentDigest = createHash('sha256').update(content).digest('hex')
       try {
         if (this.governance !== undefined) {
-          const proposed = this.governance.propose({
+          const input = {
             content,
             category: candidate.category,
             importance: importance === 'critical' ? 5 : importance === 'low' ? 2 : 3,
@@ -376,9 +376,18 @@ export class MemorySedimentService {
             sourceId: 'session:' + sessionId + ':' + watermarkTurn + ':' + contentDigest,
             sessionId,
             turn: watermarkTurn,
-          })
-          candidateIds.push(proposed.id)
-          if (proposed.state === 'pending' || proposed.state === 'needs-resolution') stored += 1
+          }
+          if (settings.autoActivate === false) {
+            // 回退：仅创建待审核候选（面板可恢复人工审核工作流）。
+            const proposed = this.governance.propose(input)
+            candidateIds.push(proposed.id)
+            if (proposed.state === 'pending' || proposed.state === 'needs-resolution') stored += 1
+            continue
+          }
+          // 全自动路径（辉哥 2026-09-10 决策）：候选直接激活为活跃记忆，不再停留待审核。
+          const auto = this.governance.activateAuto(input)
+          candidateIds.push(auto.candidate.id)
+          if (auto.entry !== undefined) stored += 1
           continue
         }
         if (keys.has(content) || [...keys].some((existing) => existing.includes(content) || content.includes(existing))) continue
@@ -422,7 +431,7 @@ export class MemorySedimentService {
     }
 
     this.processedTurns.set(sessionId, watermarkTurn)
-    this.lastOutcome = stored > 0 ? (this.governance === undefined ? 'stored:' : 'candidates:') + stored : candidates.length === 0 ? 'no-candidates' : 'filtered-or-deduped'
+    this.lastOutcome = stored > 0 ? (this.governance === undefined ? 'stored:' : 'auto-stored:') + stored : candidates.length === 0 ? 'no-candidates' : 'filtered-or-deduped'
     if (stored > 0) {
       this.sedimentCount += stored
       this.lastSedimentAt = Date.now()
