@@ -18,6 +18,7 @@ import { PanelController } from './panel/controller.ts'
 import { mountRestartEntry } from './restart-entry.ts'
 import { mountSidebarEntry } from './sidebar-entry.ts'
 import { createSkinRuntime } from './theme/skin-runtime.ts'
+import { mountZhipuQuotaSidebar } from './zhipu-quota-sidebar.tsx'
 
 /** locale 命名空间。 */
 const NS = 'dsh-devforge'
@@ -56,6 +57,9 @@ export function apply(ctx: ClientContext): void {
   ctx.inject(['betterSidebar'], (sidebarCtx) => {
     sidebarCtx.effect(() => registerDouyinLiveSidebar(sidebarCtx, api), 'dsh-devforge: douyin live sidebar')
   })
+  // 首页侧栏底部「智谱 5 小时」用量卡片（原独立插件 dsh-zhipu-quota 并入）；
+  // 槽位/timer 缺席时内部静默降级，不影响主操作台。
+  ctx.effect(() => mountZhipuQuotaSidebar(ctx), 'dsh-devforge: zhipu quota sidebar')
   // 皮肤引导恢复须早于面板首次打开；自身降级不影响其它挂载。
   let skin: ReturnType<typeof createSkinRuntime> | undefined
   try {
