@@ -22,7 +22,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
-import { ForgeEngine, type ForgeHostServices } from './forge.ts'
+import { DEFAULT_FORGE_AGENT_PRESET, ForgeEngine, type ForgeHostServices } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.ts'
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
@@ -156,6 +156,8 @@ export interface Config {
   enabled?: boolean
   /** 是否向 agent 系统提示通报本插件能力（默认开）。 */
   announceToAgent?: boolean
+  /** 服务生成子代理使用的 Agent 预设；默认使用 cordis-250k 压缩预设。 */
+  forgeAgentPreset?: string
   /** 远程运维（SSH/WinRM 兼容接管）子配置。 */
   remote?: RemoteConfig
   /** 本地浏览器（Playwright MCP）子配置。 */
@@ -189,12 +191,13 @@ export interface Config {
 }
 
 /** 配置默认值。 */
-const DEFAULTS = { enabled: true, announceToAgent: true }
+const DEFAULTS = { enabled: true, announceToAgent: true, forgeAgentPreset: DEFAULT_FORGE_AGENT_PRESET }
 
 /** schemastery 配置模式（设置面板自动生成）。 */
 export const Config = z.object({
   enabled: z.boolean().default(true).description('插件总开关'),
   announceToAgent: z.boolean().default(true).description('向 Agent 通报插件能力'),
+  forgeAgentPreset: z.string().default('cordis-250k').description('服务生成子代理的 Agent 预设；缺失时回退到 cordis'),
   remote: z.object({
     enabled: z.boolean().default(true).description('远程运维（SSH/WinRM 兼容接管）开关'),
   }).description('远程运维配置'),
@@ -314,6 +317,7 @@ export function apply(ctx: Context, config?: Config): void {
     return {
       enabled: value.enabled ?? DEFAULTS.enabled,
       announceToAgent: value.announceToAgent ?? DEFAULTS.announceToAgent,
+      forgeAgentPreset: value.forgeAgentPreset?.trim() || DEFAULTS.forgeAgentPreset,
       remote: { enabled: value.remote?.enabled ?? false },
       browser: {
         enabled: value.browser?.enabled ?? false,
@@ -382,7 +386,7 @@ export function apply(ctx: Context, config?: Config): void {
   const restartManager = new DshWebRestartManager()
   // 第一阶段只读桥接旧 SSH/WinRM store；不搬运、不回写任何凭据。
   const remoteRegistry = new LegacyRemoteRegistry()
-  const engine = new ForgeEngine(ctx, ctx as unknown as ForgeHostServices, standards, join(pluginRoot, '.devforge'))
+  const engine = new ForgeEngine(ctx, ctx as unknown as ForgeHostServices, standards, join(pluginRoot, '.devforge'), () => resolve().forgeAgentPreset)
   ctx.effect(() => () => { engine.dispose() }, 'dsh-devforge: engine')
 
   // ---- 常驻面板路由的活能力句柄：开关状态按请求判断，避免“前端在、后端 404”。----
@@ -943,10 +947,11 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null } }
+        const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
+          forgeAgentPreset: value.forgeAgentPreset?.trim() || DEFAULTS.forgeAgentPreset,
           // 子能力开关：未配置一律 false（安全默认），与 resolve() 兜底一致。
           remote: { enabled: value.remote?.enabled === true },
           browser: {

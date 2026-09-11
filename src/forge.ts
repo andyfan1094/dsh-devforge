@@ -23,6 +23,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ForgeJob, ForgeJobCreateRequest, ForgeTemplate } from './protocol.ts'
 import type { StandardsStore } from './standards.ts'
 
+/** 默认让服务生成子代理加入 250k 压缩预设。 */
+export const DEFAULT_FORGE_AGENT_PRESET = 'cordis-250k'
+
 /** 引擎需要的宿主服务（feishu 已验证的最小集）。 */
 export interface ForgeHostServices {
   /** 会话创建/恢复（dsh-agent 服务）。 */
@@ -32,11 +35,52 @@ export interface ForgeHostServices {
   /** 默认模型选择（当前 provider/model/effort）。 */
   agentDefaultModel: { currentSelection(): Record<string, unknown> }
   /** agent 预设解析/挂载。 */
-  agentPresets?: { resolve(id: string): Promise<{ id?: string }>; mount(agentCtx: unknown, id: string): Promise<unknown> }
+  agentPresets?: { resolve(id: string): Promise<{ id?: string; broken?: string }>; mount(agentCtx: unknown, id: string): Promise<unknown> }
   /** 工作区注册（会话挂到工作区，GUI 可见）。 */
   workspaceRegistry?: { attachSession(sessionId: string, cwd: string): Promise<unknown> }
   /** 事件订阅（agent/disposed 清理映射）。 */
   on(event: 'agent/disposed', listener: (payload: unknown) => void): () => void
+}
+
+/**
+ * 解析服务生成子代理使用的预设。
+ *
+ * 250k 预设是用户侧可选安装项；缺失或损坏时回退官方 cordis，
+ * 两个候选都不可用则明确失败，避免创建出未加入任何预设的空 Agent。
+ */
+export async function resolveForgeAgentPreset(
+  agentPresets: ForgeHostServices['agentPresets'],
+  preferred: string | undefined,
+  warn?: (message: string) => void,
+): Promise<string | undefined> {
+  if (agentPresets === undefined) return undefined
+  const requested = preferred?.trim() || DEFAULT_FORGE_AGENT_PRESET
+  let requestedError: unknown
+  try {
+    const preset = await agentPresets.resolve(requested)
+    if (preset.broken !== undefined) throw new Error(preset.broken)
+    return preset.id ?? requested
+  } catch (error) {
+    requestedError = error
+  }
+
+  if (requested !== 'cordis') {
+    try {
+      const fallback = await agentPresets.resolve('cordis')
+      if (fallback.broken === undefined) {
+        const reason = requestedError instanceof Error ? requestedError.message : String(requestedError)
+        warn?.(`服务生成子代理预设「${requested}」不可用，已回退到「cordis」：${reason}`)
+        return fallback.id ?? 'cordis'
+      }
+      requestedError = new Error(`预设损坏：${fallback.broken}`)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      requestedError = new Error(`回退预设「cordis」不可用：${reason}`, { cause: requestedError })
+    }
+  }
+
+  const reason = requestedError instanceof Error ? requestedError.message : String(requestedError)
+  throw new Error(`服务生成子代理无法挂载预设「${requested}」：${reason}`)
 }
 
 /** 内置服务模板：预约束的一键生成流水线。 */
@@ -91,12 +135,21 @@ export class ForgeEngine {
   private readonly standards: StandardsStore
   /** 插件私有数据目录（状态文件用；当前状态仅内存，预留）。 */
   private readonly dataDir: string
+  /** 动态读取服务生成子代理的预设，支持设置热更新。 */
+  private readonly agentPreset: () => string | undefined
 
-  constructor(ctx: Context, host: ForgeHostServices, standards: StandardsStore, dataDir: string) {
+  constructor(
+    ctx: Context,
+    host: ForgeHostServices,
+    standards: StandardsStore,
+    dataDir: string,
+    agentPreset: () => string | undefined = () => undefined,
+  ) {
     this.ctx = ctx
     this.host = host
     this.standards = standards
     this.dataDir = dataDir
+    this.agentPreset = agentPreset
     // agent/disposed：子代理被销毁时同步任务状态，防悬挂 running
     this.ctx.on('agent/disposed', (payload) => {
       const agent = (payload as { agent?: { id?: string } })?.agent ?? (payload as { id?: string })
@@ -172,21 +225,26 @@ export class ForgeEngine {
   private async spawn(job: ForgeJob, template: ForgeTemplate): Promise<void> {
     this.touch(job, 'running')
     const selection = this.host.agentDefaultModel.currentSelection()
-    const agentPreset = 'cordis'
-    try { await this.host.agentPresets?.resolve(agentPreset) } catch { /* 预设缺失走默认 */ }
+    const agentPreset = await resolveForgeAgentPreset(this.host.agentPresets, this.agentPreset(), (message) => {
+      this.ctx.logger?.warn?.('[dsh-devforge] %s', message)
+    })
 
-    // 系统提示内规范注入：用 setup 钩子在 agent 上下文挂 systemPrompt section
+    // 系统提示内规范注入：先加入预设，再挂载插件自己的规范段。
+    // 预设必须在创建 setup 阶段 mount；仅写 meta.agentPreset 只会记录会话投影，
+    // 不会把压缩引擎、工具和提示词加入子代理作用域。
     const standardText = this.standards.composeForAgent(job.standardIds)
     const sessionId = 'session-devforge-' + job.id
+    const meta: Record<string, unknown> = { cwd: job.targetDir }
+    if (agentPreset !== undefined) meta.agentPreset = agentPreset
     const handle = await this.host.agents.create({
       sessionId,
       cwd: job.targetDir,
-      meta: { cwd: job.targetDir, agentPreset },
+      meta,
       agentOptions: selection,
-      setup: (agentCtx: {
-        agent?: { session?: unknown }
-        systemPrompt?: { section(input: { name: string; order: number; text: string }): () => void }
-      }) => {
+      setup: async (agentCtx: Context) => {
+        if (agentPreset !== undefined) {
+          await this.host.agentPresets?.mount(agentCtx, agentPreset)
+        }
         try {
           agentCtx.systemPrompt?.section({
             name: 'plugin:dsh-devforge',
@@ -207,7 +265,7 @@ export class ForgeEngine {
       .replace('{targetDir}', job.targetDir)
       .replace('{requirements}', job.requirements || '（无补充需求，按规范默认执行）')
     handle.agent.followup(firstMessage + '\n\n' + standardText)
-    job.lastMessage = '子代理已启动：' + handle.agent.id
+    job.lastMessage = '子代理已启动：' + handle.agent.id + '（预设：' + (agentPreset ?? '宿主默认') + '）'
   }
 
   /** 取消任务：agent.cancel + 状态落库。 */
