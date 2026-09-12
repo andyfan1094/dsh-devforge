@@ -100,6 +100,8 @@ export interface EscalationStripInfo {
   readonly tool: string
   /** 调用 id（exec.callId）。 */
   readonly callId: string
+  /** 该次调用所属会话 id（有则记，便于按会话核对）。 */
+  readonly sessionId?: string
   /** 剥离原因。 */
   readonly reason: EscalationStripReason
   /** 被丢弃的请求模式（若给出且为字符串）。 */
@@ -159,6 +161,8 @@ export function createEffectiveModeResolver(ctx: SandboxPolicyContext): (exec: T
 export interface EscalationKeepInfo {
   /** 工具名（exec.name）。 */
   readonly tool: string
+  /** 该次调用所属会话 id（有则记）。 */
+  readonly sessionId?: string
   /** 该次调用的有效模式（undefined = 无法判定）。 */
   readonly effectiveMode?: string
   /** 请求的提权模式（若给出且为字符串）。 */
@@ -181,6 +185,18 @@ export interface SandboxEscalationGuardHost {
 /** 注册监听所需的最小 ctx 视图。 */
 export interface SandboxEscalationGuardContext {
   on(name: string, listener: (exec: ToolExecutionLike, next: () => unknown) => unknown, options?: { prepend?: boolean }): unknown
+}
+
+/** 尽力读取调用所属会话 id；结构不符时返回 undefined。 */
+function readSessionId(exec: ToolExecutionLike): string | undefined {
+  try {
+    const agent = (exec as { agent?: { id?: unknown; session?: { id?: unknown } } } | undefined)?.agent
+    if (typeof agent?.session?.id === 'string') return agent.session.id
+    if (typeof agent?.id === 'string') return agent.id
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 function safeResolveMode(host: SandboxEscalationGuardHost, exec: ToolExecutionLike): string | undefined {
@@ -210,12 +226,14 @@ export function installSandboxEscalationGuard(
           || (args as Record<string, unknown>).justification !== undefined)
       const effectiveMode = safeResolveMode(host, exec)
       const verdict = judgeEscalationArgs(args, effectiveMode)
+      const sessionId = readSessionId(exec)
       if (verdict.action === 'strip') {
         const requested = (args as Record<string, unknown>).sandbox_permissions
         exec.arguments = stripEscalationFields(args as Record<string, unknown>)
         host.onStrip?.({
           tool: typeof exec.name === 'string' ? exec.name : '',
           callId: String(exec.callId ?? ''),
+          ...(sessionId !== undefined ? { sessionId } : {}),
           reason: verdict.reason,
           ...(typeof requested === 'string' ? { requestedMode: requested } : {}),
           ...(effectiveMode !== undefined ? { effectiveMode } : {}),
@@ -225,6 +243,7 @@ export function installSandboxEscalationGuard(
         const requested = (args as Record<string, unknown>).sandbox_permissions
         host.onKeep?.({
           tool: typeof exec.name === 'string' ? exec.name : '',
+          ...(sessionId !== undefined ? { sessionId } : {}),
           ...(typeof requested === 'string' ? { requestedMode: requested } : {}),
           ...(effectiveMode !== undefined ? { effectiveMode } : {}),
         })

@@ -102,6 +102,7 @@ import { listProjects } from './projects/store.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
+import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
@@ -320,22 +321,83 @@ const DEVFORGE_GUIDANCE = [
  * 钩子静默走"模式未知则保守放行"分支，一个参数都没剥掉（现象与未修复完全一样）。
  * 同时新增 onKeep 留痕：携带提权字段却被放行也会进日志，静默失效不再可能。
  */
+/**
+ * 构造清洗留痕出口。
+ *
+ * 血的教训（0.33.1）：该插件的 inject 里**没有** `logger`，而 cordis 规定访问未声明
+ * 服务会抛 "cannot get property ... without inject"。0.33.1 的留痕直接写
+ * `ctx.logger.warn(...)`，异常被钩子的 try/catch 吞掉 —— 剥离生效了却一条日志都没有，
+ * 又变成盲区。因此这里双通道兜底：官方 logger 优先（结构化），失败则落 console
+ * （本插件的 restart.ts 一直这么打，宿主日志里可见），并且每次都另写独立留痕文件。
+ */
+function makeGuardLogger(ctx: Context, traceFile: string): {
+  strip: (line: string, entry: Omit<GuardTraceEntry, 'time' | 'action'>) => void
+  keep: (line: string, entry: Omit<GuardTraceEntry, 'time' | 'action'>) => void
+} {
+  const trace = createGuardTracer(traceFile)
+  const emit = (level: 'warn' | 'info', line: string): void => {
+    let logged = false
+    try {
+      const logger = (ctx as unknown as { logger?: Record<string, ((message: string) => void) | undefined> }).logger
+      const write = logger?.[level]
+      if (typeof write === 'function') {
+        write(line)
+        logged = true
+      }
+    } catch {
+      // 未声明 logger 时访问会抛错：走 console 兜底，绝不静默。
+      logged = false
+    }
+    if (!logged) {
+      try {
+        if (level === 'warn') console.warn(line)
+        else console.info(line)
+      } catch {
+        // 连 console 都不可用就只剩留痕文件了。
+      }
+    }
+  }
+  return {
+    strip: (line, entry) => {
+      emit('warn', line)
+      trace({ time: new Date().toISOString(), action: 'strip', ...entry })
+    },
+    keep: (line, entry) => {
+      emit('info', line)
+      trace({ time: new Date().toISOString(), action: 'keep', ...entry })
+    },
+  }
+}
+
 function installsSandboxEscalationGuard(ctx: Context): void {
   const resolveEffectiveMode = createEffectiveModeResolver(ctx as unknown as SandboxPolicyContext)
+  const guardLog = makeGuardLogger(ctx, defaultGuardTraceFile())
   ctx.effect(() => installSandboxEscalationGuard(ctx as unknown as SandboxEscalationGuardContext, {
     resolveEffectiveMode,
     onStrip: (info) => {
-      ctx.logger.warn(
-        '[dsh-devforge] 已剥离非法沙箱提权参数：tool=%s callId=%s reason=%s requested=%s effective=%s',
-        info.tool, info.callId, info.reason, info.requestedMode ?? '-', info.effectiveMode ?? 'unknown',
+      guardLog.strip(
+        `[dsh-devforge] 已剥离非法沙箱提权参数：tool=${info.tool} callId=${info.callId} session=${info.sessionId ?? '-'} reason=${info.reason} requested=${info.requestedMode ?? '-'} effective=${info.effectiveMode ?? 'unknown'}`,
+        {
+          tool: info.tool,
+          callId: info.callId,
+          ...(info.sessionId !== undefined ? { sessionId: info.sessionId } : {}),
+          reason: info.reason,
+          ...(info.requestedMode !== undefined ? { requestedMode: info.requestedMode } : {}),
+          ...(info.effectiveMode !== undefined ? { effectiveMode: info.effectiveMode } : {}),
+        },
       )
     },
     onKeep: (info) => {
       // 携带提权字段却放行：合法提权属正常；effective 缺失表示模式没能解析出来，
       // 那一档只可能是保守放行，必须留痕（0.33.0 的静默失效就是死在这里）。
-      ctx.logger.info(
-        '[dsh-devforge] 沙箱提权参数放行：tool=%s requested=%s effective=%s',
-        info.tool, info.requestedMode ?? '-', info.effectiveMode ?? 'unknown',
+      guardLog.keep(
+        `[dsh-devforge] 沙箱提权参数放行：tool=${info.tool} session=${info.sessionId ?? '-'} requested=${info.requestedMode ?? '-'} effective=${info.effectiveMode ?? 'unknown'}`,
+        {
+          tool: info.tool,
+          ...(info.sessionId !== undefined ? { sessionId: info.sessionId } : {}),
+          ...(info.requestedMode !== undefined ? { requestedMode: info.requestedMode } : {}),
+          ...(info.effectiveMode !== undefined ? { effectiveMode: info.effectiveMode } : {}),
+        },
       )
     },
   }))

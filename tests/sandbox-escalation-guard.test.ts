@@ -255,3 +255,46 @@ test('钩子：ctx.on 返回非函数时卸载不抛错', () => {
   const dispose = installSandboxEscalationGuard({ on: () => undefined })
   assert.doesNotThrow(() => dispose())
 })
+
+test('留痕：剥离与放行记录都带上会话 id（优先 session.id，退回 agent.id）', () => {
+  const listeners: Array<(exec: ToolExecutionLike, next: () => unknown) => unknown> = []
+  const strips: EscalationStripInfo[] = []
+  const keeps: Array<{ sessionId?: string }> = []
+  let mode = 'danger-full-access'
+  installSandboxEscalationGuard({
+    on: (_name, listener) => {
+      listeners.push(listener)
+      return () => {}
+    },
+  }, {
+    resolveEffectiveMode: () => mode,
+    onStrip: (info) => strips.push(info),
+    onKeep: (info) => keeps.push(info),
+  })
+
+  // 剥离路径：同级提权必然失败
+  listeners[0]({
+    name: 'edit', callId: 'c9', agent: { session: { id: 'sess-A' } },
+    arguments: { file_path: '/x', sandbox_permissions: 'danger-full-access', justification: '理由' },
+  }, () => undefined)
+  assert.equal(strips.length, 1)
+  assert.equal(strips[0].sessionId, 'sess-A')
+
+  // 放行路径：read-only 会话请求 danger-full-access 是合法更宽，原样通过
+  mode = 'read-only'
+  listeners[0]({
+    name: 'bash', callId: 'c10', agent: { session: { id: 'sess-B' } },
+    arguments: { command: 'ls', sandbox_permissions: 'danger-full-access', justification: '理由' },
+  }, () => undefined)
+  assert.equal(keeps.length, 1)
+  assert.equal(keeps[0].sessionId, 'sess-B')
+
+  // 结构异常（无 session.id）退回 agent.id；都没有则不带该字段
+  mode = 'danger-full-access'
+  listeners[0]({
+    name: 'edit', callId: 'c11', agent: { session: {} },
+    arguments: { sandbox_permissions: 'danger-full-access', justification: '理由' },
+  }, () => undefined)
+  assert.equal(strips.length, 2)
+  assert.equal(strips[1].sessionId, undefined)
+})
