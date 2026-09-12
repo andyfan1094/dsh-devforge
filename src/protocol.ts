@@ -37,7 +37,39 @@ export const DEVFORGE_API = {
   pluginUpdateHarness: '/api/dsh-devforge/plugin-update/harness',
   /** 模型 token 计量：本机会话库聚合的三窗用量报告。 */
   tokenUsage: '/api/dsh-devforge/usage/tokens',
+  /** 250k 压缩预设一键配置：GET 状态 / POST 创建（可设默认）。 */
+  agentPreset250k: '/api/dsh-devforge/agent-preset-250k',
 } as const
+
+/** 250k 压缩预设的状态快照（Host/Client 共享契约）。 */
+export interface AgentPreset250kStatus {
+  /** 预设组合文件绝对路径。 */
+  presetPath: string
+  /** 组合文件是否已存在。 */
+  presetExists: boolean
+  /** 已配置的压缩触发比例（缺失为 undefined）。 */
+  thresholdRatio?: number
+  /** 已配置的压缩保留 tokens（缺失为 undefined）。 */
+  retainTokens?: number
+  /** 压缩参数是否等于目标值（0.25 / 32768）。 */
+  paramsOk: boolean
+  /** 当前全局默认预设（未配置时 undefined）。 */
+  defaultPreset?: string
+  /** 本预设是否已是全局默认。 */
+  isDefault: boolean
+}
+
+/** 250k 一键配置执行结果（状态快照 + 执行报告）。 */
+export interface AgentPreset250kSetupResult extends AgentPreset250kStatus {
+  /** 预设文件就绪（非致命问题在 warnings 中）。 */
+  ok: boolean
+  /** 本次实际新建的文件路径（空 = 预设已存在未改动）。 */
+  created: string[]
+  /** 非致命告警（设默认失败、宿主解析异常等）。 */
+  warnings: string[]
+  /** 本次是否把全局默认切到了 cordis-250k。 */
+  defaultSwitched: boolean
+}
 
 /** CNB 备份：面板状态响应（settings/state/passwordSet/accounts）。 */
 export interface BackupStatus {

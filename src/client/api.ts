@@ -3,7 +3,7 @@
  * 关键边界：只访问天工造梦路由及其接管后的兼容路由；Token 等凭据绝不返回浏览器。
  */
 
-import { DEVFORGE_API, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
+import { DEVFORGE_API, type AgentPreset250kSetupResult, type AgentPreset250kStatus, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import type { TokenUsageReport } from '../usage/types.ts'
 import { DOUYIN_LIVE_API, type DouyinLiveSnapshot } from '../douyin-live/protocol.ts'
 import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
@@ -151,6 +151,22 @@ export class DevforgeApi {
   /** CNB 备份：读取状态与配置。 */
   async backupStatus(): Promise<BackupStatus> {
     return await readJson<BackupStatus>(await fetch(DEVFORGE_API.backupStatus))
+  }
+
+  /** 250k 压缩预设：读取本机配置状态。 */
+  async getAgentPreset250kStatus(): Promise<AgentPreset250kStatus> {
+    const data = await readJson<{ status: AgentPreset250kStatus }>(await fetch(DEVFORGE_API.agentPreset250k))
+    return data.status
+  }
+
+  /** 250k 压缩预设：一键创建（可选同时设为全局默认预设）。 */
+  async setupAgentPreset250k(setDefault: boolean): Promise<AgentPreset250kSetupResult> {
+    const data = await readJson<{ result: AgentPreset250kSetupResult }>(await fetch(DEVFORGE_API.agentPreset250k, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setDefault }),
+    }))
+    return data.result
   }
 
   /** CNB 备份：保存配置（password 传入时同步更新本机密码文件）。 */

@@ -99,6 +99,11 @@ export function makeRoutes(
   },
   /** 一键发布执行器（可选；index.ts 闭包延迟取远程引擎，请求时才解引用）。 */
   deploy?: { run(id: string): Promise<ProjectDeployResult> },
+  /** 250k 压缩预设一键配置（可选；缺失时对应路由返回 503）。 */
+  agentPreset250k?: {
+    status: () => import('./agent-preset-250k.ts').AgentPreset250kStatus
+    setup: (options: { setDefault?: boolean }) => Promise<import('./agent-preset-250k.ts').AgentPreset250kSetupResult>
+  },
 ): WebRoute[] {
   return [
     {
@@ -251,6 +256,26 @@ export function makeRoutes(
         const job = engine.cancelJob(id)
         if (!job) { writeJson(res, 404, { ok: false, error: 'unknown job: ' + id }); return }
         writeJson(res, 200, { ok: true, job })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/agent-preset-250k',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (agentPreset250k === undefined) { writeJson(res, 503, { ok: false, error: '预设服务未就绪' }); return }
+        if (req.method === 'GET') {
+          writeJson(res, 200, { ok: true, status: agentPreset250k.status() })
+          return
+        }
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'GET/POST only' }); return }
+        const body = await readJsonBody(req)
+        try {
+          const result = await agentPreset250k.setup({ setDefault: body?.setDefault === true })
+          writeJson(res, 200, { ok: result.ok, result })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
     {

@@ -182,7 +182,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
       <div className={css['panelContent']}>
         {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
 
-        {tab === 'guide' && <GuideTab onNavigate={navigateFromGuide} skinAvailable={skin !== undefined} />}
+        {tab === 'guide' && <GuideTab onNavigate={navigateFromGuide} skinAvailable={skin !== undefined} api={api} />}
 
         {tab === 'standards' && (
           <section className={css['tabBody']}>

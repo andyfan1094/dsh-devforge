@@ -38,6 +38,7 @@ import { backupNowTool, backupStatusTool } from './backup/tools.ts'
 import { HostStore as SshHostStore } from './remote/ssh/store.ts'
 import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
+import { readAgentPreset250kStatus, setupAgentPreset250k } from './agent-preset-250k.ts'
 import { makeBrainRouterRoutes } from './brain-router/routes.ts'
 import { installBrainRouterSection, installBrainRouterWrapper, listBrainRouterCatalog, writeBrainRouterSettings } from './brain-router/service.ts'
 import { BRAIN_ROUTER_DEFAULTS, type BrainRouterSettings } from './brain-router/protocol.ts'
@@ -707,6 +708,12 @@ export function apply(ctx: Context, config?: Config): void {
     receiver: new DouyinReceiverProcess({ log: (message) => ctx.logger.info(message) }),
   })
   ctx.effect(() => () => douyinLive.dispose(), 'dsh-devforge: douyin live')
+  // 250k 一键配置的宿主依赖：settings 已注入声明；agentPresets 用运行时可选读取
+  //（类型增强属于 dsh-agent-presets 包，本插件未直接 import）。
+  const agentPreset250kDeps = () => ({
+    settings: ctx.settings,
+    agentPresets: ctx.get('agentPresets') as import('./forge.ts').ForgeHostServices['agentPresets'],
+  })
   const routes = [
     ...makeDouyinLiveRoutes(douyinLive),
     ...makeRoutes(engine, standards, restartManager, () => ({
@@ -723,6 +730,11 @@ export function apply(ctx: Context, config?: Config): void {
         if (entry === undefined) return { ok: false, results: [], error: 'unknown project: ' + id }
         return runProjectDeploy(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine })
       },
+    }, {
+      // 250k 压缩预设一键配置：读状态走同步快照；创建/设默认走异步执行器。
+      // agentPresets 未进本插件 Context 类型增强，按运行时可选服务读取并断言最小结构。
+      status: () => readAgentPreset250kStatus(agentPreset250kDeps()),
+      setup: (options) => setupAgentPreset250k(agentPreset250kDeps(), options),
     }),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。

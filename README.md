@@ -2,10 +2,10 @@
 
 `dsh-devforge` 是面向 DeepSeek Harness（DSH）的规范驱动服务工厂与本机智能体工作台。它同时提供 Host 能力和 Web 面板：Host 负责路由、工具、凭据、SQLite 持久化、子代理和外部服务；浏览器侧负责操作台、配置页和可视化状态。
 
-当前源码版本：`0.31.1`。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
+当前源码版本：`0.32.0`。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
 
 1. **通用开发规范库**：版本化 Markdown 规范存放于 `standards/`，通过系统提示和 `devforge_standards` 工具提供给 Agent；创建服务时按模板注入生成子代理。
-2. **一键生成服务**：`devforge_jobs` 工具和“新建服务”页创建独立子代理。服务生成会话默认实际挂载用户预设 `cordis-250k`，在 1M 上下文模型上约 250k 请求包触发自动压缩；该预设缺失或损坏时告警并回退官方 `cordis`。可在 dsh-devforge 设置中用 `forgeAgentPreset` 指定其它预设。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。
+2. **一键生成服务与 250k 压缩**：`devforge_jobs` 工具和“新建服务”页创建独立子代理，默认实际挂载用户预设 `cordis-250k`（1M 上下文模型约 250k 请求包触发自动压缩）；缺失或损坏时告警并回退官方 `cordis`，可用 `forgeAgentPreset` 指定其它预设。操作台「教程」页提供 **250k 压缩一键配置**（Windows/Mac 通用）：一键写入 `cordis-250k` 用户预设（窗口 25% 触发、保留 32k 近期原文）并可选设为全局默认，已存在的预设文件不覆盖；需要完整创作模式时按 [250k 预设文档](docs/创造模式250k压缩预设.md) 手动生成 compat 模块。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。
 3. **服务工厂操作台**：侧边栏“服务工厂”入口提供开发规范、智谱 Coding Plan、生成任务、新建服务、记忆中枢、记忆工作台、工作流、远程运维、项目、代码仓库、飞书、插件更新和皮肤换肤能力。
 4. **智谱 Coding Plan**：复用 DSH 受管凭据 `ZAI_CODING_CN_API_KEY`，一键补齐 `zai-coding-cn` 的 GLM-5.3 与 GLM-5.3-Flash；Host 直连智谱官方监控接口，展示 5 小时、周额度、重置倒计时、近 24 小时／7 天模型和 MCP 用量。支持自定义命名的 Key 池：每把 Key 独立凭据引用并可自行起名，主 Key 只是聊天模型路由当前指向（切换不增删池成员），官方调用（MCP 工具、额度看板、模型拉取）在 401/403/429 时自动切换下一把 Key，用量页按 Key 独立出卡片展示；旧版派生槽位 `_2…_6` 中已配置的 Key 升级时自动并入池。Key 不进入浏览器、日志或普通配置。
 5. **火山方舟 Agent Plan**：使用 Plan Key 调用官方套餐模型并同步推理档位；用受管控制面 AK/SK 经火山 OpenAPI V4 签名查询 Agent Plan/Coding Plan 的 5 小时、周、月额度。操作步骤见[火山方舟用量看板教程](docs/火山方舟用量看板教程.md)。

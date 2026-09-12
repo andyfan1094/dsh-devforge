@@ -2,8 +2,10 @@
  * 天工造梦使用指南：把账号注册、首次配置和各功能入口集中到一个可检索的浏览型页面。
  * 页面只负责静态说明与页签跳转，不读取凭据、不复制后端规则；外部链接统一新标签打开。
  */
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { JSX, UIEvent } from 'react'
+import type { DevforgeApi } from '../api.ts'
+import type { AgentPreset250kStatus } from '../../protocol.ts'
 import css from './panel.module.css'
 
 /** 教程可直接跳转的操作台页签。 */
@@ -15,6 +17,8 @@ export interface GuideTabProps {
   onNavigate: (target: GuideDestination) => void
   /** 皮肤运行时为可选能力，不可用时不展示无效入口。 */
   skinAvailable: boolean
+  /** 面板 API 客户端；提供时才渲染 250k 一键配置卡片。 */
+  api?: DevforgeApi
 }
 
 interface ProviderGuide {
@@ -345,8 +349,61 @@ function ExternalLink(props: { href: string; children: string }): JSX.Element {
   return <a className={css['link']} href={props.href} target="_blank" rel="noopener noreferrer">{props.children} ↗</a>
 }
 
+/**
+ * 250k 压缩预设一键配置卡片：读取本机状态，缺失时一键写入内置模板并可设为默认。
+ * 仅在传入 api 客户端时渲染；请求失败静默降级为「状态未知」，不阻塞教程页其余内容。
+ */
+function AgentPreset250kCard({ api }: { api: DevforgeApi }): JSX.Element {
+  const [status, setStatus] = useState<AgentPreset250kStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState('')
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await api.getAgentPreset250kStatus()) } catch { setStatus(null) }
+  }, [api])
+  useEffect(() => { void refresh() }, [refresh])
+
+  const run = async (setDefault: boolean): Promise<void> => {
+    setBusy(true)
+    setFeedback('')
+    try {
+      const result = await api.setupAgentPreset250k(setDefault)
+      setStatus(result)
+      const parts: string[] = []
+      if (result.created.length > 0) parts.push('已创建预设文件。')
+      else if (result.ok) parts.push('预设已存在，参数正确，未改动文件。')
+      if (result.defaultSwitched) parts.push('已设为全局默认，新会话生效。')
+      for (const warning of result.warnings) parts.push(warning)
+      setFeedback(parts.join(' '))
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const ready = status?.paramsOk === true
+  const stateLabel = status === null ? '状态未知' : !status.presetExists ? '未配置' : ready ? '已就绪' : '参数异常'
+  return (
+    <div className={css['guideCallout']} data-kind="info">
+      <strong>250k 上下文压缩（cordis-250k）</strong>
+      <span>
+        {ready
+          ? <>预设已就绪（{status?.thresholdRatio ?? '-'} / {status?.retainTokens ?? '-'} tokens） · 全局默认：{status?.isDefault === true ? '是' : status?.defaultPreset ?? '未设置'}</>
+          : <>把「长对话自动压缩」预设写入本机（模型窗口 25% 触发、保留 32k 近期原文，1M 窗口约 250k 触发）；只影响新会话，不覆盖已有预设文件。</>}
+      </span>
+      <span>当前状态：{stateLabel}{feedback !== '' ? ' · ' + feedback : ''}</span>
+      <div className={css['guideActions']}>
+        <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void run(false) }}>{busy ? '执行中…' : ready ? '重新写入预设' : '一键配置'}</button>
+        {ready && status?.isDefault !== true && <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void run(true) }}>设为全局默认预设</button>}
+        {!ready && <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void run(true) }}>配置并设为全局默认</button>}
+      </div>
+    </div>
+  )
+}
+
 /** 教程页：静态内容优先，搜索只过滤功能说明，不触发任何网络请求。 */
-export function GuideTab({ onNavigate, skinAvailable }: GuideTabProps): JSX.Element {
+export function GuideTab({ onNavigate, skinAvailable, api }: GuideTabProps): JSX.Element {
   const [section, setSection] = useState<GuideSection>('start')
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLocaleLowerCase()
@@ -406,6 +463,7 @@ export function GuideTab({ onNavigate, skinAvailable }: GuideTabProps): JSX.Elem
             <article className={css['guideStep']}><span className={css['guideStepNumber']}>04</span><strong>按需扩展能力</strong><p>想让模型记住项目就用记忆中枢；想接代码或服务器就配置仓库、远程主机；想手机聊天就接飞书。</p></article>
           </div>
           <div className={css['guideCallout']} data-kind="info"><strong>配置顺序</strong><span>模型 → 记忆中枢 → 项目 → 代码仓库 → 远程运维 → 飞书。每配置一项先确认能正常使用，再继续下一项。</span></div>
+          {api !== undefined && <AgentPreset250kCard api={api} />}
         </section>
 
         <section id="dsh-devforge-guide-accounts" className={css['guideSection']}>
