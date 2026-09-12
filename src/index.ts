@@ -101,6 +101,7 @@ import { getConvention, renderConventionSummary } from './workspace/convention.t
 import { listProjects } from './projects/store.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
+import { installSandboxEscalationGuard, type SandboxEscalationGuardContext } from './sandbox-escalation-guard.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
@@ -304,11 +305,42 @@ const DEVFORGE_GUIDANCE = [
   '- MCP 服务器接入：外部 MCP 服务器在天工造梦面板「MCP」页配置；启用的服务器其工具以 mcp__<serverName>__<tool> 名称注册（如 mcp__github__create_issue），可直接调用，调用失败如实报错。',
 ].join('\n')
 
+/**
+ * 装载沙箱提权参数清洗（0.33.0，工具层根治）。
+ *
+ * GPT/Codex 类模型不管提示词怎么写都会惯性携带 sandbox_permissions / justification，
+ * 而宿主校验是硬失败：成对缺失、justification 空白、请求模式不严格更宽
+ * （danger-full-access 已是最宽，其 WIDER_MODES 为空表 → 该会话里任何提权请求必然失败）。
+ * 模型于是连续报错直至会话作废。这里在 tools/pre-execute 阶段把"可证必然失败"的
+ * 提权字段整体剥掉，工具体再也看不到它们：不依赖提示词、不改动 dsh 官方包，
+ * 宿主升级不会覆盖本插件。安全网与插件 enabled 开关无关，始终装载。
+ */
+function installsSandboxEscalationGuard(ctx: Context): void {
+  let sandboxPolicyService: { resolve?: (request?: { session?: unknown }) => { mode?: string } | undefined } | undefined
+  ctx.effect(() => installSandboxEscalationGuard(ctx as unknown as SandboxEscalationGuardContext, {
+    resolveEffectiveMode: (exec) => {
+      sandboxPolicyService ??= ctx.get('sandboxPolicy') as typeof sandboxPolicyService
+      const resolvePolicy = sandboxPolicyService?.resolve
+      if (resolvePolicy === undefined) return undefined
+      const session = exec.agent?.session
+      const policy = session === undefined ? resolvePolicy() : resolvePolicy({ session })
+      return typeof policy?.mode === 'string' ? policy.mode : undefined
+    },
+    onStrip: (info) => {
+      ctx.logger.warn(
+        '[dsh-devforge] 已剥离非法沙箱提权参数：tool=%s callId=%s reason=%s requested=%s effective=%s',
+        info.tool, info.callId, info.reason, info.requestedMode ?? '-', info.effectiveMode ?? 'unknown',
+      )
+    },
+  }))
+}
+
 /** 插件挂载（mountOnce 防重复挂载，dsh-winrm 同款）。 */
 let mounted = false
 export function apply(ctx: Context, config?: Config): void {
   if (mounted) return
   mounted = true
+  installsSandboxEscalationGuard(ctx)
 
   // ---- 配置解析 ----
   let current: () => Config = () => config ?? {}

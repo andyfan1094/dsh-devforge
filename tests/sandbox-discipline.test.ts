@@ -9,19 +9,19 @@ test('沙箱升级纪律：节名与顺序不与既有节冲突', () => {
   assert.equal(SANDBOX_DISCIPLINE_SECTION_ORDER, 90)
 })
 
-test('沙箱升级纪律：文本覆盖宿主校验的每条失败路径', () => {
-  // 两条死循环报错原文必须逐字出现（模型按报错原文检索规则）。
+test('沙箱升级纪律：文本给出绝对禁令与报错识别', () => {
+  // 两条硬失败报错原文必须逐字出现（模型按报错原文识别自己带了不该带的字段）。
   assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('not strictly wider'))
   assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('invalid justification'))
-  // 升级阶梯必须与 @deepseek-ai/dsh-sandbox 的 WIDER_MODES 单链一致。
-  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('read-only → workspace-write → danger-full-access'))
-  // 成对校验与拒绝即终局语义。
-  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('成对出现'))
-  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('终局'))
+  // 0.33.0 起改为绝对禁令：不再教"什么时候可以带"，而是禁止出现这两个字段
+  // （教育式文本会被训练惯性强的 GPT/Codex 模型当成"有口子可用"）。
+  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('一律禁止携带'))
+  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('一次都不许'))
   // 错误恢复动作：去掉参数原样重发。
   assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('去掉这两个字段'))
-  // 拒绝标记的识别样板。
+  // 真被沙箱拒绝时的唯一正确动作。
   assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('[sandbox:'))
+  assert.ok(SANDBOX_DISCIPLINE_TEXT.includes('向用户说明情况'))
 })
 
 test('沙箱升级纪律：不得包含注释终止序列或占位符', () => {

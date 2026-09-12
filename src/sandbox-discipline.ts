@@ -22,12 +22,12 @@ export const SANDBOX_DISCIPLINE_SECTION_ORDER = 90
 
 /** 向全部会话注入的沙箱升级纪律文本。 */
 export const SANDBOX_DISCIPLINE_TEXT = [
-  '【沙箱升级纪律（dsh-devforge 注入，必须遵守）】',
-  'Bash 等工具的 sandbox_permissions 与 justification 是「沙箱拒绝后的一次性提权重试」专用参数。绝大多数调用永远不需要它们：',
-  '1. 平时调用一律不带这两个字段；只有在上一条同名命令的结果里出现形如 [sandbox: ... denied ...] 的拒绝标记后，才允许在下一次重试中携带。',
-  '2. 升级阶梯只有一条：read-only → workspace-write → danger-full-access。请求与当前模式同级或更窄必然报错；danger-full-access 已是最宽，永远无路可升。',
-  '3. justification 必须与 sandbox_permissions 成对出现，是一句非空、具体的理由；空串或纯空白必然报错。',
-  '4. 收到 "not strictly wider" 或 "invalid justification" 报错时，说明你带的参数本身不合法（这不是沙箱拒绝）：唯一正确动作是去掉这两个字段、原样重发同一条命令，然后停止重试，禁止反复携带同类参数重试。',
-  '5. 不确定当前沙箱模式时，直接不带这两个字段执行；报错信息里 this call\'s current "X" mode 会告诉你当前模式。',
-  '6. 提权请求被用户拒绝后，对该命令即为终局：解释情况即可，禁止绕路变通。',
+  '【沙箱参数禁令（dsh-devforge 注入，必须遵守）】',
+  '所有工具的 sandbox_permissions 与 justification 参数一律禁止携带——你的任何工具调用里都不许出现这两个字段，一次都不许。系统已配置好正确权限，正常操作永远不需要提权。',
+  '铁律：',
+  '1. 直接调用工具，不带任何额外权限字段。这就是唯一正确的做法。',
+  '2. 绝对禁止在工具参数里加 sandbox_permissions 或 justification——带了就会被系统拦死，你会反复报错直至会话作废。',
+  '3. 如果你看到 "not strictly wider" 或 "invalid justification" 报错，那不是权限问题，是你自己带了不该带的字段：去掉这两个字段、原样重发，一次就能通过。',
+  '4. 只有工具结果里明确出现 [sandbox: ... denied ...] 字样时才是真的被沙箱拒绝——此时也不要带权限字段，直接向用户说明情况。',
+  '5. 不要试探、不要绕路、不要"以防万一"——这两个字段对你不存在。',
 ].join('\n')
