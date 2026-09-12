@@ -116,12 +116,66 @@ export interface ToolExecutionLike {
   arguments?: unknown
 }
 
+/** 读取可选服务所需的最小 ctx 视图。 */
+export interface SandboxPolicyContext {
+  get(name: string): unknown
+}
+
+/** ctx.sandboxPolicy 的结构子集。 */
+interface SandboxPolicyServiceLike {
+  resolve?(request?: { session?: unknown }): { mode?: unknown } | undefined
+}
+
+/**
+ * 构造「解析该次调用所在会话当前沙箱模式」的回调。
+ *
+ * 血的教训（0.33.0 翻车点）：`resolve` 内部使用 `this`
+ * （`this.overrideOf(session)` / `this.defaultMode` / `this.workspaceRoot` / `this.ctx`）。
+ * 一旦写成 `const resolve = service.resolve; resolve(...)` 就会丢掉 this 绑定、
+ * 抛 TypeError 并被吞成 undefined，钩子于是静默走"模式未知 → 保守放行"分支——
+ * 表面无异常、日志无记录，但一个参数都没剥掉。必须以 `service.resolve(...)`
+ * 形式调用；对应的回归测试见 tests/sandbox-escalation-guard.test.ts。
+ * @param ctx - 宿主上下文（只读可选服务）。
+ * @returns 模式解析回调；无法判定时返回 undefined。
+ */
+export function createEffectiveModeResolver(ctx: SandboxPolicyContext): (exec: ToolExecutionLike) => string | undefined {
+  let service: SandboxPolicyServiceLike | undefined
+  return (exec) => {
+    try {
+      service ??= ctx.get('sandboxPolicy') as SandboxPolicyServiceLike | undefined
+      const current = service
+      if (current === undefined || typeof current.resolve !== 'function') return undefined
+      const session = exec?.agent?.session
+      // 以方法形式调用：this 必须是服务实例本身。
+      const policy = session === undefined ? current.resolve() : current.resolve({ session })
+      return policy !== null && typeof policy === 'object' && typeof policy.mode === 'string' ? policy.mode : undefined
+    } catch {
+      return undefined
+    }
+  }
+}
+
+/** 一次「携带提权字段但被放行」的记录（诊断静默放行用）。 */
+export interface EscalationKeepInfo {
+  /** 工具名（exec.name）。 */
+  readonly tool: string
+  /** 该次调用的有效模式（undefined = 无法判定）。 */
+  readonly effectiveMode?: string
+  /** 请求的提权模式（若给出且为字符串）。 */
+  readonly requestedMode?: string
+}
+
 /** 宿主侧依赖注入。 */
 export interface SandboxEscalationGuardHost {
   /** 解析该次调用所在会话的当前沙箱模式；undefined = 无法判定。 */
   readonly resolveEffectiveMode?: (exec: ToolExecutionLike) => string | undefined
   /** 清洗发生时的观测回调（日志/自检）；抛错会被吞掉，绝不影响工具执行。 */
   readonly onStrip?: (info: EscalationStripInfo) => void
+  /**
+   * 携带提权字段但**未**清洗时的观测回调。这是 0.33.0 的教训：
+   * 模式解析失败会静默放行，只有把这个分支也暴露出来才能第一时间发现问题。
+   */
+  readonly onKeep?: (info: EscalationKeepInfo) => void
 }
 
 /** 注册监听所需的最小 ctx 视图。 */
@@ -151,6 +205,9 @@ export function installSandboxEscalationGuard(
   const dispose = ctx.on('tools/pre-execute', (exec, next) => {
     try {
       const args = exec?.arguments
+      const carriesEscalation = args !== null && typeof args === 'object'
+        && ((args as Record<string, unknown>).sandbox_permissions !== undefined
+          || (args as Record<string, unknown>).justification !== undefined)
       const effectiveMode = safeResolveMode(host, exec)
       const verdict = judgeEscalationArgs(args, effectiveMode)
       if (verdict.action === 'strip') {
@@ -160,6 +217,14 @@ export function installSandboxEscalationGuard(
           tool: typeof exec.name === 'string' ? exec.name : '',
           callId: String(exec.callId ?? ''),
           reason: verdict.reason,
+          ...(typeof requested === 'string' ? { requestedMode: requested } : {}),
+          ...(effectiveMode !== undefined ? { effectiveMode } : {}),
+        })
+      } else if (carriesEscalation) {
+        // 放行也留痕：静默放行正是 0.33.0 没能被及时发现的原因。
+        const requested = (args as Record<string, unknown>).sandbox_permissions
+        host.onKeep?.({
+          tool: typeof exec.name === 'string' ? exec.name : '',
           ...(typeof requested === 'string' ? { requestedMode: requested } : {}),
           ...(effectiveMode !== undefined ? { effectiveMode } : {}),
         })

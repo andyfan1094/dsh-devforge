@@ -12,6 +12,7 @@ import {
   KNOWN_ESCALATION_TARGETS,
   SANDBOX_ESCALATION_FIELDS,
   WIDER_SANDBOX_MODES,
+  createEffectiveModeResolver,
   installSandboxEscalationGuard,
   judgeEscalationArgs,
   stripEscalationFields,
@@ -103,6 +104,67 @@ test('模式无法判定时保守放行合法目标、只拦非法目标', () =>
     judgeEscalationArgs({ sandbox_permissions: 'nonsense', justification: '需要写入' }, undefined),
     { action: 'strip', reason: 'unknown-mode' },
   )
+})
+
+test('模式解析：必须以方法形式调用 resolve，保留 this 绑定（0.33.0 翻车点回归）', () => {
+  // 真实宿主服务就是这个形状：resolve 内部依赖 this.defaultMode / this.overrideOf。
+  const service = {
+    defaultMode: 'danger-full-access',
+    override: undefined as string | undefined,
+    overrideOf(): string | undefined { return this.override },
+    resolve(request: { session?: unknown; mode?: string } = {}) {
+      return { mode: request.mode ?? (request.session === undefined ? undefined : this.overrideOf()) ?? this.defaultMode }
+    },
+  }
+  const resolveMode = createEffectiveModeResolver({ get: (name) => (name === 'sandboxPolicy' ? service : undefined) })
+  // 无会话：走 this.defaultMode
+  assert.equal(resolveMode({}), 'danger-full-access')
+  // 有会话但无覆盖：仍回落到 this.defaultMode
+  assert.equal(resolveMode({ agent: { session: {} } }), 'danger-full-access')
+  // 有会话且带 sandbox/mode 覆盖：this.overrideOf 生效
+  service.override = 'read-only'
+  assert.equal(resolveMode({ agent: { session: {} } }), 'read-only')
+  service.override = undefined
+  // 解构调用会丢 this → 抛错 → 被吞成 undefined；这里断言绝不能是 undefined
+  assert.notEqual(resolveMode({ agent: { session: {} } }), undefined)
+})
+
+test('模式解析：服务缺失或异常一律返回 undefined，不抛错', () => {
+  assert.equal(createEffectiveModeResolver({ get: () => undefined })({}), undefined)
+  assert.equal(createEffectiveModeResolver({ get: () => ({}) })({}), undefined)
+  const throwing = createEffectiveModeResolver({ get: () => ({ resolve: () => { throw new Error('projection boom') } }) })
+  assert.equal(throwing({ agent: { session: {} } }), undefined)
+})
+
+test('钩子：携带提权字段却放行时触发 onKeep 留痕（静默失效可见化）', () => {
+  const listeners: Array<(exec: ToolExecutionLike, next: () => unknown) => unknown> = []
+  const keeps: Array<{ tool: string; effectiveMode?: string; requestedMode?: string }> = []
+  installSandboxEscalationGuard({ on: (_n, l) => { listeners.push(l); return undefined } }, {
+    resolveEffectiveMode: () => 'read-only',
+    onKeep: (info) => keeps.push(info),
+  })
+  // 合法提权：放行 + 留痕
+  listeners[0](makeExec({ command: 'ls', sandbox_permissions: 'workspace-write', justification: '需要写入工作区' }), () => 'ok')
+  assert.equal(keeps.length, 1)
+  assert.equal(keeps[0].requestedMode, 'workspace-write')
+  assert.equal(keeps[0].effectiveMode, 'read-only')
+  // 完全不带提权字段：不打扰
+  listeners[0](makeExec({ command: 'ls' }), () => 'ok')
+  assert.equal(keeps.length, 1)
+})
+
+test('钩子：模式无法判定时 danger-full-access 请求保守放行但必须留痕', () => {
+  const listeners: Array<(exec: ToolExecutionLike, next: () => unknown) => unknown> = []
+  const keeps: Array<{ effectiveMode?: string }> = []
+  installSandboxEscalationGuard({ on: (_n, l) => { listeners.push(l); return undefined } }, {
+    resolveEffectiveMode: () => undefined,
+    onKeep: (info) => keeps.push(info),
+  })
+  const exec = makeExec({ command: 'ls', sandbox_permissions: 'danger-full-access', justification: '理由' })
+  listeners[0](exec, () => 'ok')
+  assert.deepEqual(exec.arguments, { command: 'ls', sandbox_permissions: 'danger-full-access', justification: '理由' })
+  assert.equal(keeps.length, 1)
+  assert.equal(keeps[0].effectiveMode, undefined)
 })
 
 test('stripEscalationFields 只去掉两个字段，其余原样保留', () => {

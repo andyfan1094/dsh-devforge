@@ -101,7 +101,7 @@ import { getConvention, renderConventionSummary } from './workspace/convention.t
 import { listProjects } from './projects/store.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
-import { installSandboxEscalationGuard, type SandboxEscalationGuardContext } from './sandbox-escalation-guard.ts'
+import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
@@ -306,7 +306,7 @@ const DEVFORGE_GUIDANCE = [
 ].join('\n')
 
 /**
- * 装载沙箱提权参数清洗（0.33.0，工具层根治）。
+ * 装载沙箱提权参数清洗（0.33.0 起，工具层根治）。
  *
  * GPT/Codex 类模型不管提示词怎么写都会惯性携带 sandbox_permissions / justification，
  * 而宿主校验是硬失败：成对缺失、justification 空白、请求模式不严格更宽
@@ -314,22 +314,28 @@ const DEVFORGE_GUIDANCE = [
  * 模型于是连续报错直至会话作废。这里在 tools/pre-execute 阶段把"可证必然失败"的
  * 提权字段整体剥掉，工具体再也看不到它们：不依赖提示词、不改动 dsh 官方包，
  * 宿主升级不会覆盖本插件。安全网与插件 enabled 开关无关，始终装载。
+ *
+ * 0.33.1：模式解析改由 createEffectiveModeResolver 承担——0.33.0 在此处把
+ * `service.resolve` 解构后调用，丢了 this 绑定，异常被吞成 undefined，
+ * 钩子静默走"模式未知则保守放行"分支，一个参数都没剥掉（现象与未修复完全一样）。
+ * 同时新增 onKeep 留痕：携带提权字段却被放行也会进日志，静默失效不再可能。
  */
 function installsSandboxEscalationGuard(ctx: Context): void {
-  let sandboxPolicyService: { resolve?: (request?: { session?: unknown }) => { mode?: string } | undefined } | undefined
+  const resolveEffectiveMode = createEffectiveModeResolver(ctx as unknown as SandboxPolicyContext)
   ctx.effect(() => installSandboxEscalationGuard(ctx as unknown as SandboxEscalationGuardContext, {
-    resolveEffectiveMode: (exec) => {
-      sandboxPolicyService ??= ctx.get('sandboxPolicy') as typeof sandboxPolicyService
-      const resolvePolicy = sandboxPolicyService?.resolve
-      if (resolvePolicy === undefined) return undefined
-      const session = exec.agent?.session
-      const policy = session === undefined ? resolvePolicy() : resolvePolicy({ session })
-      return typeof policy?.mode === 'string' ? policy.mode : undefined
-    },
+    resolveEffectiveMode,
     onStrip: (info) => {
       ctx.logger.warn(
         '[dsh-devforge] 已剥离非法沙箱提权参数：tool=%s callId=%s reason=%s requested=%s effective=%s',
         info.tool, info.callId, info.reason, info.requestedMode ?? '-', info.effectiveMode ?? 'unknown',
+      )
+    },
+    onKeep: (info) => {
+      // 携带提权字段却放行：合法提权属正常；effective 缺失表示模式没能解析出来，
+      // 那一档只可能是保守放行，必须留痕（0.33.0 的静默失效就是死在这里）。
+      ctx.logger.info(
+        '[dsh-devforge] 沙箱提权参数放行：tool=%s requested=%s effective=%s',
+        info.tool, info.requestedMode ?? '-', info.effectiveMode ?? 'unknown',
       )
     },
   }))
