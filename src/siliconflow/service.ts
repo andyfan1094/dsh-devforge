@@ -35,6 +35,8 @@ export interface SiliconFlowCapabilityConfig {
   enabled: boolean
   apiKeyEnv: string
   timeoutMs: number
+  /** 只嵌入模式总闸：false 时 ensureModels 冻结对话模型目录（启动自动补齐与手动同步共用此闸门），嵌入（bge-m3 走 /embeddings）不受影响。 */
+  syncChatModels: boolean
 }
 
 /** 从 /v1/models 响应提取模型 id 列表（防御式兼容多种形状）。 */
@@ -151,12 +153,16 @@ export class SiliconFlowService {
       credentialConfigured: credential.configured,
       credentialWritable: credential.writable,
       providerConfigured: provider !== undefined,
+      syncChatModels: this.config.syncChatModels,
       models: display.map((id) => ({ id, configured: configured.has(id), free: FREE_MODELS.has(id) })),
     }
   }
 
   /** 拉取在线模型清单，按系列精选最新版对话模型后合并进 DSH 模型目录。 */
   async ensureModels(): Promise<SiliconFlowStatus> {
+    // 只嵌入模式：冻结目录（只增不减的合并会让删掉的对话模型在每次补齐后回来），
+    // 直接返回当前状态，不请求上游、不写设置。
+    if (!this.config.syncChatModels) return await this.status()
     const apiKey = await this.resolveApiKey()
     const ids = curateLatestChatModels(parseModelIds(await this.get('/models', apiKey)))
     if (ids.length === 0) throw new SiliconFlowServiceError('硅基流动模型清单为空（检查 Key 与网络）。', 502)

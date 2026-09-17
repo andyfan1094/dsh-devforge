@@ -188,7 +188,7 @@ export interface Config {
   /** 会话记忆层子配置（设置项存 store.db，此处仅总开关兜底）。 */
   memory?: { enabled?: boolean }
   /** 硅基流动 Provider 子配置。 */
-  siliconflow?: { enabled?: boolean; apiKeyEnv?: string; timeoutMs?: number }
+  siliconflow?: { enabled?: boolean; apiKeyEnv?: string; timeoutMs?: number; syncChatModels?: boolean }
   /** MCP 服务器接入子配置（服务器明细存 store.db 面板管理，此处仅总开关）。 */
   mcp?: { enabled?: boolean }
 }
@@ -268,6 +268,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('硅基流动 Provider（模型目录+免费向量）'),
     apiKeyEnv: z.string().default('SILICONFLOW_API_KEY').description('硅基流动受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('硅基流动接口超时（毫秒）'),
+    syncChatModels: z.boolean().default(true).description('同步对话模型目录；关闭后进入只嵌入模式（启动补齐与手动同步全部冻结目录，仅保留 bge-m3 向量用途）'),
   }).description('硅基流动配置'),
   mcp: z.object({
     enabled: z.boolean().default(true).description('MCP 服务器接入总开关：按 store.db 配置把外部 MCP 服务器的工具注册给模型（明细在天工造梦「MCP」页管理）'),
@@ -475,6 +476,7 @@ export function apply(ctx: Context, config?: Config): void {
         enabled: value.siliconflow?.enabled ?? true,
         apiKeyEnv: value.siliconflow?.apiKeyEnv ?? 'SILICONFLOW_API_KEY',
         timeoutMs: value.siliconflow?.timeoutMs ?? 15000,
+        syncChatModels: value.siliconflow?.syncChatModels ?? true,
       },
       mcp: { enabled: value.mcp?.enabled ?? true },
     }
@@ -532,7 +534,7 @@ export function apply(ctx: Context, config?: Config): void {
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
-  const siliconFlowConfig: SiliconFlowCapabilityConfig = { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000 }
+  const siliconFlowConfig: SiliconFlowCapabilityConfig = { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000, syncChatModels: true }
   const siliconFlowService = new SiliconFlowService(ctx, siliconFlowConfig)
   // MCP 服务器接入：官方 dsh-mcp-client 桥的挂载管理者（fiber 集随 store.db 配置 reconcile）。
   const mcpService = new McpService(ctx, () => resolve().mcp?.enabled !== false)

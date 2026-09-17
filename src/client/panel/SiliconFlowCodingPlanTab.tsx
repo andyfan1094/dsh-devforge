@@ -103,9 +103,9 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
           <h3 className={css['sectionTitle']}>模型目录</h3>
           <div className={css['toolbarSpacer']} />
           <span className={css['sectionHint']}>已收录 {models.length} 个（各系列最新版）</span>
-          <button type="button" className={css['ghostButton']} disabled={syncing || status?.credentialConfigured !== true} onClick={() => { void syncModels() }}>{syncing ? '同步中…' : '从硅基流动同步'}</button>
+          <button type="button" className={css['ghostButton']} disabled={syncing || status?.credentialConfigured !== true || status?.syncChatModels === false} onClick={() => { void syncModels() }}>{syncing ? '同步中…' : status?.syncChatModels === false ? '只嵌入模式 · 同步已停用' : '从硅基流动同步'}</button>
         </div>
-        <p className={css['sectionHint']}>同步按系列精选：每个系列只保留版本最高的对话模型；图片/视频/语音/OCR/向量/重排等非对话模型与 Pro/LoRA 变体自动跳过，以在线清单为准。</p>
+        <p className={css['sectionHint']}>同步按系列精选：每个系列只保留版本最高的对话模型；图片/视频/语音/OCR/向量/重排等非对话模型与 Pro/LoRA 变体自动跳过，以在线清单为准。在插件设置中关闭「同步对话模型目录」即进入只嵌入模式：启动自动补齐与手动同步都会冻结目录（对话模型不再被合并回来），记忆中枢 bge-m3 向量不受影响。</p>
         {models.length === 0 ? <div className={css['empty']}>暂无模型。先保存 Key，再点击「从硅基流动同步」。</div> : (
           <div className={css['tableWrap']} style={{ maxHeight: 430, overflow: 'auto' }}>
             <div className={css['resourceList']}>
