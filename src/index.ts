@@ -1061,7 +1061,7 @@ export function apply(ctx: Context, config?: Config): void {
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null } }
+        const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null }; siliconflow?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; syncChatModels?: boolean | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
@@ -1105,6 +1105,14 @@ export function apply(ctx: Context, config?: Config): void {
             imageModel: value.openai?.imageModel ?? '',
             endpoints: value.openai?.endpoints ?? [],
             timeoutMs: value.openai?.timeoutMs ?? 300000,
+          },
+          // 0.33.3 修复：source 此前遗漏 siliconflow 段，patch overlay 配置的
+          // syncChatModels=false 在启动规整时被丢弃（默认 true 兜底），只嵌入模式失效。
+          siliconflow: {
+            enabled: value.siliconflow?.enabled !== false,
+            apiKeyEnv: value.siliconflow?.apiKeyEnv ?? 'SILICONFLOW_API_KEY',
+            timeoutMs: value.siliconflow?.timeoutMs ?? 15000,
+            syncChatModels: value.siliconflow?.syncChatModels !== false,
           },
         }
       }
