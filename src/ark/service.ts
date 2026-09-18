@@ -41,6 +41,7 @@ export const ARK_DEFAULT_MODELS = [
   { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
   { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
   { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },
   { id: 'kimi-k3', name: 'Kimi-K3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: KIMI_REASONING },
   { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text', 'image'], reasoningEfforts: FIVE_TIER_REASONING },
   { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxTokens: 128_000, input: ['text'], reasoningEfforts: FIVE_TIER_REASONING },

@@ -35,6 +35,7 @@ test('方舟 Agent Plan 模型池：覆盖控制台全部文本模型与自动�
     'glm-5.3',
     'deepseek-v4-pro',
     'deepseek-v4-flash',
+    'deepseek-v4.1-flash',
     'kimi-k3',
     'minimax-m3',
     'glm-5.2',
