@@ -6,9 +6,17 @@ allowBuilds:
   # protobufjs（飞书 SDK 传递依赖）无原生模块，构建脚本仅可选优化，禁用。
   protobufjs: false
   ssh2: true
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-client-ui-layout@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-client-ui-primitives@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-client-ui-sidebar@0.1.6-alpha.2'
 # MCP 接入（0.21.0）：dsh 官方包统一钉在与运行中宿主一致的 0.1.2-rc.1。
 # 原因：npm 上较新的 dsh rc 版本内部依赖改用了尚未发布的稳定版区间（如 dsh-brand@^0.1.2），
 # 直接解析会报 NO_MATCHING_VERSION；钉版镜像 /opt 宿主束，保证与宿主同源同版本。
+# 例外（2026-09-18）：生产 Windows 宿主已升级 0.1.6-alpha.2，客户端三件套
+# （layout/sidebar/primitives）钉 alpha.2 与宿主同源——main 键控槽位与
+# sidebar.panellist 侧栏行声明仅 alpha.2+ 存在；仅影响本仓库类型检查，
+# 运行时一律从宿主模块表解析，不受 overrides 影响。
 # dsh-agent 保持 0.1.0-rc.8：feishu/index.mjs 运行时 import，不随本次变更升级。
 # 全量显式钉版：pnpm 11 的通配符 overrides 对 peer 自动安装不生效，逐包钉到与宿主一致的 0.1.2-rc.1。
 # dsh-agent 豁免（feishu/index.mjs 运行时 import，保持 0.1.0-rc.8）。
@@ -53,7 +61,7 @@ overrides:
   '@deepseek-ai/dsh-client-ui-goal': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-input-trigger': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-jobs': 0.1.2-rc.1
-  '@deepseek-ai/dsh-client-ui-layout': 0.1.2-rc.1
+  '@deepseek-ai/dsh-client-ui-layout': 0.1.6-alpha.2
   '@deepseek-ai/dsh-client-ui-message-feedback': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-model-selection': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-permission-presets': 0.1.2-rc.1
@@ -67,7 +75,8 @@ overrides:
   '@deepseek-ai/dsh-client-ui-settings-models': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-settings-plugin-inventory': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-settings-plugins': 0.1.2-rc.1
-  '@deepseek-ai/dsh-client-ui-sidebar': 0.1.2-rc.1
+  '@deepseek-ai/dsh-client-ui-sidebar': 0.1.6-alpha.2
+  '@deepseek-ai/dsh-client-ui-primitives': 0.1.6-alpha.2
   '@deepseek-ai/dsh-client-ui-skill': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-subagent': 0.1.2-rc.1
   '@deepseek-ai/dsh-client-ui-theme': 0.1.2-rc.1

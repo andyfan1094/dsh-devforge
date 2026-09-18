@@ -25,6 +25,16 @@ function fmtSize(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(2) + ' MB'
 }
 
+/** 官方原皮只作选择器预览；实际恢复由 DSH ThemeRuntime 负责，避免复制宿主 token。 */
+const OFFICIAL_SWATCH_TOKENS: Record<string, string> = {
+  '--dsw-alias-bg-layer-1': '#ffffff',
+  '--dsw-alias-bg-layer-2': '#f5f7fa',
+  '--dsw-alias-bg-layer-3': '#e9edf3',
+  '--dsw-alias-brand-primary': '#4b6bfb',
+  '--dsw-alias-label-primary': '#1f2329',
+  '--dsw-alias-label-secondary': '#667085',
+}
+
 /** 单皮肤卡片预览：使用主题对应背景图，并叠加轻遮罩保证色板文字可读。 */
 function SkinSwatch(props: { tokens: Record<string, string>; backgroundImage: string; colorScheme: 'light' | 'dark' }): JSX.Element {
   const t = props.tokens
@@ -148,7 +158,21 @@ export function SkinTab({ skin }: SkinTabProps): JSX.Element {
       {/* 皮肤网格 */}
       <div className={css['sectionTitle']}>{tt('skin.skinsTitle')}</div>
       <div className={css['skinGrid']} role="list">
-        {skin.skins.map((s) => {
+        <button
+           type="button"
+           key="official-default"
+           role="listitem"
+           data-active={state.skinId === null || undefined}
+           className={css['skinCard']}
+           onClick={() => skin.applySkin(null)}
+           title={tt('skin.official')}
+         >
+           <SkinSwatch tokens={OFFICIAL_SWATCH_TOKENS} backgroundImage="" colorScheme="light" />
+           <div className={css['skinCardMeta']}>
+             <span className={css['skinCardName']}>{tt('skin.official')}</span>
+           </div>
+         </button>
+           {skin.skins.map((s) => {
           const active = state.skinId === s.id
           return (
             <button

@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { StandardDetail, StandardSummary } from '../../protocol.ts'
-import type { PanelController } from './controller.ts'
 import type { SkinRuntimeApi } from '../theme/skin-runtime.ts'
 import { BrowserTab } from './BrowserTab.tsx'
 import { PluginUpdateTab, type UpdateCheckState } from './PluginUpdateTab.tsx'
@@ -26,19 +25,19 @@ import css from './panel.module.css'
 
 /** 面板属性。 */
 export interface DevforgePanelProps {
-  /** 与 SSH 一致的面板唯一状态源。 */
-  controller: PanelController
   /** API 客户端。 */
   api: DevforgeApi
-  /** 皮肤运行时（来自 mountPanel 注入；插件可选以保持兼容）。 */
+  /** 皮肤运行时（官方槽位注入；缺席时皮肤页签自动隐藏）。 */
   skin?: SkinRuntimeApi
+  /** 返回会话：把中栏交还官方布局服务（ctx.layout.selectPanel(null)）。 */
+  onBack: () => void
 }
 
 /** 页签类型。 */
 type Tab = 'guide' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'brainrouter' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
-export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JSX.Element {
+export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
   // 首次打开先展示教程，让新用户知道从哪里注册与配置；其它页签保持原有行为。
   const [tab, setTab] = useState<Tab>('guide')
   const [standards, setStandards] = useState<StandardSummary[]>([])
@@ -46,8 +45,6 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
   const [error, setError] = useState('')
   /** 规范数据是否已返回，避免慢请求期间误报“为空”。 */
   const [loaded, setLoaded] = useState(false)
-  /** 仅用于打开面板时刷新数据；真正的 view 显隐由 mount.tsx 的 html active CSS 接管。 */
-  const [panelOpen, setPanelOpen] = useState(() => controller.getSnapshot().panelOpen)
   /** 信息密度档位：默认紧凑（一屏多信息不拥挤），偏好写入 localStorage。 */
   const [density, setDensity] = useState<'compact' | 'cozy'>(() => (localStorage.getItem('dsh-devforge-density') === 'cozy' ? 'cozy' : 'compact'))
   /** 插件版本号，标题旁展示。 */
@@ -71,19 +68,11 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
     }
   }, [api])
 
-  // Controller 驱动数据时机；React 不负责中心 view 的显示/隐藏，避免与 SSH 注入层分叉。
+  // 官方 main 槽位只在面板被选中时挂载本组件，因此挂载即打开：直接拉取规范；
+  // 其它集成页签按各自组件生命周期加载数据。
   useEffect(() => {
-    const sync = (): void => { setPanelOpen(controller.getSnapshot().panelOpen) }
-    const unsubscribe = controller.subscribe(sync)
-    sync()
-    return unsubscribe
-  }, [controller])
-
-  // 打开时拉取规范；其它集成页签按各自组件生命周期加载数据。
-  useEffect(() => {
-    if (!panelOpen) return
     void refresh()
-  }, [panelOpen, refresh])
+  }, [refresh])
 
   /**
    * 并发检查插件登记源与 DSH 本体；任一路失败只落状态不阻塞另一路。
@@ -109,11 +98,10 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
     setUpdateState(next)
   }, [api])
 
-  // 面板打开即自动检查更新（含 DSH 本体）；页签内「检查更新」按钮复用同一回调。
+  // 挂载即自动检查更新（含 DSH 本体）；页签内「检查更新」按钮复用同一回调。
   useEffect(() => {
-    if (!panelOpen) return
     void refreshUpdates()
-  }, [panelOpen, refreshUpdates])
+  }, [refreshUpdates])
 
   /** 红点聚合：插件或 DSH 本体任一确认可更新才亮；加载中与检查失败一律不亮。 */
   const updateDot = !updateState.loading && (updateState.items.some((item) => item.status === 'update-available') || updateState.harness?.status === 'update-available')
@@ -144,7 +132,7 @@ export function DevforgePanel({ controller, api, skin }: DevforgePanelProps): JS
           className={[css['backButton'], css['ghostButton']].filter(Boolean).join(' ')}
           aria-label="返回会话"
           data-dsh-center-view-back=""
-          onClick={() => controller.close()}
+          onClick={onBack}
         >
           <span aria-hidden="true">‹</span>
           <span>返回会话</span>

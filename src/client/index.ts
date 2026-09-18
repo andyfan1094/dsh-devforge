@@ -1,22 +1,22 @@
 /**
  * dsh-devforge —— 浏览器半边入口（跑在 dsh Web GUI 内）。
  *
- * 入口说明：注册双语字典 → 建控制器/API → 挂侧边栏入口与中栏面板。
- * 关键边界：DOM 挂载失败只降级面板，绝不影响 GUI 主进程（warn 不 throw）。
+ * 入口说明：注册双语字典 → 建 API → 走官方槽位挂侧栏行与中栏页面。
+ * 关键边界：任一挂载失败只降级本插件，绝不影响 GUI 主进程（warn 不 throw）。
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { DevforgeApi } from './api.ts'
 import { registerDouyinLiveSidebar } from './douyin-live-sidebar.tsx'
 import { en, zh, type DevforgeKey } from './locales.ts'
-import { mountPanel } from './mount.tsx'
-import { PanelController } from './panel/controller.ts'
 import { mountRestartEntry } from './restart-entry.ts'
-import { mountSidebarEntry } from './sidebar-entry.ts'
+import { registerSlotPanel } from './slot-panel.tsx'
 import { createSkinRuntime } from './theme/skin-runtime.ts'
 import { mountZhipuQuotaSidebar } from './zhipu-quota-sidebar.tsx'
 
@@ -30,15 +30,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** 前置服务（runtime 就绪后再挂 UI）。 */
-export const inject = ['slots', 'locale', 'settingsScope', 'theme']
+/** 前置服务（runtime 就绪后再挂 UI）；layout 为官方布局服务（侧栏行选中 + 返回会话）。 */
+export const inject = ['slots', 'locale', 'settingsScope', 'theme', 'layout']
 
 /** 类型面（导出纪律：client 面只出类型与插件契约）。 */
-export type { PanelControllerSnapshot } from './panel/controller.ts'
 export type { DevforgeKey }
 
 /**
- * 挂载面板与侧边栏入口。
+ * 挂载官方槽位面板与配套入口。
  * @param ctx 客户端根上下文。
  */
 export function apply(ctx: ClientContext): void {
@@ -51,7 +50,6 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-devforge: dictionaries')
 
-  const controller = new PanelController()
   const api = new DevforgeApi()
   // 子注入只等待可选侧栏；服务替换/卸载自动清理注册，不阻塞主操作台，也不抢焦点。
   ctx.inject(['betterSidebar'], (sidebarCtx) => {
@@ -68,17 +66,27 @@ export function apply(ctx: ClientContext): void {
     console.warn('[dsh-devforge] skin runtime init failed:', error)
   }
 
-  const disposers: Array<() => void> = []
-  try {
-    disposers.push(mountSidebarEntry(controller))
-    disposers.push(mountRestartEntry(api))
-    disposers.push(mountPanel(controller, api, skin))
-  } catch (error) {
-    // 挂载失败降级：面板不可用但 GUI 无恙
-    console.warn('[dsh-devforge] mount failed:', error)
-  }
-  ctx.effect(() => () => {
-    for (const dispose of disposers.splice(0)) dispose()
-    skin?.dispose()
-  }, 'dsh-devforge: ui mounts')
+  // 官方槽位接入：sidebar.panellist 侧栏行 + main 中栏页面（与官方插件管理器同构），
+  // 图标尺寸/文字排版/颜色 token/面板显隐全部由壳统一渲染。
+  ctx.effect(() => {
+    try {
+      return registerSlotPanel(ctx, api, skin)
+    } catch (error) {
+      console.warn('[dsh-devforge] slot panel register failed:', error)
+      return () => {}
+    }
+  }, 'dsh-devforge: official slots')
+
+  // 侧栏「重启」按钮：克隆壳设置按钮的 DOM 注入（壳暂无对应官方槽位前的最小实现）。
+  ctx.effect(() => {
+    try {
+      return mountRestartEntry(api)
+    } catch (error) {
+      console.warn('[dsh-devforge] restart entry mount failed:', error)
+      return () => {}
+    }
+  }, 'dsh-devforge: restart entry')
+
+  // 皮肤运行时整体释放（主题注册、监听、恢复定时器）。
+  ctx.effect(() => () => { skin?.dispose() }, 'dsh-devforge: skin runtime')
 }

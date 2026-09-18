@@ -1,13 +1,4 @@
-/* dsh-devforge：沿用 SSH 的中心列 takeover 契约与 DSH 主题 token。 */
-[data-pane="conversation"], [class*="centerCol"] { position: relative; }
-/* 容器作为中心列额外末子节点，CSS 而非 React 负责开关，保证会话树保持挂载。 */
-[data-dsh-devforge-view] { position: absolute; inset: 0; z-index: 60; display: none; overflow: hidden; background: var(--dsw-alias-bg-base, #fff); }
-/* 单占中心列：同时存在其它面板 active 标记时不争夺显示权。 */
-html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]):not([data-dsh-mnemon-active]):not([data-dsh-skill-explorer-active]):not([data-dsh-winrm-active]):not([data-dsh-github-active]):not([data-dsh-feishu-active]) [data-dsh-devforge-view] { display: block; }
-html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]):not([data-dsh-mnemon-active]):not([data-dsh-skill-explorer-active]):not([data-dsh-winrm-active]):not([data-dsh-github-active]):not([data-dsh-feishu-active]) [data-pane="conversation"] > :not([data-dsh-devforge-view]),
-html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]):not([data-dsh-mnemon-active]):not([data-dsh-skill-explorer-active]):not([data-dsh-winrm-active]):not([data-dsh-github-active]):not([data-dsh-feishu-active]) [class*="centerCol"] > :not([data-dsh-devforge-view]) { display: none !important; }
-/* shared sidebar core 传入的 CSS Modules 根类。 */
-.view { overflow: hidden; }
+/* dsh-devforge：面板经官方 main 槽位挂进中栏（壳负责渲染与显隐），只用 DSH 主题 token。 */
 
 /* 远程运维主机新增表单：两列网格 + 底部操作行，跟随主题 token。
    minmax(min(220px, 100%), 1fr)：窄容器下单列自适应，杜绝最小列宽撑破面板。 */
@@ -191,16 +182,6 @@ html[data-dsh-devforge-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .modalTitle { margin: 0; font-size: 15px; font-weight: 700; }
 .modalContent { flex: 1; min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; background: var(--dsw-alias-bg-layer-2, #f8fafc); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .modalActions { display: flex; justify-content: flex-end; gap: 8px; }
-
-/* shared sidebar-entry-core 的 SSH 同款行规格。 */
-.entry { box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; background: transparent; border: none; border-radius: 8px; color: var(--dsw-alias-label-secondary, #667085); cursor: pointer; font-size: 13px; white-space: nowrap; }
-.entry:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); color: var(--dsw-alias-label-primary, #1f2329); }
-.entry[data-active] { background: var(--dsw-alias-interactive-bg-active, #eef2ff); color: var(--dsw-alias-label-primary, #1f2329); font-weight: 600; }
-.entryIcon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; }
-.entryIcon svg { display: block; width: 18px; height: 18px; }
-.entryLabel { overflow: hidden; text-overflow: ellipsis; }
-[data-dsh-frame][data-sidebar-collapsed] .entry { justify-content: center; width: 36px; min-height: 36px; padding: 0; margin: 0 auto 12px; border-radius: 50%; }
-[data-dsh-frame][data-sidebar-collapsed] .entryLabel { display: none; }
 
 /* 天工造梦内嵌 GitHub 工作台：保持运维工具的紧凑信息密度，不使用营销式卡片。 */
 .githubWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }

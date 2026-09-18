@@ -1,6 +1,6 @@
 {
   "name": "dsh-devforge",
-  "version": "0.33.5",
+  "version": "0.33.8",
   "description": "DSH 规范驱动天工造梦：注入版本化开发规范、一键创建服务生成子代理，并提供天工造梦操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
@@ -37,7 +37,9 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-theme"
       ],
       "platform": "web"
@@ -47,8 +49,8 @@
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
     "@deepseek-ai/dsh-mcp-client": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-subprocess": "^0.1.2-rc.1",
-    "@modelcontextprotocol/sdk": "^1.12.0",
     "@larksuiteoapi/node-sdk": "1.61.1",
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "@orama/orama": "^3.1.18",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
@@ -65,7 +67,10 @@
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.6-alpha.2",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.6-alpha.2",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-theme": "0.1.0-rc.8",
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
