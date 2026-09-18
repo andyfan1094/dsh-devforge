@@ -74,6 +74,7 @@ import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSettings as RagSettingsPartial } from './rag/protocol.ts'
 import { makeRagRoutes } from './rag/routes.ts'
 import { ragSearchTool } from './rag/tools.ts'
+import { MirrorSyncScheduler, normalizeMirrorSyncSettings } from './rag/mirror-sync.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
 import type { BrowserStatus } from './browser/protocol.ts'
 import { makeBrowserRoutes } from './browser/routes.ts'
@@ -777,6 +778,16 @@ export function apply(ctx: Context, config?: Config): void {
   dream.start()
   ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
 
+  // ---- 镜像自动同步（0.33.5）：修复「镜像只同步一次后永久脱节」----
+  // 生产实况：Mnemon 侧 40 篇、镜像库仅 12 篇且停在 2026-09-02 首次手动同步。
+  const mirrorSync = new MirrorSyncScheduler({
+    rag: ragService,
+    config: () => normalizeMirrorSyncSettings(ragService.getSettings().mirrorSync),
+    log: { info: (message, ...args) => ctx.logger.info(message, ...args), warn: (message, ...args) => ctx.logger.warn(message, ...args) },
+  })
+  mirrorSync.start()
+  ctx.effect(() => () => mirrorSync.dispose(), 'dsh-devforge: mirror sync')
+
   // ---- 工作流引擎（rag.workflow / rag.workflow_run 域存储 + 默认模型生成）----
   const workflowEngine = new WorkflowEngine(ragService, {
     listDomain: (domain) => ragStore.listDomainDocs(domain),
@@ -860,7 +871,7 @@ export function apply(ctx: Context, config?: Config): void {
       wrapperInstalled: () => brainRouterWrapperInstalled,
     }),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool()]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

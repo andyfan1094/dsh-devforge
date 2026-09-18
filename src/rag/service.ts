@@ -28,6 +28,7 @@ export const DEFAULT_RAG_SETTINGS: RagSettings = {
   chunk: { maxSize: 512, overlap: 64 },
   search: { topK: 8, vectorWeight: 0.5, threshold: 0 },
   advanced: { concurrency: 4, cacheEnabled: true, timeoutMs: 30000 },
+  mirrorSync: { enabled: true, intervalMinutes: 60 },
 }
 
 /** RAG 服务（进程内单例由接线层持有）。 */
@@ -52,8 +53,24 @@ export class RagService {
   /** 注入 LLM 打分函数（rerank.mode=llm 兜底）。 */
   setRerankLlm(score: LlmScoreFn): void { this.rerankLlm = score }
 
+  /**
+   * 读全局设置：按节与默认值做字段级规整合并。
+   *
+   * 必要性（2026-09-18）：旧版本写入的设置快照缺少后续新增的节
+   *（如 mirrorSync），直接返回会让下游读到 undefined 而抛错；
+   * 逐节合并保证「老库 + 新字段」永远拿到完整结构。
+   */
   getSettings(): RagSettings {
-    return this.store.getRagSettings() ?? DEFAULT_RAG_SETTINGS
+    const stored = this.store.getRagSettings()
+    if (stored === undefined) return DEFAULT_RAG_SETTINGS
+    return {
+      embedding: { ...DEFAULT_RAG_SETTINGS.embedding, ...stored.embedding },
+      rerank: { ...DEFAULT_RAG_SETTINGS.rerank, ...stored.rerank },
+      chunk: { ...DEFAULT_RAG_SETTINGS.chunk, ...stored.chunk },
+      search: { ...DEFAULT_RAG_SETTINGS.search, ...stored.search },
+      advanced: { ...DEFAULT_RAG_SETTINGS.advanced, ...stored.advanced },
+      mirrorSync: { ...DEFAULT_RAG_SETTINGS.mirrorSync, ...stored.mirrorSync },
+    }
   }
 
   /** 按当前设置的渠道取向量化器；未知渠道回退智谱。 */

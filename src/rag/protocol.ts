@@ -109,6 +109,8 @@ export interface RagSettings {
   chunk: { maxSize: number; overlap: number }
   search: { topK: number; vectorWeight: number; threshold: number }
   advanced: { concurrency: number; cacheEnabled: boolean; timeoutMs: number }
+  /** 镜像自动同步（Mnemon/Hindsight 只读镜像的定期增量拉取）。 */
+  mirrorSync: { enabled: boolean; intervalMinutes: number }
 }
 
 /** 单库重嵌报告（reembed 路由与面板提示共用）。 */

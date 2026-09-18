@@ -124,6 +124,13 @@ function hashText(text: string): string { return createHash('sha256').update(tex
 async function mirrorIngest(rag: RagService, kbId: string, source: string, items: Array<{ key: string; text: string }>): Promise<MirrorReport> {
   const report: MirrorReport = { source, scanned: items.length, added: 0, updated: 0, removed: 0, skipped: 0, errors: [] }
   const existing = rag.listDocs(kbId)
+  // 空扫描保护（2026-09-18）：源侧一条都没扫到、库里却已有内容时，绝不能按
+  // 「未出现即删除」清库——源目录被移动/卸载/权限不可读都会触发空扫描，
+  // 旧实现会静默删光整个知识库（自动同步下这是不可恢复的数据事故）。
+  if (items.length === 0 && existing.length > 0) {
+    report.errors.push('源侧扫描结果为空但库中已有 ' + existing.length + ' 篇文档，已中止同步以防清库（请检查源目录是否存在且可读）')
+    return report
+  }
   const byName = new Map(existing.map((doc) => [doc.fileName, doc]))
   const seen = new Set<string>()
   for (const item of items) {
