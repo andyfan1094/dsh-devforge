@@ -8,7 +8,7 @@
  */
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { Ignored } from './ignore-lite.ts'
 import type { RagService } from './service.ts'
 
@@ -81,7 +81,9 @@ export class ProjectIndexer {
   async run(root: string): Promise<ProjectIndexReport> {
     const report: ProjectIndexReport = { root, scanned: 0, added: 0, updated: 0, removed: 0, skipped: 0, errors: [] }
     const trimmed = root.trim()
-    if (trimmed === '' || !trimmed.startsWith('/')) { report.errors.push('路径必须是本机绝对路径'); return report }
+    // 跨平台绝对路径校验：盘符（C:\…）与 POSIX 根（/…）都必须放行；
+    // 旧实现只认 "/" 开头，Windows 上面板传 D:\… 会被直接拒绝，项目索引功能整体不可用。
+    if (trimmed === '' || !isAbsolute(trimmed)) { report.errors.push('路径必须是本机绝对路径'); return report }
     if (!existsSync(trimmed) || !statSync(trimmed).isDirectory()) { report.errors.push('路径不存在或不是目录：' + trimmed); return report }
     const files = collectFiles(trimmed)
     const existing = this.rag.listDocs(this.kbId)

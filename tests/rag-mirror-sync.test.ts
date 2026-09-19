@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeDb } from '../src/store/db.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { RagService, type RagEmbedder } from '../src/rag/service.ts'
 import { syncMnemonMirror } from '../src/rag/mirror.ts'
@@ -71,7 +71,7 @@ test('镜像空扫描保护：源侧为空时不得清空已有知识库', async
   assert.equal(report.removed, 0, '空扫描绝不能删除已有文档')
   assert.ok(report.errors.length > 0, '空扫描必须报错以便观测')
   assert.equal(service.listDocs(kb.id).length, 1, '库内容必须原样保留')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('镜像正常同步：新增/更新/删除语义保持正确', async () => {
@@ -94,7 +94,7 @@ test('镜像正常同步：新增/更新/删除语义保持正确', async () => 
   writeFileSync(join(root, 'runtime', 'USER.md'), '辉哥偏好中文文档，且要求直接执行。', 'utf8')
   const third = await syncMnemonMirror(service, kb.id, root)
   assert.equal(third.updated, 1, '内容变化应更新')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 // ─────────────────────────── 根因 2：rag_search 双源检索
@@ -114,7 +114,7 @@ test('rag_search 双源：长期记忆可被知识库检索入口搜到', async 
   assert.ok(out.hits.some(hit => hit.text.includes('C87875')), '命中内容应包含目标记忆')
   assert.ok(out.hits.some(hit => hit.origin === 'memory'), '命中来源应标记为长期记忆')
   assert.equal(out.sources?.memory !== undefined && out.sources.memory >= 1, true, 'sources 应报告记忆源命中数')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('rag_search 未注入 native 时仍可正常检索文档（向后兼容）', async () => {
@@ -127,7 +127,7 @@ test('rag_search 未注入 native 时仍可正常检索文档（向后兼容）'
   assert.equal(out.ok, true)
   assert.ok(out.hits !== undefined && out.hits.length >= 1)
   assert.ok(out.hits.every(hit => hit.origin === 'rag'))
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('rag_search 显式限定 kbIds 时不混入长期记忆', async () => {
@@ -139,7 +139,7 @@ test('rag_search 显式限定 kbIds 时不混入长期记忆', async () => {
   const kb = service.createKb('指定库')
   const out = await tool.execute({ query: '长期记忆', kbIds: [kb.id] })
   assert.equal(out.sources?.memory, 0, '限定 kbIds 时不应检索长期记忆')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 // ─────────────────────────── 根因 3：自动同步调度
@@ -166,7 +166,7 @@ test('调度器：启动补跑执行同步且写入最近运行记录', async ()
   assert.ok(run.at > 0)
   assert.equal(scheduler.lastRun?.trigger, '测试触发')
   scheduler.dispose()
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
   void root
 })
 
@@ -178,7 +178,7 @@ test('调度器：总开关关闭时不启动定时器', () => {
   assert.equal(internals.timer, undefined, '关闭时不应创建周期定时器')
   assert.equal(internals.startupTimer, undefined, '关闭时不应创建启动补跑定时器')
   scheduler.dispose()
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('调度器：防重入——同步在途时再次触发直接返回', async () => {
@@ -189,7 +189,7 @@ test('调度器：防重入——同步在途时再次触发直接返回', async
   const run = await scheduler.runOnce('并发触发')
   assert.equal(run.error, '已有同步在途')
   scheduler.dispose()
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('设置规整：旧库缺 mirrorSync 节时补默认值，不抛错', () => {
@@ -201,5 +201,5 @@ test('设置规整：旧库缺 mirrorSync 节时补默认值，不抛错', () =>
   const settings = service.getSettings()
   assert.deepEqual(settings.mirrorSync, { enabled: true, intervalMinutes: 60 }, '老库应补上 mirrorSync 默认值')
   assert.equal(settings.embedding.model, 'embedding-3', '已有字段不得被默认值覆盖')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })

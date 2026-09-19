@@ -483,7 +483,8 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
           if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
           const body = await readJsonBody(req)
           const path = typeof body?.path === 'string' ? body.path.trim() : ''
-          const name = typeof body?.name === 'string' && body.name.trim() !== '' ? body.name.trim() : (path === '' ? '' : path.split('/').filter(Boolean).pop() ?? '')
+          // 未显式命名时取路径末段做知识库名；同时兼容正反斜杠（Windows 盘符路径取到的末段才不带盘符）。
+          const name = typeof body?.name === 'string' && body.name.trim() !== '' ? body.name.trim() : (path === '' ? '' : path.split(/[\\/]/).filter(Boolean).pop() ?? '')
           if (path === '' || name === '') { writeJson(res, 400, { ok: false, error: 'path 必填（本机绝对路径）' }); return }
           const kbId = ensureKb(rag, name, 'project', '项目自动索引：' + path)
           const report = await new ProjectIndexer(rag, kbId).run(path)

@@ -103,7 +103,7 @@ test('路径检测：普通 Git 仓库（CNB origin + GitHub 备远端）与分�
   assert.equal(result.ok, true)
   assert.equal(result.exists, true)
   assert.equal(result.isGitRepo, true)
-  assert.equal(result.name, repo.split('/').pop())
+  assert.equal(result.name, repo.split(/[\\/]/).pop()) // 兼容 Windows 反斜杠：断言取末段目录名，与产品实现同一语义
   assert.equal(result.branch, 'main')
   // origin 排最前，且类型按 URL 识别。
   assert.equal(result.remotes[0]?.name, 'origin')

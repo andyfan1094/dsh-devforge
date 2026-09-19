@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeDb } from '../src/store/db.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { RagStore, type RagChunkRecord } from '../src/rag/rag-store.ts'
 import type { RagDocument, RagKnowledgeBase, RagSettings } from '../src/rag/protocol.ts'
 
@@ -45,7 +45,7 @@ test('kb/doc/chunk 全链路：写入、读取、级联删除', () => {
   store.deleteKb('kb1')
   assert.equal(store.listDocs().length, 0)
   assert.equal(store.listKbs().length, 0)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('向量写入读回：float32 精度无损、覆盖更新', () => {
@@ -62,7 +62,7 @@ test('向量写入读回：float32 精度无损、覆盖更新', () => {
   // 覆盖更新
   store.putVector('k1', Float32Array.from([1, 2]))
   assert.equal(store.getVector('k1')!.length, 2)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('设置单例读写', () => {
@@ -76,5 +76,5 @@ test('设置单例读写', () => {
   }
   store.putRagSettings(settings)
   assert.deepEqual(store.getRagSettings(), settings)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })

@@ -33,7 +33,7 @@ export function defaultDbPath(): string {
 const instances = new Map<string, DatabaseSync>()
 
 /** 打开（或复用）库连接：WAL + busy_timeout + 建表；进程内同路径共享单连接。 */
-export function getDb(path?: string): DatabaseSync {
+export function getDb(path?: string, opts?: { /** false 时不建业务表（rag-vec.db 等派生库只有自己的表，不该出现 meta/docs 等业务结构）。 */ schema?: boolean }): DatabaseSync {
   const target = path ?? defaultDbPath()
   const cached = instances.get(target)
   if (cached !== undefined) return cached
@@ -48,7 +48,7 @@ export function getDb(path?: string): DatabaseSync {
     // 库文件收紧为属主可读写（Windows 无 POSIX 权限位，ACL 继承，忽略）。
     try { chmodSync(target, 0o600) } catch { /* best effort */ }
   }
-  ensureSchema(db)
+  if (opts?.schema !== false) ensureSchema(db)
   instances.set(target, db)
   return db
 }
@@ -60,6 +60,18 @@ export function closeDb(path?: string): void {
   if (db === undefined) return
   instances.delete(target)
   try { db.close() } catch { /* 已关闭则忽略 */ }
+}
+
+/**
+ * 关闭注册表内全部库连接。
+ * Windows 下句柄不释放就删不了所在目录（EPERM），测试清理必须先把本轮打开的库全关；
+ * 调用方不必逐个记住路径（RagStore 主库 + rag-vec.db 双连接正是泄漏根源）。
+ */
+export function closeAllDb(): void {
+  for (const [target, db] of instances) {
+    instances.delete(target)
+    try { db.close() } catch { /* 已关闭则忽略 */ }
+  }
 }
 
 /** 建表（幂等）；旧版本库升级入口留在 ensureSchema 内按 schema_version 演进。 */

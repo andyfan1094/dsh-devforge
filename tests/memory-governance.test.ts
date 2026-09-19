@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RagStore } from '../src/rag/rag-store.ts'
-import { closeDb } from '../src/store/db.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { NativeMemoryStore, MEMORY_META_DOMAIN, NATIVE_MEMORY_DOMAIN } from '../src/memory/native.ts'
 import { MemoryGovernanceService } from '../src/memory/governance.ts'
 import { MemoryRecallService } from '../src/memory/recall.ts'
@@ -28,7 +28,8 @@ function makeRig(): { store: NativeMemoryStore; governance: MemoryGovernanceServ
 }
 
 function cleanup(dir: string): void {
-  closeDb(join(dir, 'store.db'))
+  // RagStore 会同时打开主库与 rag-vec.db 双连接，统一全关再删目录（Windows 句柄未关删不掉）。
+  closeAllDb()
   rmSync(dir, { recursive: true, force: true })
 }
 

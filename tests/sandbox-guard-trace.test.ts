@@ -90,8 +90,9 @@ test('留痕：默认路径尊重 DSH_HOME（暂存实例天然隔离）', () =>
   const previous = process.env.DSH_HOME
   try {
     process.env.DSH_HOME = '/tmp/dsh-home-x'
-    assert.equal(defaultGuardTraceFile(), '/tmp/dsh-home-x/storages/dsh-devforge/sandbox-guard-trace.jsonl')
-    assert.equal(defaultGuardTraceFile('/custom'), '/custom/storages/dsh-devforge/sandbox-guard-trace.jsonl')
+    // 期望值经 path.join 生成：产品在 Windows 用反斜杠、POSIX 用正斜杠都是正确行为，断言只关心 DSH_HOME 前缀被尊重。
+    assert.equal(defaultGuardTraceFile(), join('/tmp/dsh-home-x', 'storages', 'dsh-devforge', 'sandbox-guard-trace.jsonl'))
+    assert.equal(defaultGuardTraceFile('/custom'), join('/custom', 'storages', 'dsh-devforge', 'sandbox-guard-trace.jsonl'))
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous

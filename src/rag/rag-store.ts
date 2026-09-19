@@ -12,8 +12,8 @@
  */
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { defaultDbPath, getDb, getSettings, putSettings, withTransaction } from '../store/db.ts'
+import type { DatabaseSync } from 'node:sqlite'
 import type { RagDocument, RagKnowledgeBase, RagSettings } from './protocol.ts'
 
 /** 切块持久化记录（文本与元数据进主库，向量本体在 vec 库）。 */
@@ -47,9 +47,9 @@ export class RagStore {
     const vecPath = vecDbPath ?? defaultVecDbPath(main)
     const dir = dirname(vecPath)
     mkdirSync(dir, { recursive: true })
-    this.vecDb = new DatabaseSync(vecPath)
-    this.vecDb.exec('PRAGMA journal_mode = WAL')
-    this.vecDb.exec('PRAGMA busy_timeout = 5000')
+    // 向量库必须经 getDb 注册：句柄进注册表才能被 closeDb/closeAllDb 释放；
+    // 旧实现直连 DatabaseSync，Windows 测试清理删目录时句柄未关直接 EPERM。
+    this.vecDb = getDb(vecPath, { schema: false })
     this.vecDb.exec('CREATE TABLE IF NOT EXISTS vec (hash TEXT PRIMARY KEY, dim INTEGER NOT NULL, data BLOB NOT NULL)')
   }
 

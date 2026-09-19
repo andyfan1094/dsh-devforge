@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listCredentialRefs } from '../src/credentials-writer.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { ZhipuCodingPlanService, mergeZhipuOfficialProvider, ZHIPU_OFFICIAL_DEFAULT_MODELS, ZhipuServiceError } from '../src/zhipu/service.ts'
 import { ZHIPU_OFFICIAL_BASE_URL, ZHIPU_OFFICIAL_PROVIDER_ID } from '../src/zhipu/protocol.ts'
 
@@ -57,6 +58,8 @@ async function withTempHome(run: (home: string) => Promise<void>): Promise<void>
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    // 用例经 getDb 打开过 store.db 时句柄仍在注册表里，Windows 下不关就删不掉目录（EBUSY/EPERM）。
+    closeAllDb()
     await rm(dir, { recursive: true, force: true })
   }
 }

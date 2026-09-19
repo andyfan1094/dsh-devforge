@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeDb } from '../src/store/db.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { RagService, type RagEmbedder } from '../src/rag/service.ts'
 
@@ -44,7 +44,7 @@ test('入库管线：切块落库、文档就绪', async () => {
   assert.equal(doc.status, 'ready')
   assert.ok(doc.chunkCount >= 2)
   assert.equal(service.listDocs(kb.id).length, 1)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('检索管线：hybrid 命中正确切块并带出处信息', async () => {
@@ -55,7 +55,7 @@ test('检索管线：hybrid 命中正确切块并带出处信息', async () => {
   assert.ok(hits.length >= 1)
   assert.ok(hits[0].text.includes('暂存实例'))
   assert.equal(hits[0].fileName, '部署.md')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('幂等 + 缓存防重复计费：重复入库零嵌入调用', async () => {
@@ -68,7 +68,7 @@ test('幂等 + 缓存防重复计费：重复入库零嵌入调用', async () =>
   await service.ingestText(kb.id, '文档副本.md', DOC_TEXT)
   assert.equal(fake.calls, callsAfterFirst, '向量缓存命中时不应再调嵌入')
   assert.equal(service.listDocs(kb.id).length, 2)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('删除文档：级联清 chunk 且索引失效（搜不到）', async () => {
@@ -80,7 +80,7 @@ test('删除文档：级联清 chunk 且索引失效（搜不到）', async () =
   service.deleteDoc(doc.id)
   hits = await service.search({ query: '暂存实例' })
   assert.equal(hits.length, 0, '删除后应检索不到')
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('删除知识库：级联清空一切', async () => {
@@ -92,7 +92,7 @@ test('删除知识库：级联清空一切', async () => {
   assert.equal(service.listDocs().length, 0)
   const hits = await service.search({ query: '暂存实例' })
   assert.equal(hits.length, 0)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('切块预览：不入库不嵌入', async () => {
@@ -101,7 +101,7 @@ test('切块预览：不入库不嵌入', async () => {
   assert.ok(chunks.length >= 2)
   assert.equal(service.listDocs().length, 0)
   assert.equal(fake.calls, 0)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('维度守卫：异维度库降级纯关键词，检索不再抛错', async () => {
@@ -122,7 +122,7 @@ test('维度守卫：异维度库降级纯关键词，检索不再抛错', async
   const hits = await service.search({ query: '暂存实例' })
   assert.ok(hits.length >= 1, '维度不匹配不应炸掉检索')
   assert.ok(hits.some(hit => hit.text.includes('暂存实例')))
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })
 
 test('全库重嵌：模型切换后 vecHash 迁移且缓存命中不重复计费', async () => {
@@ -146,5 +146,5 @@ test('全库重嵌：模型切换后 vecHash 迁移且缓存命中不重复计�
   // 重嵌后检索恢复正常
   const hits = await service.search({ query: '暂存实例' })
   assert.ok(hits.length >= 1)
-  closeDb(join(dir, 'main.db'))
+  closeAllDb()
 })

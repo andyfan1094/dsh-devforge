@@ -17,7 +17,7 @@ import { normalizeMemorySettings, DEFAULT_MEMORY_SETTINGS } from '../src/memory/
 import { MemoryStatsStore } from '../src/memory/stats.ts'
 import { NativeMemoryStore, type NativeMemoryEntry } from '../src/memory/native.ts'
 import { RagStore } from '../src/rag/rag-store.ts'
-import { closeDb } from '../src/store/db.ts'
+import { closeAllDb } from '../src/store/db.ts'
 import { MemoryGovernanceService } from '../src/memory/governance.ts'
 import { mergeHits, WorkflowEngine } from '../src/workflow/engine.ts'
 import type { RagDocument, RagSearchHit } from '../src/rag/protocol.ts'
@@ -117,12 +117,20 @@ describe('项目增量索引', () => {
       }) as unknown as RagService
       const indexer = new ProjectIndexer(rag2, 'kb1')
       const first = await indexer.run(root)
-      assert.equal(first.added, 1) // 仅 a.md（.gitignore 不在白名单）
+      assert.equal(first.added, 1) // 仅 a.md（.gitignore 不在白名单）；mkdtemp 在 Windows 生成盘符路径，本用例同时回归「D:\… 必须放行」
       const second = await indexer.run(root)
       assert.equal(second.added, 0)
       assert.equal(second.updated, 1) // 哈希不同 → 走更新而非新增
       void rag
     } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+  test('ProjectIndexer 拒绝相对路径与空路径', async () => {
+    const indexer = new ProjectIndexer(fakeRag(), 'kb1')
+    const relativeReport = await indexer.run('some/relative/dir')
+    assert.ok(relativeReport.errors.some((e) => e.includes('绝对路径')), '相对路径必须被拒')
+    const emptyReport = await indexer.run('   ')
+    assert.ok(emptyReport.errors.some((e) => e.includes('绝对路径')), '空路径必须被拒')
+    assert.equal(emptyReport.scanned, 0)
   })
 })
 
@@ -284,7 +292,7 @@ describe('会话记忆沉淀', () => {
       assert.ok(active2[0]?.content.includes('10.0.0.3'))
       assert.equal(active2[0]?.supersedes.length, 1, '保留取代链可追溯')
     } finally {
-      closeDb(join(dir, 'store.db'))
+      closeAllDb()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -313,7 +321,7 @@ describe('会话记忆沉淀', () => {
       assert.deepEqual(episodes[0]?.toolNames, ['read'])
       assert.deepEqual(episodes[0]?.lessons, ['改完配置要重启'])
     } finally {
-      closeDb(join(dir, 'store.db'))
+      closeAllDb()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -349,7 +357,7 @@ describe('会话记忆沉淀', () => {
       assert.equal(governance.listPendingWindows().length, 1, '待处理窗口保留：模型恢复后仍要补提炼，不能丢记忆')
       sediment.dispose()
     } finally {
-      closeDb(join(dir, 'store.db'))
+      closeAllDb()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -376,7 +384,7 @@ describe('会话记忆沉淀', () => {
       assert.equal(episodes[0]?.toolFailures, 1)
       sediment.dispose()
     } finally {
-      closeDb(join(dir, 'store.db'))
+      closeAllDb()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -481,7 +489,7 @@ describe('记忆主动注入', () => {
       const detail2 = await injection.decideDetailed([{ content: [{ type: 'text', text: '直播数据看板地址是 live.example.com' }] }])
       const occurrences = (detail2.text?.match(/live\.example\.com/g) ?? []).length
       assert.equal(occurrences, 1, '常驻条目不得在检索块重复出现')
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 })
 
@@ -518,7 +526,7 @@ describe('记忆持久化统计（0.17.14 可观测修复）', () => {
       assert.equal(second.injectTotal, 1)
       assert.equal(second.lastInjectAt, 123)
       assert.ok(second.lastInjectPreview.includes('关键事实'))
-    } finally { closeDb(dbPath); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
   test('decideDetailed：未启用与无命中分别给出 reason，与注入统计口径对齐', async () => {
     const disabled = new MemoryInjectionService(fakeRag(), () => ({ ...SETTINGS, enabled: false }))
@@ -638,7 +646,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       assert.equal(ragIngest, 0, '有 native 时绝不双写 RAG 文档')
       assert.equal(sediment.attemptCount, 1)
       assert.equal(sediment.failureCount, 0)
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 
   test('attach：静默期内连续多轮不丢轮次——两轮窗口合并为一次提炼', async () => {
@@ -781,7 +789,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       assert.ok(detail.text?.includes('常驻记忆'))
       assert.ok(detail.text?.includes('生产环境禁止未经辉哥确认重启'))
       assert.ok(detail.text?.includes('0.26.3'))
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 
   test('decide：镜像 RAG 抛错只损失增强层，常驻与内置照常注入', async () => {
@@ -796,7 +804,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       assert.equal(detail.reason, undefined)
       assert.ok(detail.text?.includes('发布包上传后必须核对 SHA256'))
       assert.ok(detail.text?.includes('3081'))
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 
   test('decide：注入消息按宿主快照协议标记 form/sections', async () => {
@@ -836,7 +844,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       const ragAt = text.indexOf('YYYY')
       assert.ok(nativeAt >= 0, '内置精确候选必须获得预算')
       assert.ok(ragAt === -1 || ragAt > nativeAt, '内置记忆必须先于镜像 RAG 渲染（旧实现 RAG 先行会挤占预算）')
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 
   test('decide：内置与镜像同内容去重，不双份注入', async () => {
@@ -849,6 +857,6 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       const detail = await injection.decideDetailed([{ content: [{ type: 'text', text: '直播数据看板地址是什么' }] }])
       const occurrences = (detail.text?.match(/live\.example\.com/g) ?? []).length
       assert.equal(occurrences, 1, '同一事实在常驻/内置/镜像三层只允许出现一次')
-    } finally { closeDb(join(dir, 'store.db')); rmSync(dir, { recursive: true, force: true }) }
+    } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
 })
