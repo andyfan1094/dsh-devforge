@@ -44,3 +44,41 @@ test('异常字段不会污染页面契约', () => {
   assert.equal(limits[0]?.kind, 'unknown')
   assert.equal(limits[0]?.usedPercent, undefined)
 })
+
+test('侧栏方舟行：只提取已订阅套餐的 5 小时窗口，未配置/未订阅不占行', async () => {
+  const { extractArkRows } = await import('../src/client/zhipu-quota-core.ts')
+  const rows = extractArkRows({
+    plans: [
+      {
+        product: 'agent-plan',
+        subscribed: true,
+        periods: [
+          { level: '5h', used: 0, total: 100, usedPercent: 0 },
+          { level: 'weekly', used: 0, total: 100, usedPercent: 0 },
+        ],
+      },
+      {
+        product: 'coding-plan',
+        subscribed: true,
+        periods: [{ level: '5h', used: 40, total: 100, usedPercent: 40, resetAt: 1_800_000_000_000 }],
+      },
+    ],
+  })
+  assert.deepEqual(rows.map((row) => row.label), ['方舟 Agent', '方舟 Coding'])
+  assert.equal(rows[1]?.percent, 40)
+  assert.equal(rows[1]?.resetAt, 1_800_000_000_000)
+  assert.equal(rows[1]?.level, 'normal')
+
+  // AK/SK 未配置（空 plans）与未订阅套餐都不产生行。
+  assert.deepEqual(extractArkRows({ plans: [] }), [])
+  assert.deepEqual(extractArkRows({
+    plans: [{ product: 'coding-plan', subscribed: false, periods: [] }],
+  }), [])
+  // 非 5h 窗口（比如上游只回了 monthly）不冒充 5 小时行。
+  assert.deepEqual(extractArkRows({
+    plans: [{ product: 'agent-plan', subscribed: true, periods: [{ level: 'monthly', used: 1, total: 2, usedPercent: 50 }] }],
+  }), [])
+  // 异常载荷安全：null / 缺 plans 字段一律空行。
+  assert.deepEqual(extractArkRows(null), [])
+  assert.deepEqual(extractArkRows({}), [])
+})

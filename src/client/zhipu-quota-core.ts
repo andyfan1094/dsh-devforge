@@ -88,3 +88,53 @@ export function extractZhipuRows(payload: unknown, maxRows = 4): ZhipuQuotaRow[]
   }
   return rows
 }
+
+/** 方舟套餐在侧栏卡片的行展示模型（字段语义与 ZhipuQuotaRow 一致）。 */
+export interface ArkQuotaRow {
+  /** 套餐标识（'agent-plan' | 'coding-plan'），用作渲染 key。 */
+  key: string
+  label: string
+  percent: number
+  level: 'normal' | 'warning' | 'danger'
+  resetAt?: number
+  title: string
+}
+
+/**
+ * 从方舟用量 dashboard（/api/dsh-devforge/ark/dashboard 载荷的 dashboard 字段）提取
+ * 各套餐的 5 小时窗口行，与智谱主 Key 行同一「盯紧短窗口」视角（辉哥 2026-09-21 定稿）。
+ * - 只保留 subscribed === true 且存在 5h 窗口的套餐；AK/SK 未配置时 Host 返回空 plans，自然产出空行；
+ * - 5 小时窗口 level 已由 Host 归一化（0.34.8），这里按字面量 '5h' 匹配；
+ * - usedPercent 缺失时按 used/total 换算并 clamp 到 [0, 100]。
+ */
+export function extractArkRows(dashboard: unknown): ArkQuotaRow[] {
+  const plans = dashboard !== null && typeof dashboard === 'object' && Array.isArray((dashboard as { plans?: unknown }).plans)
+    ? (dashboard as { plans: unknown[] }).plans
+    : []
+  const rows: ArkQuotaRow[] = []
+  for (const plan of plans) {
+    if (plan === null || typeof plan !== 'object') continue
+    const entry = plan as { product?: unknown; subscribed?: unknown; periods?: unknown }
+    if (entry.subscribed !== true || !Array.isArray(entry.periods)) continue
+    const label = entry.product === 'agent-plan' ? '方舟 Agent' : entry.product === 'coding-plan' ? '方舟 Coding' : null
+    if (label === null) continue
+    const period = entry.periods.find((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && (item as { level?: unknown }).level === '5h')
+    if (period === undefined) continue
+    const used = finiteNumber(period.used)
+    const total = finiteNumber(period.total)
+    const rawPercent = finiteNumber(period.usedPercent) ?? (used !== undefined && total !== undefined && total > 0 ? used / total * 100 : 0)
+    const percent = Math.max(0, Math.min(100, rawPercent))
+    const resetAt = normalizeReset(period.resetAt)
+    rows.push({
+      key: String(entry.product),
+      label,
+      percent: Math.round(percent * 10) / 10,
+      level: percentLevel(percent),
+      resetAt,
+      title: resetAt === undefined
+        ? label + ' · 5 小时额度 · 重置时间未知'
+        : label + ' · 5 小时额度 · ' + new Date(resetAt).toLocaleString('zh-CN') + ' 重置',
+    })
+  }
+  return rows
+}
