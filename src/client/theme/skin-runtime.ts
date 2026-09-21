@@ -422,6 +422,22 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
    */
   function restoreDesiredSkin(attempt: number): void {
     if (themeSvc === undefined || desiredSkinId === null) return
+    // 深浅适配（辉哥 2026-09-21 定稿）：成对皮肤（金克斯之夜/之日）在 GUI 深浅切换后
+    // 自动落到对应变体。进入恢复时 body[data-ds-dark-theme] 已由 ThemeRuntime 同步，
+    // 目标皮肤 colorScheme 与当前模式不符则改投成对变体，恢复重试自然落到正确主题。
+    {
+      const desired = findSkin(desiredSkinId)
+      if (desired?.pairId !== undefined && typeof document !== 'undefined' && document.body !== null) {
+        const darkNow = document.body.hasAttribute('data-ds-dark-theme')
+        if ((desired.colorScheme === 'dark') !== darkNow) {
+          const pair = findSkin(desired.pairId)
+          if (pair !== undefined && (pair.colorScheme === 'dark') === darkNow) {
+            desiredSkinId = pair.id
+            writeStorage(KEY_SKIN, pair.id)
+          }
+        }
+      }
+    }
     const target = desiredSkinId
     if (activeSkinId() === target) {
       syncFromTheme()

@@ -23,6 +23,7 @@ const ASSETS = [
   ['devforge-crystal-violet', 'devforge-crystal-violet.jpg'],
   ['devforge-china-red', 'devforge-china-red.jpg'],
   ['devforge-jinx', 'devforge-jinx.jpg'],
+  ['devforge-jinx-day', 'devforge-jinx-day.jpg'],
 ]
 
 const root = fileURLToPath(new URL('../', import.meta.url))

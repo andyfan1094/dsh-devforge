@@ -59,6 +59,8 @@ export interface SkinDefinition extends ThemeDefinition {
   backgroundPosition?: string
   /** 皮肤级背景尺寸（如立绘高撑满 'auto 100%'）；缺省跟随用户的 fit 设置。 */
   backgroundSize?: string
+  /** 成对变体 id（辉哥 2026-09-21 定稿：金克斯深浅双形态）；GUI 深浅切换时由运行时自动落到对应变体。 */
+  pairId?: string
 }
 
 /** 内置皮肤目录 —— 注册顺序即 GUI 皮肤选择器的展示顺序。 */
@@ -566,6 +568,7 @@ export const SKINS: readonly SkinDefinition[] = [
     backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
     backgroundPosition: 'right center',
     backgroundSize: 'auto 100%',
+    pairId: 'devforge-jinx-day',
     colorScheme: 'dark',
     tokens: {
       '--dsw-alias-bg-base': 'var(--dsw-static-neutral-bluish-950)',
@@ -595,6 +598,47 @@ export const SKINS: readonly SkinDefinition[] = [
       '--dsw-alias-scrollbar-bg-l2': 'var(--dsw-static-neutral-600)',
       '--dsw-alias-scrollbar-hover-l1': 'var(--dsw-static-neutral-600)',
       '--dsw-alias-scrollbar-hover-l2': 'var(--dsw-static-neutral-550)',
+    },
+  },
+  {
+    // 金克斯之日（辉哥 2026-09-21 定稿）：金克斯之夜的浅色变体，深浅适配成对。
+    // tokens 全部取官方浅色主题原值（官方原皮浅色观感）；立绘同一人物改亮调日光感，
+    // 左半近白负空间融入浅色底；深浅切换时由运行时按 pairId 自动落到对应变体。
+    id: 'devforge-jinx-day',
+    labelKey: 'skin.jinxDay',
+    backgroundImage: THEME_BACKGROUNDS['devforge-jinx-day'],
+    backgroundPosition: 'right center',
+    backgroundSize: 'auto 100%',
+    pairId: 'devforge-jinx',
+    colorScheme: 'light',
+    tokens: {
+      '--dsw-alias-bg-base': 'var(--dsw-static-neutral-bluish-00)',
+      '--dsw-alias-bg-layer-1': 'var(--dsw-static-neutral-bluish-00)',
+      '--dsw-alias-bg-layer-2': 'var(--dsw-static-neutral-bluish-00)',
+      '--dsw-alias-bg-layer-3': 'var(--dsw-static-neutral-bluish-00)',
+      '--dsw-alias-bg-overlay': 'var(--dsw-static-neutral-bluish-150)',
+      '--dsw-alias-border-l1': '#0000000a',
+      '--dsw-alias-border-l2': '#0000001a',
+      '--dsw-alias-label-primary': 'var(--dsw-static-neutral-bluish-1000)',
+      '--dsw-alias-label-secondary': 'var(--dsw-static-neutral-bluish-700)',
+      '--dsw-alias-label-tertiary': 'var(--dsw-static-neutral-bluish-600)',
+      '--dsw-alias-brand-primary': 'var(--dsw-static-neutral-bluish-1000)',
+      '--dsw-alias-brand-text': 'var(--dsw-static-neutral-bluish-1000)',
+      '--dsw-alias-button-primary-hover': 'var(--dsw-static-neutral-bluish-750)',
+      '--dsw-alias-button-primary-dimmed': 'var(--dsw-static-neutral-bluish-100)',
+      '--dsw-alias-state-business-primary': 'var(--dsw-static-deepseek-500)',
+      '--dsw-alias-state-business-tertiary': 'var(--dsw-static-deepseek-100)',
+      '--dsw-alias-interactive-bg-hover': '#2631480f',
+      '--dsw-alias-interactive-bg-active': '#2631481a',
+      '--dsw-alias-markdown-code-block': 'var(--dsw-static-neutral-bluish-50)',
+      '--dsw-alias-markdown-inline-code': 'var(--dsw-static-neutral-50)',
+      '--dsw-specific-sidebar-fill': 'var(--dsw-static-neutral-bluish-50)',
+      '--dsw-specific-sidebar-nav-item-active': 'var(--dsw-static-neutral-bluish-100)',
+      '--dsw-specific-sidebar-nav-item-hover': 'var(--dsw-static-neutral-bluish-75)',
+      '--dsw-alias-scrollbar-bg-l1': 'var(--dsw-static-neutral-200)',
+      '--dsw-alias-scrollbar-bg-l2': 'var(--dsw-static-neutral-200)',
+      '--dsw-alias-scrollbar-hover-l1': 'var(--dsw-static-neutral-300)',
+      '--dsw-alias-scrollbar-hover-l2': 'var(--dsw-static-neutral-300)',
     },
   },
 ]

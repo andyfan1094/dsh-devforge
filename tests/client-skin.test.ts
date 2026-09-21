@@ -90,8 +90,8 @@ test('ACCENT_PRESETS 全部 hex 合法 + 全部 labelKey 命中 zhDict', () => {
   }
 })
 
-test('SKINS 恰好 15 套，覆盖现有浅色与深色主题，且 id 唯一', () => {
-  assert.equal(SKINS.length, 15, '主题数量应保持 15 套，避免漏配背景')
+test('SKINS 恰好 16 套，覆盖现有浅色与深色主题，且 id 唯一', () => {
+  assert.equal(SKINS.length, 16, '主题数量应保持 16 套，避免漏配背景')
   const ids = new Set<string>()
   let lightCount = 0
   let darkCount = 0
@@ -102,7 +102,7 @@ test('SKINS 恰好 15 套，覆盖现有浅色与深色主题，且 id 唯一', 
     if (s.colorScheme === 'light') lightCount++
     else darkCount++
   }
-  assert.equal(lightCount, 7, '浅色主题应保持 7 套')
+  assert.equal(lightCount, 8, '浅色主题应保持 8 套')
   assert.equal(darkCount, 8, '深色主题应保持 8 套')
 })
 
@@ -176,6 +176,27 @@ test('金克斯之夜皮肤：官方原皮打底 + 立绘贴右（辉哥 2026-09
   // 立绘贴右、高撑满：落点在主内容区右侧留白带
   assert.equal(skin!.backgroundPosition, 'right center')
   assert.equal(skin!.backgroundSize, 'auto 100%')
+})
+
+test('金克斯深浅成对：之夜/之日互为变体，深浅切换自动落对（辉哥定稿）', () => {
+  const night = findSkin('devforge-jinx')
+  const day = findSkin('devforge-jinx-day')
+  assert.ok(night !== undefined && day !== undefined, '金克斯之夜与之日必须都已注册')
+  assert.equal(night!.colorScheme, 'dark')
+  assert.equal(day!.colorScheme, 'light')
+  assert.equal(night!.pairId, 'devforge-jinx-day', '之夜的成对变体应是之日')
+  assert.equal(day!.pairId, 'devforge-jinx', '之日的成对变体应是之夜')
+  // 两变体立绘不同（深色底 vs 浅色底），但定位策略一致（贴右、高撑满）
+  assert.notEqual(night!.backgroundImage, day!.backgroundImage)
+  assert.equal(day!.backgroundPosition, 'right center')
+  assert.equal(day!.backgroundSize, 'auto 100%')
+  // 之日也是官方原皮浅色打底：全部引用官方 static 阶梯或官方边框/交互黑蓝
+  for (const [key, value] of Object.entries(day!.tokens)) {
+    assert.match(value, /^var\(--dsw-static-(neutral|deepseek)|^#000000[0-9a-f]{2}$|^#263148[0-9a-f]{2}$/, key + ' 应引用官方 static 阶梯或官方浅色交互色')
+  }
+  for (const key of REQUIRED_TOKEN_KEYS) {
+    assert.ok(day!.tokens[key] !== undefined, '金克斯之日缺 token：' + key)
+  }
 })
 
 test('zh 与 en 字典 key 完全一致（漏译编译期 + 运行期双重保护）', () => {
