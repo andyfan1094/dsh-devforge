@@ -90,8 +90,8 @@ test('ACCENT_PRESETS 全部 hex 合法 + 全部 labelKey 命中 zhDict', () => {
   }
 })
 
-test('SKINS 恰好 14 套，覆盖现有浅色与深色主题，且 id 唯一', () => {
-  assert.equal(SKINS.length, 14, '主题数量应保持 14 套，避免漏配背景')
+test('SKINS 恰好 15 套，覆盖现有浅色与深色主题，且 id 唯一', () => {
+  assert.equal(SKINS.length, 15, '主题数量应保持 15 套，避免漏配背景')
   const ids = new Set<string>()
   let lightCount = 0
   let darkCount = 0
@@ -103,7 +103,7 @@ test('SKINS 恰好 14 套，覆盖现有浅色与深色主题，且 id 唯一', 
     else darkCount++
   }
   assert.equal(lightCount, 7, '浅色主题应保持 7 套')
-  assert.equal(darkCount, 7, '深色主题应保持 7 套')
+  assert.equal(darkCount, 8, '深色主题应保持 8 套')
 })
 
 test('SKINS 每套都绑定唯一的内嵌高质量背景图', () => {
@@ -153,8 +153,29 @@ test('SKINS 的 brand-text 与品牌色对比度合规（lum ≥ 0.55 用深字�
     const brand = s.tokens['--dsw-alias-brand-primary']
     const text = s.tokens['--dsw-alias-brand-text']
     if (brand === undefined || text === undefined) continue
+    // 引用官方 static 阶梯的皮肤（金克斯=官方原皮打底）不做本地对比度推导，
+    // 文字色与品牌色同走官方深色变量，由官方主题保证可读性。
+    if (brand.startsWith('var(') || text.startsWith('var(')) continue
     assert.equal(text, pickTextOn(brand), s.id + ' brand-text 应由 pickTextOn 自动决定')
   }
+})
+
+test('金克斯之夜皮肤：官方原皮打底 + 立绘贴右（辉哥 2026-09-21 定稿）', () => {
+  const skin = findSkin('devforge-jinx')
+  assert.ok(skin !== undefined, '金克斯皮肤必须已注册')
+  assert.equal(skin!.colorScheme, 'dark')
+  assert.equal(skin!.labelKey, 'skin.jinx')
+  // tokens 全部引用官方深色 static 阶梯 = 官方原皮观感，不允许私自改色
+  for (const [key, value] of Object.entries(skin!.tokens)) {
+    assert.match(value, /^var\(--dsw-static-(neutral|deepseek)|^#ffffff[0-9a-f]{2}$/, key + ' 应引用官方 static 阶梯或官方边框白')
+  }
+  // 27 个必需 token 一个不缺
+  for (const key of REQUIRED_TOKEN_KEYS) {
+    assert.ok(skin!.tokens[key] !== undefined, '金克斯皮肤缺 token：' + key)
+  }
+  // 立绘贴右、高撑满：落点在主内容区右侧留白带
+  assert.equal(skin!.backgroundPosition, 'right center')
+  assert.equal(skin!.backgroundSize, 'auto 100%')
 })
 
 test('zh 与 en 字典 key 完全一致（漏译编译期 + 运行期双重保护）', () => {

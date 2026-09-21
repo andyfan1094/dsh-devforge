@@ -55,6 +55,10 @@ export interface SkinDefinition extends ThemeDefinition {
   labelKey: DevforgeKey
   /** 与主题绑定的默认背景图；用户手动壁纸存在时由运行时让位。 */
   backgroundImage: string
+  /** 皮肤级背景定位（如立绘贴右 'right center'）；缺省 'center center'，用户自定义壁纸不受影响。 */
+  backgroundPosition?: string
+  /** 皮肤级背景尺寸（如立绘高撑满 'auto 100%'）；缺省跟随用户的 fit 设置。 */
+  backgroundSize?: string
 }
 
 /** 内置皮肤目录 —— 注册顺序即 GUI 皮肤选择器的展示顺序。 */
@@ -550,6 +554,47 @@ export const SKINS: readonly SkinDefinition[] = [
       '--dsw-alias-scrollbar-bg-l2': '#571e26',
       '--dsw-alias-scrollbar-hover-l1': '#6e2a32',
       '--dsw-alias-scrollbar-hover-l2': '#6e2a32',
+    },
+  },
+  {
+    // 金克斯之夜（辉哥 2026-09-21 定稿）：官方原皮打底 + 双城之战风格立绘贴右。
+    // tokens 全部取官方深色主题原值（直接引用官方 static 阶梯变量），观感与官方原皮一致；
+    // 立绘（AI 生成，粉蓝霓虹 + 鲨鱼炮）高撑满、贴右侧，人物落在主内容区右侧留白带，
+    // 左半近黑负空间自然融入深色底，内容卡片有实色背景不受干扰。
+    id: 'devforge-jinx',
+    labelKey: 'skin.jinx',
+    backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
+    backgroundPosition: 'right center',
+    backgroundSize: 'auto 100%',
+    colorScheme: 'dark',
+    tokens: {
+      '--dsw-alias-bg-base': 'var(--dsw-static-neutral-bluish-950)',
+      '--dsw-alias-bg-layer-1': 'var(--dsw-static-neutral-bluish-875)',
+      '--dsw-alias-bg-layer-2': 'var(--dsw-static-neutral-bluish-850)',
+      '--dsw-alias-bg-layer-3': 'var(--dsw-static-neutral-bluish-800)',
+      '--dsw-alias-bg-overlay': 'var(--dsw-static-neutral-bluish-700)',
+      '--dsw-alias-border-l1': '#ffffff0f',
+      '--dsw-alias-border-l2': '#ffffff1f',
+      '--dsw-alias-label-primary': 'var(--dsw-static-neutral-bluish-50)',
+      '--dsw-alias-label-secondary': 'var(--dsw-static-neutral-bluish-300)',
+      '--dsw-alias-label-tertiary': 'var(--dsw-static-neutral-bluish-400)',
+      '--dsw-alias-brand-primary': 'var(--dsw-static-neutral-bluish-50)',
+      '--dsw-alias-brand-text': 'var(--dsw-static-neutral-bluish-50)',
+      '--dsw-alias-button-primary-hover': 'var(--dsw-static-neutral-bluish-100)',
+      '--dsw-alias-button-primary-dimmed': 'var(--dsw-static-neutral-bluish-750)',
+      '--dsw-alias-state-business-primary': 'var(--dsw-static-deepseek-400)',
+      '--dsw-alias-state-business-tertiary': 'var(--dsw-static-deepseek-800)',
+      '--dsw-alias-interactive-bg-hover': '#ffffff14',
+      '--dsw-alias-interactive-bg-active': '#ffffff24',
+      '--dsw-alias-markdown-code-block': 'var(--dsw-static-neutral-bluish-900)',
+      '--dsw-alias-markdown-inline-code': 'var(--dsw-static-neutral-800)',
+      '--dsw-specific-sidebar-fill': 'var(--dsw-static-neutral-bluish-900)',
+      '--dsw-specific-sidebar-nav-item-active': 'var(--dsw-static-neutral-bluish-750)',
+      '--dsw-specific-sidebar-nav-item-hover': 'var(--dsw-static-neutral-bluish-850)',
+      '--dsw-alias-scrollbar-bg-l1': 'var(--dsw-static-neutral-700)',
+      '--dsw-alias-scrollbar-bg-l2': 'var(--dsw-static-neutral-600)',
+      '--dsw-alias-scrollbar-hover-l1': 'var(--dsw-static-neutral-600)',
+      '--dsw-alias-scrollbar-hover-l2': 'var(--dsw-static-neutral-550)',
     },
   },
 ]

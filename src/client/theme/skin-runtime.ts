@@ -357,6 +357,7 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
       el.style.filter = ''
       el.style.transform = ''
       el.style.backgroundSize = ''
+      el.style.backgroundPosition = 'center center'
       return
     }
     el.style.backgroundImage = 'url("' + state.wallpaper.replace(/"/g, '%22') + '")'
@@ -367,6 +368,15 @@ export function createSkinRuntime(ctx: ClientContext): SkinRuntimeApi {
     } else {
       el.style.filter = ''
       el.style.transform = ''
+    }
+    // 皮肤级背景定位/尺寸（辉哥 2026-09-21 金克斯定稿：立绘高撑满贴右）优先于用户 fit 设置；
+    // 用户手动壁纸与其余皮肤维持原有 fit 行为。
+    const skin = state.wallpaperSource === 'skin' && state.skinId !== null ? findSkin(state.skinId) : undefined
+    el.style.backgroundPosition = skin?.backgroundPosition ?? 'center center'
+    const skinSize = skin?.backgroundSize
+    if (skinSize !== undefined) {
+      el.style.backgroundSize = skinSize
+      return
     }
     switch (state.fit) {
       case 'cover':
