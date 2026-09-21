@@ -144,12 +144,14 @@ test('rag_search 显式限定 kbIds 时不混入长期记忆', async () => {
 
 // ─────────────────────────── 根因 3：自动同步调度
 
-test('配置规整：缺省/越界值回退默认', () => {
+test('配置规整：缺省/越界值回退默认（退役后默认关闭）', () => {
   assert.deepEqual(normalizeMirrorSyncSettings(undefined), DEFAULT_MIRROR_SYNC_SETTINGS)
   assert.equal(normalizeMirrorSyncSettings({ intervalMinutes: 1 }).intervalMinutes, 5, '低于下限应抬到 5 分钟')
   assert.equal(normalizeMirrorSyncSettings({ intervalMinutes: 99999 }).intervalMinutes, 1440, '高于上限应压到 24 小时')
   assert.equal(normalizeMirrorSyncSettings({ enabled: false }).enabled, false)
-  assert.equal(normalizeMirrorSyncSettings({}).enabled, true, '缺省应默认启用')
+  // Mnemon 退役（2026-09-21）：缺省即关闭——规整不得把缺省值悄悄翻成启用
+  assert.equal(normalizeMirrorSyncSettings({}).enabled, false, '缺省应默认关闭')
+  assert.equal(normalizeMirrorSyncSettings({ enabled: true }).enabled, true, '显式开启仍可打开')
 })
 
 test('调度器：启动补跑执行同步且写入最近运行记录', async () => {
@@ -199,7 +201,23 @@ test('设置规整：旧库缺 mirrorSync 节时补默认值，不抛错', () =>
   const store = (service as unknown as { store: RagStore }).store
   store.putRagSettings(legacy as never)
   const settings = service.getSettings()
-  assert.deepEqual(settings.mirrorSync, { enabled: true, intervalMinutes: 60 }, '老库应补上 mirrorSync 默认值')
+  assert.deepEqual(settings.mirrorSync, { enabled: false, intervalMinutes: 60 }, '老库应补上 mirrorSync 默认值（退役后默认关闭）')
   assert.equal(settings.embedding.model, 'embedding-3', '已有字段不得被默认值覆盖')
+  closeAllDb()
+})
+
+test('updateKb：镜像库可转正为手动档案库（name/source 更新）', () => {
+  const { service, dir } = makeEnv()
+  const kb = service.createKb('Mnemon 镜像', { source: 'mirror', description: '只读镜像' })
+  const updated = service.updateKb(kb.id, { name: 'Mnemon 历史档案', source: 'manual', description: '外部镜像源退役后的静态档案' })
+  assert.ok(updated !== undefined)
+  assert.equal(updated.name, 'Mnemon 历史档案')
+  assert.equal(updated.source, 'manual')
+  // 不存在的库返回 undefined
+  assert.equal(service.updateKb('不存在的id', { name: 'x' }), undefined)
+  // 非法 source 抛错
+  assert.throws(() => service.updateKb(kb.id, { source: 'bogus' as never }))
+  // 空名抛错
+  assert.throws(() => service.updateKb(kb.id, { name: '  ' }))
   closeAllDb()
 })

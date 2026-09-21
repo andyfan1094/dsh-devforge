@@ -87,7 +87,19 @@ export function makeRagRoutes(service: RagService, embedders: Record<string, Rag
         try {
           const id = new URL(req.url ?? '', 'http://localhost').searchParams.get('id') ?? ''
           if (id === '') { writeJson(res, 400, { ok: false, error: 'id 必填' }); return }
-          if (req.method !== 'DELETE') { writeJson(res, 405, { ok: false, error: 'DELETE only' }); return }
+          if (req.method === 'PATCH') {
+            const body = await readJsonBody(req)
+            if (body === null) { writeJson(res, 400, { ok: false, error: '请求体无效' }); return }
+            const patch: { name?: string; source?: 'manual' | 'project' | 'mirror' | 'memory'; description?: string } = {}
+            if (typeof body?.name === 'string') patch.name = body.name
+            if (typeof body?.source === 'string') patch.source = body.source as 'manual' | 'project' | 'mirror' | 'memory'
+            if (typeof body?.description === 'string') patch.description = body.description
+            const kb = service.updateKb(id, patch)
+            if (kb === undefined) { writeJson(res, 404, { ok: false, error: '知识库不存在：' + id }); return }
+            writeJson(res, 200, { ok: true, kb })
+            return
+          }
+          if (req.method !== 'DELETE') { writeJson(res, 405, { ok: false, error: 'DELETE/PATCH only' }); return }
           service.deleteKb(id)
           writeJson(res, 200, { ok: true })
         } catch (error) { fail(res, error) }

@@ -28,7 +28,7 @@ export const DEFAULT_RAG_SETTINGS: RagSettings = {
   chunk: { maxSize: 512, overlap: 64 },
   search: { topK: 8, vectorWeight: 0.5, threshold: 0 },
   advanced: { concurrency: 4, cacheEnabled: true, timeoutMs: 30000 },
-  mirrorSync: { enabled: true, intervalMinutes: 60 },
+  mirrorSync: { enabled: false, intervalMinutes: 60 },
 }
 
 /** RAG 服务（进程内单例由接线层持有）。 */
@@ -103,6 +103,30 @@ export class RagService {
   deleteKb(kbId: string): void {
     this.store.deleteKb(kbId)
     this.engines.delete(kbId)
+  }
+
+  /**
+   * 更新知识库元数据（名称/来源/简介）。
+   *
+   * 用途（2026-09-21 记忆库退役）：外部镜像源退役后，历史镜像库转正为静态
+   * 档案库——source 从 mirror 改为 manual 即脱离注入增强层（enhancementKbIds
+   * 只收 mirror），检索资产原样保留；名称同步改为档案语义，避免误导。
+   */
+  updateKb(kbId: string, patch: { name?: string; source?: RagKnowledgeBase['source']; description?: string }): RagKnowledgeBase | undefined {
+    const kb = this.store.listKbs().find((item) => item.id === kbId)
+    if (kb === undefined) return undefined
+    if (patch.name !== undefined && patch.name.trim() === '') throw new Error('name 不能为空')
+    if (patch.source !== undefined && !['manual', 'project', 'mirror', 'memory'].includes(patch.source)) {
+      throw new Error('source 非法：' + patch.source)
+    }
+    const next: RagKnowledgeBase = {
+      ...kb,
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.source !== undefined ? { source: patch.source } : {}),
+      ...(patch.description !== undefined ? { description: patch.description } : {}),
+    }
+    this.store.putKb(next)
+    return next
   }
 
   listDocs(kbId?: string): RagDocument[] {

@@ -30,8 +30,15 @@ export interface MirrorSyncSettings {
   intervalMinutes: number
 }
 
+/**
+ * 默认关闭（2026-09-21 Mnemon 退役决策）：
+ * dsh-mnemon 插件已卸载，~/.mnemon 自 2026-09-04 起零写入（死水），
+ * 39/40 篇内容已迁入 memory.entry，镜像库已定格为静态历史档案。
+ * 每小时同步一个不再更新的目录没有意义；如未来重新接入外部记忆源，
+ * 可经 PUT /api/dsh-devforge/rag/settings 打开 mirrorSync.enabled。
+ */
 export const DEFAULT_MIRROR_SYNC_SETTINGS: MirrorSyncSettings = {
-  enabled: true,
+  enabled: false,
   intervalMinutes: 60,
 }
 
@@ -41,8 +48,10 @@ export function normalizeMirrorSyncSettings(raw: unknown): MirrorSyncSettings {
   const minutes = typeof value.intervalMinutes === 'number' && Number.isFinite(value.intervalMinutes)
     ? Math.max(5, Math.min(24 * 60, Math.floor(value.intervalMinutes)))
     : DEFAULT_MIRROR_SYNC_SETTINGS.intervalMinutes
+  // enabled 缺省跟随默认值（默认关闭）：不能用「!== false」写成缺省即启用，
+  // 否则退役默认值会被规整逻辑悄悄推翻。
   return {
-    enabled: value.enabled !== false,
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_MIRROR_SYNC_SETTINGS.enabled,
     intervalMinutes: minutes,
   }
 }
