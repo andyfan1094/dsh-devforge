@@ -99,6 +99,9 @@ export function minimaxCard(status: { credentialConfigured: boolean } | null, da
 /** 方舟窗口级别 → 中文短标签；未归一化的未知级别显示原文，绝不误标成其它窗口（0.34.8 修复）。 */
 const ARK_LEVEL_LABELS: Record<string, string> = { '5h': '5 小时', session: '5 小时', weekly: '本周', monthly: '本月' }
 
+/** 上层窗口阻断阈值：周/月用量达到该百分比即视为满，5 小时窗口实际不可用（浮点容差）。 */
+const ARK_BLOCKED_PERCENT = 99.5
+
 /** 方舟：Agent Plan 的 5h/周/月三段；Coding Plan 未订阅时不占位。 */
 export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigured: boolean; usageSecretKeyConfigured: boolean } | null, dashboard: ArkUsageDashboard): OverviewCardState {
   const usageConfigured = (status?.usageAccessKeyConfigured ?? false) && (status?.usageSecretKeyConfigured ?? false)
@@ -106,11 +109,22 @@ export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyC
   for (const plan of dashboard.plans) {
     if (!plan.subscribed) continue
     const planLabel = plan.product === 'agent-plan' ? 'Agent Plan' : 'Coding Plan'
+    // 周或月额度满 ⇒ 上层约束阻断，5 小时窗口实际不可用：5h 行强制显示 100% 并注明（辉哥定稿）。
+    const windowPercent = (level: string): number => {
+      const row = plan.periods.find((period) => period.level === level)
+      return Math.max(0, Math.min(100, row?.usedPercent ?? 0))
+    }
+    const weeklyBlocked = windowPercent('weekly') >= ARK_BLOCKED_PERCENT
+    const monthlyBlocked = windowPercent('monthly') >= ARK_BLOCKED_PERCENT
+    const blockedNote = weeklyBlocked || monthlyBlocked
+      ? (weeklyBlocked && monthlyBlocked ? '周/月额度已满' : weeklyBlocked ? '周额度已满' : '月额度已满') + '，5 小时窗口不可用'
+      : ''
     for (const period of plan.periods) {
       const levelText = ARK_LEVEL_LABELS[period.level] ?? period.level
-      const label = planLabel + ' · ' + levelText
-      const usedPercent = Math.max(0, Math.min(100, period.usedPercent ?? 0))
-      periods.push({ label, usedPercent, detail: percentText(usedPercent), resetAt: period.resetAt })
+      const blocked = (period.level === '5h' || period.level === 'session') && blockedNote !== ''
+      const label = planLabel + ' · ' + levelText + (blocked ? ' · 已阻断' : '')
+      const usedPercent = blocked ? 100 : Math.max(0, Math.min(100, period.usedPercent ?? 0))
+      periods.push({ label, usedPercent, detail: blocked ? percentText(usedPercent) + '（' + blockedNote + '）' : percentText(usedPercent), resetAt: period.resetAt })
     }
   }
   return {

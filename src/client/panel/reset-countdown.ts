@@ -19,7 +19,7 @@ export type ResetLevel = 'short-window' | 'weekly' | 'monthly' | 'unknown'
 
 /** 结构化倒计时视图。 */
 export interface ResetView {
-  /** 显示给用户的中文文案，如 "41 分钟后重置" / "6 天后重置"。 */
+  /** 显示给用户的紧凑文案（辉哥 2026-09-21 定稿）：'5h-3:00' / '周-1d3h' / '月-28d20h' / '即将重置' / '重置时间未知'。 */
   text: string
   /** 剩余时间分级，控制徽章颜色与是否启用脉冲。 */
   urgency: ResetUrgency
@@ -55,26 +55,41 @@ export function classifyByLevel(level: ResetLevel, remainingMs: number): ResetUr
   return 'normal'
 }
 
-/** 通用分钟级倒计时文案。沿用 ArkCodingPlanTab 原版格式：Math.ceil + "X 天 Y 小时后重置" 组合。 */
-export function formatGenericText(remainingMs: number): string {
-  const minutes = Math.ceil(remainingMs / 60_000)
-  if (minutes <= 0) return '即将重置'
-  const days = Math.floor(minutes / 1440)
-  const hours = Math.floor((minutes % 1440) / 60)
-  const mins = minutes % 60
-  if (days > 0) return days + ' 天 ' + hours + ' 小时后重置'
-  if (hours > 0) return hours + ' 小时 ' + mins + ' 分钟后重置'
-  return mins > 0 ? mins + ' 分钟后重置' : '即将重置'
+/** 窗口前缀（辉哥定稿）：短窗口 '5h'、周 '周'、月 '月'；unknown 无前缀。 */
+function levelPrefix(level: ResetLevel): string {
+  if (level === 'short-window') return '5h'
+  if (level === 'weekly') return '周'
+  if (level === 'monthly') return '月'
+  return ''
 }
 
-/** OverviewTab 用的简化文案：仅显示单一粒度，不带分/秒组合。 */
-export function formatSimpleText(remainingMs: number): string {
-  const minutes = Math.ceil(remainingMs / 60_000)
-  if (minutes <= 0) return '即将重置'
-  if (minutes < 60) return minutes + ' 分钟后重置'
-  const hours = Math.floor(minutes / 60)
-  if (hours < 48) return hours + ' 小时后重置'
-  return Math.floor(hours / 24) + ' 天后重置'
+/** 紧凑时长（辉哥定稿 2026-09-21）：短窗口 'H:MM' 钟表式；长窗口 <1h 'Mm'、<24h 'Hh'、更长 'DdHh'（分钟舍弃）。 */
+function formatDurationCompact(level: ResetLevel, remainingMs: number): string {
+  const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60_000))
+  if (level === 'short-window') {
+    return Math.floor(totalMinutes / 60) + ':' + String(totalMinutes % 60).padStart(2, '0')
+  }
+  const totalHours = Math.floor(totalMinutes / 60)
+  if (totalHours < 1) return totalMinutes + 'm'
+  if (totalHours < 24) return totalHours + 'h'
+  return Math.floor(totalHours / 24) + 'd' + (totalHours % 24) + 'h'
+}
+
+/** 通用窗口倒计时文案：'5h-3:00' / '周-1d3h' / '月-28d20h'；已过期「即将重置」。 */
+export function formatLevelText(level: ResetLevel, remainingMs: number): string {
+  if (remainingMs <= 0) return '即将重置'
+  const prefix = levelPrefix(level)
+  return prefix === '' ? formatDurationCompact(level, remainingMs) : prefix + '-' + formatDurationCompact(level, remainingMs)
+}
+
+/** 通用分钟级倒计时文案（紧凑格式）。 */
+export function formatGenericText(remainingMs: number, level: ResetLevel = 'unknown'): string {
+  return formatLevelText(level, remainingMs)
+}
+
+/** OverviewTab 用的简化文案：同一紧凑格式。 */
+export function formatSimpleText(remainingMs: number, level: ResetLevel = 'unknown'): string {
+  return formatLevelText(level, remainingMs)
 }
 
 /** 把官方可能的字符串或秒级时间戳规整为毫秒时间戳。 */
@@ -91,9 +106,10 @@ export function resolveArkReset(period: { level: string; resetAt?: number | unde
     return { text: '重置时间未知', urgency: 'normal', remainingMs: Number.POSITIVE_INFINITY }
   }
   const remainingMs = Math.max(0, period.resetAt - now)
+  const resolvedLevel = inferLevel(period.level)
   return {
-    text: formatGenericText(remainingMs),
-    urgency: classifyByLevel(inferLevel(period.level), remainingMs),
+    text: formatLevelText(resolvedLevel, remainingMs),
+    urgency: classifyByLevel(resolvedLevel, remainingMs),
     remainingMs,
   }
 }
@@ -105,9 +121,10 @@ export function resolveZhipuReset(value: string | number | undefined, now: numbe
     return { text: '重置时间未知', urgency: 'normal', remainingMs: Number.POSITIVE_INFINITY }
   }
   const remainingMs = Math.max(0, timestamp - now)
+  const resolvedLevel = inferLevel(kind)
   return {
-    text: formatGenericText(remainingMs),
-    urgency: classifyByLevel(inferLevel(kind), remainingMs),
+    text: formatLevelText(resolvedLevel, remainingMs),
+    urgency: classifyByLevel(resolvedLevel, remainingMs),
     remainingMs,
   }
 }
@@ -126,13 +143,13 @@ export function resolveGenericReset(
     ? level as ResetLevel
     : inferLevel(level)
   return {
-    text: formatGenericText(remainingMs),
+    text: formatLevelText(resolvedLevel, remainingMs),
     urgency: classifyByLevel(resolvedLevel, remainingMs),
     remainingMs,
   }
 }
 
-/** OverviewTab 专用的简化版（沿用 Overview 原有单一粒度文案）。 */
+/** OverviewTab 专用的简化版（同一紧凑格式）。 */
 export function resolveOverviewReset(
   timestamp: number | undefined,
   now: number,
@@ -146,7 +163,7 @@ export function resolveOverviewReset(
     ? level as ResetLevel
     : inferLevel(level)
   return {
-    text: formatSimpleText(remainingMs),
+    text: formatLevelText(resolvedLevel, remainingMs),
     urgency: classifyByLevel(resolvedLevel, remainingMs),
     remainingMs,
   }

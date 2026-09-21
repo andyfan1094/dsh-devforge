@@ -82,3 +82,52 @@ test('侧栏方舟行：只提取已订阅套餐的 5 小时窗口，未配置/�
   assert.deepEqual(extractArkRows(null), [])
   assert.deepEqual(extractArkRows({}), [])
 })
+
+test('侧栏方舟行：周或月额度满时 5 小时窗口强制显示已满并注明阻断', async () => {
+  const { extractArkRows } = await import('../src/client/zhipu-quota-core.ts')
+  // 周额度满（100%），5h 实际只有 40%：显示必须拉满并标注阻断。
+  const weeklyBlocked = extractArkRows({
+    plans: [{
+      product: 'coding-plan',
+      subscribed: true,
+      periods: [
+        { level: '5h', used: 400, total: 1000, usedPercent: 40, resetAt: 1_800_000_000_000 },
+        { level: 'weekly', used: 1000, total: 1000, usedPercent: 100 },
+        { level: 'monthly', used: 30, total: 1000, usedPercent: 3 },
+      ],
+    }],
+  })
+  assert.equal(weeklyBlocked[0]?.percent, 100)
+  assert.equal(weeklyBlocked[0]?.level, 'danger')
+  assert.match(weeklyBlocked[0]?.label ?? '', /已阻断/)
+  assert.match(weeklyBlocked[0]?.title ?? '', /周额度已满/)
+
+  // 月额度满同样阻断。
+  const monthlyBlocked = extractArkRows({
+    plans: [{
+      product: 'agent-plan',
+      subscribed: true,
+      periods: [
+        { level: '5h', used: 10, total: 100, usedPercent: 10 },
+        { level: 'monthly', used: 1000, total: 1000, usedPercent: 100 },
+      ],
+    }],
+  })
+  assert.equal(monthlyBlocked[0]?.percent, 100)
+  assert.match(monthlyBlocked[0]?.title ?? '', /月额度已满/)
+
+  // 周/月未满时保持 5h 真实值。
+  const normal = extractArkRows({
+    plans: [{
+      product: 'coding-plan',
+      subscribed: true,
+      periods: [
+        { level: '5h', used: 400, total: 1000, usedPercent: 40 },
+        { level: 'weekly', used: 800, total: 1000, usedPercent: 80 },
+        { level: 'monthly', used: 500, total: 1000, usedPercent: 50 },
+      ],
+    }],
+  })
+  assert.equal(normal[0]?.percent, 40)
+  assert.doesNotMatch(normal[0]?.label ?? '', /已阻断/)
+})

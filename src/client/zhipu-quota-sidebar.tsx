@@ -6,7 +6,7 @@
  * 方舟未配置 AK/SK 或套餐未订阅时不占行，失败不影响智谱行。 */
 import { createElement, useCallback, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import { extractArkRows, extractZhipuRows, formatResetCountdown, type ArkQuotaRow } from './zhipu-quota-core.ts'
+import { extractArkRows, extractZhipuRows, formatWindowCountdown, type ArkQuotaRow } from './zhipu-quota-core.ts'
 
 /** 本卡片消费的槽位面（窄化自 dsh-client-ui-slots，避免对槽位包强类型依赖）。 */
 interface SlotsFace {
@@ -92,11 +92,11 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
   if (zhipuRow === null && arkRows.length === 0) return null
 
   const renderRow = (row: { label: string; percent: number; level: 'normal' | 'warning' | 'danger'; resetAt?: number; title: string }, key: string): React.ReactNode => {
-    const resetText = formatResetCountdown(row.resetAt, now)
+    const resetText = formatWindowCountdown('5h', row.resetAt, now)
     return createElement('span', { className: 'dzq-row', key },
       createElement('span', { className: 'dzq-top' },
         createElement('span', { className: 'dzq-label', title: row.title }, row.label),
-        // 「还有多久重置」倒计时（辉哥定稿：放在渠道名后面），30 秒自动走字。
+        // 窗口倒计时（辉哥定稿：'5h-3:00' 紧凑格式），30 秒自动走字。
         resetText !== '' && createElement('span', { className: 'dzq-reset' }, resetText),
         createElement('span', { className: 'dzq-pct' }, Math.round(row.percent) + '%'),
       ),

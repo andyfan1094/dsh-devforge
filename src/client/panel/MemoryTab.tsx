@@ -258,6 +258,18 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
 
       {tab === 'library' && <div className={css['memoryStack']}>
         <section className={css['memoryPanel']}>
+          <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>用户身份卡</h3><p className={css['sectionHint']}>常驻注入每轮对话（不靠召回，必达）；插件给别人用时，每人填自己的身份与习惯。</p></div><span className={css['badge']} data-kind={profile?.enabled === true && (profile.alias !== '' || profile.identity !== '' || habitsText.trim() !== '') ? 'success' : 'pending'}>{profile?.enabled === false ? '已停用' : '常驻注入'}</span></div>
+          {profile === null ? <div className={css['empty']} data-loading="">正在读取身份卡…</div> : <div className={css['memoryForm']}>
+            <label className={css['toggleRow']}><input type="checkbox" checked={profile.enabled} onChange={(e) => setProfile({ ...profile, enabled: e.target.checked })}/><span><strong>常驻注入</strong><small>每轮对话自动附带身份卡，截断到 {profile.maxChars} 字。</small></span></label>
+            <label className={css['compactField']}><span className={css['fieldLabel']}>称呼</span><input className={css['input']} value={profile.alias} placeholder="如：辉哥" onChange={(e) => setProfile({ ...profile, alias: e.target.value })}/></label>
+            <label className={css['compactField']}><span className={css['fieldLabel']}>身份简介</span><input className={css['input']} value={profile.identity} placeholder="是谁、在做什么（一句话）" onChange={(e) => setProfile({ ...profile, identity: e.target.value })}/></label>
+            <label className={css['compactField']}><span className={css['fieldLabel']}>习惯与偏好（每行一条，最多 20 条）</span><textarea className={css['input']} rows={4} value={habitsText} placeholder={'如：项目文档一律使用中文' + '\n' + '界面排版紧凑信息密度优先'} onChange={(e) => setHabitsText(e.target.value)}/></label>
+            <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限（300-2000）</span><input className={css['input']} type="number" min={300} max={2000} step={100} value={profile.maxChars} onChange={(e) => setProfile({ ...profile, maxChars: Number(e.target.value) || 800 })}/></label>
+            <div className={css['formFooter']}><span className={css['sectionHint']}>保存在本地 store.db，保存即时生效。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveProfile() }}>保存身份卡</button></div>
+          </div>}
+        </section>
+
+        <section className={css['memoryPanel']}>
           <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>内置长期记忆（主存储）</h3><p className={css['sectionHint']}>点击行查看详情与标签过滤；工具栏支持即时搜索、分类筛选与手动新增。</p></div><span className={css['badge']}>{filtered.length} 条{tagFilteredIds !== undefined ? '（已过滤）' : ''}</span></div>
           <div className={css['toolbar']}>
             <input className={css['input']} value={filterQuery} placeholder="搜索内容或标签…" onChange={(e) => onFilterChange(e.target.value, filterCategory)} />
@@ -350,17 +362,6 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
                 </div>
               })}
             </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
-          </section>
-          <section className={css['memoryPanel']}>
-            <div className={css['panelHeading']}><div><h3 className={css['sectionTitle']}>用户身份卡</h3><p className={css['sectionHint']}>常驻注入每轮对话（不靠召回，必达）；插件给别人用时，每人填自己的身份与习惯。</p></div><span className={css['badge']} data-kind={profile?.enabled === true && (profile.alias !== '' || profile.identity !== '' || habitsText.trim() !== '') ? 'success' : 'pending'}>{profile?.enabled === false ? '已停用' : '常驻注入'}</span></div>
-            {profile === null ? <div className={css['empty']} data-loading="">正在读取身份卡…</div> : <div className={css['memoryForm']}>
-              <label className={css['toggleRow']}><input type="checkbox" checked={profile.enabled} onChange={(e) => setProfile({ ...profile, enabled: e.target.checked })}/><span><strong>常驻注入</strong><small>每轮对话自动附带身份卡，截断到 {profile.maxChars} 字。</small></span></label>
-              <label className={css['compactField']}><span className={css['fieldLabel']}>称呼</span><input className={css['input']} value={profile.alias} placeholder="如：辉哥" onChange={(e) => setProfile({ ...profile, alias: e.target.value })}/></label>
-              <label className={css['compactField']}><span className={css['fieldLabel']}>身份简介</span><input className={css['input']} value={profile.identity} placeholder="是谁、在做什么（一句话）" onChange={(e) => setProfile({ ...profile, identity: e.target.value })}/></label>
-              <label className={css['compactField']}><span className={css['fieldLabel']}>习惯与偏好（每行一条，最多 20 条）</span><textarea className={css['input']} rows={4} value={habitsText} placeholder={'如：项目文档一律使用中文' + '\n' + '界面排版紧凑信息密度优先'} onChange={(e) => setHabitsText(e.target.value)}/></label>
-              <label className={css['compactField']}><span className={css['fieldLabel']}>注入字数上限（300-2000）</span><input className={css['input']} type="number" min={300} max={2000} step={100} value={profile.maxChars} onChange={(e) => setProfile({ ...profile, maxChars: Number(e.target.value) || 800 })}/></label>
-              <div className={css['formFooter']}><span className={css['sectionHint']}>保存在本地 store.db，保存即时生效。</span><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void saveProfile() }}>保存身份卡</button></div>
-            </div>}
           </section>
         </div>
       </div>}

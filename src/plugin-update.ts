@@ -1,17 +1,20 @@
 /**
- * 插件更新能力（0.13.1）—— 已装插件 vs 官网版本清单的检查与一键升级。
+ * 插件更新能力（0.13.1 引入；0.35.0 官网登录墙改造）—— 已装插件 vs 官网版本清单的检查与一键升级。
  *
  * 需求（辉哥定）：多台电脑装天工造梦插件后没有统一更新入口，且更新应该链接
  * 自有官网（modagentai.com 插件发布站），而不是把 GitHub 当第一渠道。
  *
  * 设计边界：
- *   - 更新源登记表：包名 → 官网清单地址（downloads/index.json，含 sha256）为主，
- *     GitHub Latest Release 为兜底。只对登记过的包提供更新，apply 白名单校验，
- *     绝不能被用来装任意包。
+ *   - 更新源登记表：包名 → 官网清单地址（downloads/index.json，含 sha256）。
+ *     GitHub 兜底渠道已移除（0.35.0）：官网清单失败直接抛错，不再静默换渠道。
+ *   - 官网登录墙（0.35.0）：/downloads/*.tgz 下载需要登录；apply 时若配置了
+ *     官网账号（site），先 POST /api/auth/login 换 sid Cookie 再带 Cookie 下载；
+ *     未配置账号且下载 401/403 时给出面板配置引导。清单 downloads/index.json 保持公开。
  *   - check：读已装版本（复用 plugin-brief 的包读取器）→ 官网清单 latest 与已装比较。
- *   - apply：下载 tgz → sha256 与清单比对（清单提供时强制校验，防下载被篡改）→
+ *   - apply：登录（可选）→ 下载 tgz → sha256 与清单比对（清单提供时强制校验，防下载被篡改）→
  *     spawn `dsh plugin --profile <profile> add <tgz>`（与手工升级同一条受验证路径）→
  *     返回 needRestart=true；重启仍走既有 devforge_restart（用户确认红线不变）。
+ *   - 只对登记过的包提供更新，apply 白名单校验，绝不能被用来装任意包。
  */
 
 import { execFile } from 'node:child_process'
@@ -22,24 +25,48 @@ import { join } from 'node:path'
 import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
 import { createPackageReader, type PackageReader } from './plugin-brief.ts'
 
-/** 更新源登记：一个可更新的自研插件包（官网清单为主，GitHub 兜底）。 */
+/** 更新源登记：一个可更新的自研插件包（官网清单渠道）。 */
 export interface UpdateSource {
   /** npm 包名（profile 里的安装名）。 */
   packageName: string
   /** 官网版本清单地址（modagentai.com 的 downloads/index.json）。 */
   indexUrl?: string
-  /** GitHub 仓库（owner/repo），官网清单不可用时的兜底渠道。 */
+  /** （已废弃，0.35.0 起不再使用）历史 GitHub 兜底渠道字段，仅为旧配置兼容保留。 */
   repo?: string
 }
 
-/** 默认更新源：dsh-devforge 自己（官网清单为主，GitHub 兜底）。 */
+/** 默认更新源：dsh-devforge 自己（官网清单渠道）。 */
 export const PLUGIN_UPDATE_DEFAULT_SOURCES: UpdateSource[] = [
   {
     packageName: 'dsh-devforge',
     indexUrl: 'https://modagentai.com/downloads/index.json',
-    repo: 'andyfan1094/dsh-devforge',
   },
 ]
+
+/** 官网默认 API 根地址（site 配置缺省值）。 */
+export const PLUGIN_UPDATE_DEFAULT_SITE_API = 'https://modagentai.com'
+
+/** 官网站点凭据（登录墙用）。明文密码仅存本机 store.db settings（与既有凭据同级敏感度），接口对外一律脱敏。 */
+export interface PluginUpdateSiteConfig {
+  /** 官网 API 根地址（空串按缺省官网处理）。 */
+  apiUrl: string
+  /** 官网账号（管理员分配）。 */
+  username: string
+  /** 官网密码（明文本机存储；GET 接口只回 hasPassword + 掩码）。 */
+  password: string
+}
+
+/** 官网账号设置视图（密码脱敏：明文不出 Host，浏览器只见 hasPassword 与掩码）。 */
+export interface PluginUpdateSiteView {
+  /** 官网 API 根地址（面板固定展示）。 */
+  apiUrl: string
+  /** 已保存的官网账号。 */
+  username: string
+  /** 是否已配置密码。 */
+  hasPassword: boolean
+  /** 密码掩码展示（未配置时为空串）。 */
+  passwordMask: string
+}
 
 /** 插件更新配置。 */
 export interface PluginUpdateConfig {
@@ -49,6 +76,8 @@ export interface PluginUpdateConfig {
   profile: string
   /** 更新源登记表。 */
   sources: UpdateSource[]
+  /** 官网站点凭据（可选；配置后 apply 先登录换 Cookie 再下载）。 */
+  site?: PluginUpdateSiteConfig
 }
 
 /** 官网版本清单（downloads/index.json）的最小投影。 */
@@ -61,33 +90,23 @@ export interface SiteReleaseIndex {
   versions: Array<{ version: string; url: string; sha256?: string }>
 }
 
-/** GitHub Release 的最小投影。 */
-export interface LatestRelease {
-  /** 发布 tag（如 v0.13.0）。 */
-  tag: string
-  /** 资产列表里的第一个 .tgz 直链。 */
-  tgzUrl: string
-  /** tgz 文件名。 */
-  tgzName: string
-}
-
 /** 渠道归一后的「最新版」信息。 */
 export interface LatestInfo {
   /** 最新版本号（纯 semver）。 */
   version: string
   /** tgz 下载直链。 */
   tgzUrl: string
-  /** 来源渠道（官网清单 / GitHub 兜底）。 */
-  via: 'site' | 'github'
-  /** 清单提供的 sha256（仅官网渠道有）。 */
+  /** 来源渠道（官网清单；GitHub 兜底已移除）。 */
+  via: 'site'
+  /** 清单提供的 sha256。 */
   sha256?: string
 }
 
 /** 单个插件的检查结果。 */
 export interface UpdateCheckItem {
   packageName: string
-  /** 命中的渠道：官网清单 / GitHub 兜底。 */
-  via: 'site' | 'github' | 'none'
+  /** 命中的渠道：官网清单 / 未登记。 */
+  via: 'site' | 'none'
   installed: string
   latest: string
   assetUrl: string
@@ -102,8 +121,8 @@ export interface PluginUpdateApplyResult {
   packageName: string
   /** 升级到的版本（成功时有值）。 */
   version: string
-  /** 命中渠道。 */
-  via: 'site' | 'github'
+  /** 命中渠道（官网清单）。 */
+  via: 'site'
   /** dsh plugin add 的输出摘要（截断）。 */
   output: string
   /** 恒为 true：升级后必须重启 Host 才生效。 */
@@ -115,12 +134,6 @@ function isSemver(value: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(value)
 }
 
-/** 从 Release tag 剥出版本号；不合法返回空串。 */
-export function parseTagVersion(tag: string): string {
-  const value = tag.trim().replace(/^v/i, '')
-  return isSemver(value) ? value : ''
-}
-
 /** 比较 semver：a>b 返回 1，a<b 返回 -1，相等返回 0；非法段按 0 处理。 */
 export function compareSemver(a: string, b: string): number {
   const pa = a.split('.').map((n) => Number.parseInt(n, 10) || 0)
@@ -130,16 +143,6 @@ export function compareSemver(a: string, b: string): number {
     if ((pa[i] ?? 0) < (pb[i] ?? 0)) return -1
   }
   return 0
-}
-
-/** 从 GitHub Release 资产里挑 tgz 直链与文件名。 */
-export function pickTgzAsset(assets: ReadonlyArray<{ name?: unknown; browser_download_url?: unknown }>): { tgzUrl: string; tgzName: string } {
-  for (const asset of assets) {
-    if (typeof asset.name === 'string' && asset.name.endsWith('.tgz') && typeof asset.browser_download_url === 'string' && asset.browser_download_url.startsWith('https://')) {
-      return { tgzUrl: asset.browser_download_url, tgzName: asset.name }
-    }
-  }
-  return { tgzUrl: '', tgzName: '' }
 }
 
 /** 把官网清单规整成最新版信息；结构不合法返回 undefined。 */
@@ -159,20 +162,45 @@ export function parseSiteIndex(payload: unknown): SiteReleaseIndex | undefined {
   return { latest: record.latest, latestUrl: record.latestUrl, versions }
 }
 
-/** 带超时的 GitHub Latest Release 拉取（兜底渠道；测试可注入）。 */
-export async function fetchLatestRelease(repo: string, timeoutMs = 15000): Promise<LatestRelease | null> {
-  const response = await fetch('https://api.github.com/repos/' + repo + '/releases/latest', {
-    headers: upstreamRequestHeaders({ 'user-agent': 'dsh-devforge-plugin-update', accept: 'application/vnd.github+json' }),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
-  // 无任何 release 时 GitHub 返回 404：按「无新版」处理而不是报错。
-  if (response.status === 404) return null
-  if (!response.ok) throw new Error('GitHub API HTTP ' + String(response.status))
-  const payload = JSON.parse(await upstreamResponseText(response)) as { tag_name?: unknown; assets?: unknown }
-  if (typeof payload.tag_name !== 'string') throw new Error('GitHub 响应缺少 tag_name')
-  const assets = Array.isArray(payload.assets) ? payload.assets as Array<{ name?: unknown; browser_download_url?: unknown }> : []
-  const picked = pickTgzAsset(assets)
-  return { tag: payload.tag_name, tgzUrl: picked.tgzUrl, tgzName: picked.tgzName }
+/**
+ * 从 set-cookie 值列表里解析官网会话 Cookie（sid）。
+ * set-cookie 头可能是数组（Node fetch 的 getSetCookie()）或合并串，登录成功响应
+ * 形如 `sid=xxx; Path=/; HttpOnly`；取第一条 sid 条目的 `sid=xxx` 部分直接当 Cookie 头用。
+ */
+export function parseSidFromSetCookie(entries: readonly string[]): string {
+  for (const entry of entries) {
+    const pair = (entry.split(';')[0] ?? '').trim()
+    if (pair.startsWith('sid=') && pair.length > 'sid='.length) return pair
+  }
+  return ''
+}
+
+/**
+ * 官网登录：POST {apiUrl}/api/auth/login（body: username/password），
+ * 200 时从 set-cookie 解析 sid 会话 Cookie 返回（形如 `sid=xxx`）。
+ * 401 → 账号或密码错误；网络/超时 → 带原始信息的中文报错。fetch 可注入便于测试。
+ */
+export async function loginSite(site: PluginUpdateSiteConfig, options?: { fetchImpl?: typeof fetch; timeoutMs?: number }): Promise<string> {
+  const apiUrl = ((site.apiUrl ?? '').trim() !== '' ? site.apiUrl.trim() : PLUGIN_UPDATE_DEFAULT_SITE_API).replace(/\/+$/, '')
+  const doFetch = options?.fetchImpl ?? fetch
+  let response: Response
+  try {
+    response = await doFetch(apiUrl + '/api/auth/login', {
+      method: 'POST',
+      headers: upstreamRequestHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ username: site.username, password: site.password }),
+      signal: AbortSignal.timeout(options?.timeoutMs ?? 15000),
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error('官网登录请求失败（' + apiUrl + '）：' + detail)
+  }
+  if (response.status === 401) throw new Error('官网账号或密码错误')
+  if (!response.ok) throw new Error('官网登录失败：HTTP ' + String(response.status))
+  const setCookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : []
+  const sid = parseSidFromSetCookie(setCookies)
+  if (sid === '') throw new Error('官网登录成功但响应未携带会话 Cookie（sid），无法建立下载会话')
+  return sid
 }
 
 /** 带超时的官网清单拉取（主渠道；测试可注入）。 */
@@ -187,7 +215,7 @@ export async function fetchSiteIndex(indexUrl: string, timeoutMs = 15000): Promi
   return parsed
 }
 
-/** 按 URL 选渠道解析最新版：官网清单优先，GitHub 兜底。 */
+/** 按 URL 解析最新版：仅官网清单渠道（GitHub 兜底已移除；清单失败直接抛错，不再静默换渠道）。 */
 export async function resolveLatest(source: UpdateSource): Promise<LatestInfo> {
   if (source.indexUrl) {
     const index = await fetchSiteIndex(source.indexUrl)
@@ -195,14 +223,7 @@ export async function resolveLatest(source: UpdateSource): Promise<LatestInfo> {
     const matched = index.versions.find((entry) => entry.version === index.latest)
     return { version: index.latest, tgzUrl: matched?.url ?? index.latestUrl, via: 'site', sha256: matched?.sha256 }
   }
-  if (source.repo) {
-    const release = await fetchLatestRelease(source.repo)
-    if (release === null) throw new Error('GitHub 仓库尚无任何 Release')
-    const version = parseTagVersion(release.tag)
-    if (version === '' || release.tgzUrl === '') throw new Error('GitHub Release 缺少可用的 tgz 资产：' + release.tag)
-    return { version, tgzUrl: release.tgzUrl, via: 'github' }
-  }
-  throw new Error('更新源既没有官网清单也没有 GitHub 仓库')
+  throw new Error('更新源未登记官网清单地址（GitHub 兜底渠道已移除）')
 }
 
 /** sha256 十六进制摘要（完整性校验用）。 */
@@ -210,12 +231,12 @@ export function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex')
 }
 
-/** 下载 tgz 到临时目录；提供期望 sha256 时强制完整性校验。 */
-export async function downloadTgz(url: string, packageName: string, version: string, options?: { timeoutMs?: number; maxBytes?: number; expectedSha256?: string }): Promise<string> {
+/** 下载 tgz 到临时目录；提供期望 sha256 时强制完整性校验；headers 透传（官网登录墙带 Cookie）。 */
+export async function downloadTgz(url: string, packageName: string, version: string, options?: { timeoutMs?: number; maxBytes?: number; expectedSha256?: string; headers?: Record<string, string> }): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? 60000
   const maxBytes = options?.maxBytes ?? 25 * 1024 * 1024
   if (!url.startsWith('https://')) throw new Error('非 https 下载地址，拒绝下载')
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  const response = await fetch(url, { headers: options?.headers, signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok) throw new Error('下载失败 HTTP ' + String(response.status))
   const buffer = Buffer.from(await response.arrayBuffer())
   if (buffer.byteLength === 0) throw new Error('下载内容为空')
@@ -323,13 +344,15 @@ export interface PluginUpdateServiceDeps {
   resolveLatestFn?: typeof resolveLatest
   download?: typeof downloadTgz
   runAdd?: typeof runPluginAdd
+  /** 官网登录（site 配置存在且 apply 走官网渠道时使用；测试可注入）。 */
+  loginSite?: typeof loginSite
 }
 
 /** 单插件检查（纯编排，便于单测）。 */
 export async function checkOne(source: UpdateSource, installedVersion: string, resolveLatestFn: typeof resolveLatest): Promise<UpdateCheckItem> {
-  const via: UpdateCheckItem['via'] = source.indexUrl ? 'site' : source.repo ? 'github' : 'none'
+  const via: UpdateCheckItem['via'] = source.indexUrl ? 'site' : 'none'
   const base: UpdateCheckItem = { packageName: source.packageName, via, installed: installedVersion, latest: '', assetUrl: '', status: 'error', reason: '' }
-  if (via === 'none') return { ...base, reason: '更新源未登记清单地址或仓库' }
+  if (via === 'none') return { ...base, reason: '更新源未登记官网清单地址' }
   let latest: LatestInfo
   try {
     latest = await resolveLatestFn(source)
@@ -359,6 +382,7 @@ export class PluginUpdateService {
       enabled: config.enabled,
       profile: config.profile,
       sources: config.sources.length > 0 ? config.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
+      site: config.site,
     }
   }
 
@@ -375,7 +399,11 @@ export class PluginUpdateService {
     return { enabled: true, items }
   }
 
-  /** 一键升级：白名单校验 → 渠道解析最新 → 下载（官网带 sha256 校验）→ dsh plugin add。 */
+  /**
+   * 一键升级：白名单校验 → 官网清单解析最新 → （配置了官网账号时先登录换 Cookie）
+   * → 下载（清单 sha256 强制校验）→ dsh plugin add。
+   * 官网下载已启用登录制：未配置账号且下载 401/403 时，抛出面板配置引导。
+   */
   async apply(packageName: string): Promise<PluginUpdateApplyResult> {
     const config = this.resolveConfig()
     if (!config.enabled) throw new Error('插件更新能力已关闭')
@@ -385,7 +413,24 @@ export class PluginUpdateService {
     const resolveLatestFn = this.deps.resolveLatestFn ?? resolveLatest
     const latest = await resolveLatestFn(source)
     const download = this.deps.download ?? downloadTgz
-    const tgzPath = await download(latest.tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256 })
+    // 官网登录墙：site 凭据配置齐全时先登录换 sid；Cookie 只进 Host 内存，不落日志。
+    let downloadHeaders: Record<string, string> | undefined
+    if (latest.via === 'site' && config.site !== undefined && config.site.username.trim() !== '' && config.site.password !== '') {
+      const login = this.deps.loginSite ?? loginSite
+      const sid = await login(config.site)
+      downloadHeaders = { cookie: sid }
+    }
+    let tgzPath: string
+    try {
+      tgzPath = await download(latest.tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256, headers: downloadHeaders })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // 未配置官网账号时，401/403 是登录墙拦截而非故障：转译成面板配置引导。
+      if (downloadHeaders === undefined && /HTTP 40[13](\D|$)/.test(message)) {
+        throw new Error('官网下载已启用登录制：请到 天工造梦 → 插件更新 页签配置官网账号（原始错误：' + message + '）')
+      }
+      throw error
+    }
     const runAdd = this.deps.runAdd ?? runPluginAdd
     const output = await runAdd(config.profile, tgzPath)
     return { ok: true, packageName: source.packageName, version: latest.version, via: latest.via, output, needRestart: true }

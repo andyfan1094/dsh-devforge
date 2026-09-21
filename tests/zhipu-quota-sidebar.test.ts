@@ -1,7 +1,7 @@
 /** 「智谱 5 小时」侧栏卡片数据规整纯函数单测（自 dsh-zhipu-quota 0.3.0 移植）。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractZhipuRows, formatResetCountdown, normalizeReset, percentLevel } from '../src/client/zhipu-quota-core.ts'
+import { extractZhipuRows, formatWindowCountdown, normalizeReset, percentLevel } from '../src/client/zhipu-quota-core.ts'
 
 /** 造一条已配置渠道的用量（默认带 5h 窗口）。 */
 function okUsage(label: string, primary: boolean, limits: Array<Record<string, unknown>>) {
@@ -63,12 +63,16 @@ test('行数据带规整后的 resetAt（毫秒），供倒计时渲染', () => 
   assert.equal(unknown[0]?.resetAt, undefined)
 })
 
-test('倒计时文案：分钟/小时分/天/即将重置/未知', () => {
+test('倒计时文案：紧凑窗口格式（辉哥定稿 5h-H:MM），分钟/小时分/天/即将重置/未知', () => {
   const now = 1_000_000_000_000
-  assert.equal(formatResetCountdown(now + 30 * 60_000, now), '30 分钟后重置')
-  assert.equal(formatResetCountdown(now + 2 * 3_600_000, now), '2 小时后重置')
-  assert.equal(formatResetCountdown(now + 2 * 3_600_000 + 15 * 60_000, now), '2 小时 15 分后重置')
-  assert.equal(formatResetCountdown(now + 3 * 86_400_000, now), '3 天后重置')
-  assert.equal(formatResetCountdown(now - 1, now), '即将重置')
-  assert.equal(formatResetCountdown(undefined, now), '')
+  assert.equal(formatWindowCountdown('5h', now + 30 * 60_000, now), '5h-0:30')
+  assert.equal(formatWindowCountdown('5h', now + 5 * 60_000, now), '5h-0:05')
+  assert.equal(formatWindowCountdown('5h', now + 2 * 3_600_000, now), '5h-2:00')
+  assert.equal(formatWindowCountdown('5h', now + 2 * 3_600_000 + 15 * 60_000, now), '5h-2:15')
+  assert.equal(formatWindowCountdown('5h', now + 3 * 86_400_000, now), '5h-72:00')
+  assert.equal(formatWindowCountdown('weekly', now + 6 * 86_400_000 + 3 * 3_600_000, now), '周-6d3h')
+  assert.equal(formatWindowCountdown('monthly', now + 28 * 86_400_000 + 20 * 3_600_000, now), '月-28d20h')
+  assert.equal(formatWindowCountdown('weekly', now + 45 * 60_000, now), '周-45m')
+  assert.equal(formatWindowCountdown('5h', now - 1, now), '即将重置')
+  assert.equal(formatWindowCountdown('5h', undefined, now), '')
 })

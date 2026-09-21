@@ -105,7 +105,7 @@ import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SAND
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
 import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
-import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES } from './plugin-update.ts'
+import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, type PluginUpdateSiteConfig, type PluginUpdateSiteView } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 
 /** cordis 插件名（稳定 id）。 */
@@ -566,7 +566,44 @@ export function apply(ctx: Context, config?: Config): void {
     })()
   }
 
-  /** 插件更新服务：check 面板数据源 + apply 一键升级（重启仍走 devforge_restart 确认红线）。 */
+  /**
+   * 官网账号设置（settings 域 plugin-update.settings 内嵌 site 子对象）。
+   * 明文密码仅存本机 store.db（与既有凭据同级敏感度，随 CNB 加密备份）；对外接口一律脱敏视图。
+   */
+  const pluginUpdateSiteRead = (): PluginUpdateSiteConfig => {
+    try {
+      const stored = getSettings<{ site?: Partial<PluginUpdateSiteConfig> }>(getDb(), 'plugin-update.settings')
+      const site = stored?.site
+      return {
+        apiUrl: typeof site?.apiUrl === 'string' && site.apiUrl.trim() !== '' ? site.apiUrl : PLUGIN_UPDATE_DEFAULT_SITE_API,
+        username: typeof site?.username === 'string' ? site.username : '',
+        password: typeof site?.password === 'string' ? site.password : '',
+      }
+    } catch { return { apiUrl: PLUGIN_UPDATE_DEFAULT_SITE_API, username: '', password: '' } }
+  }
+  const pluginUpdateSiteWrite = (site: PluginUpdateSiteConfig): void => {
+    putSettings(getDb(), 'plugin-update.settings', { site })
+  }
+  /** 官网账号设置读取（脱敏视图：明文密码不出 Host，浏览器只见 hasPassword + 掩码）。 */
+  const pluginUpdateSiteGet = (): PluginUpdateSiteView => {
+    const site = pluginUpdateSiteRead()
+    return {
+      apiUrl: PLUGIN_UPDATE_DEFAULT_SITE_API,
+      username: site.username,
+      hasPassword: site.password !== '',
+      passwordMask: site.password === '' ? '' : '••••••••',
+    }
+  }
+  /** 官网账号设置写入（password 空串 = 不修改已存密码；apiUrl 固定官网，不接受外部改写）。 */
+  const pluginUpdateSitePut = (patch: { username?: unknown; password?: unknown }): PluginUpdateSiteView => {
+    const current = pluginUpdateSiteRead()
+    const username = typeof patch.username === 'string' ? patch.username.trim() : current.username
+    const password = typeof patch.password === 'string' && patch.password !== '' ? patch.password : current.password
+    pluginUpdateSiteWrite({ apiUrl: PLUGIN_UPDATE_DEFAULT_SITE_API, username, password })
+    return pluginUpdateSiteGet()
+  }
+
+  /** 插件更新服务：check 面板数据源 + apply 一键升级（site 凭据来自 settings 域；重启仍走 devforge_restart 确认红线）。 */
   const pluginUpdateService = new PluginUpdateService({
     getConfig: () => {
       const value = resolve().pluginUpdate
@@ -574,6 +611,7 @@ export function apply(ctx: Context, config?: Config): void {
         enabled: value?.enabled ?? true,
         profile: value?.profile ?? 'web',
         sources: value?.sources?.length ? value.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
+        site: pluginUpdateSiteRead(),
       }
     },
     readInstalled: createDefaultInstalledReader(),

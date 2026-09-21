@@ -19,20 +19,32 @@ export function percentLevel(percent: number): 'normal' | 'warning' | 'danger' {
   return percent >= 95 ? 'danger' : percent >= 80 ? 'warning' : 'normal'
 }
 
-/** 把毫秒级剩余时间规整成简短倒计时文案；无法计算返回空串（UI 不渲染该段）。
- * 文案风格：<60 分钟「X 分钟后重置」；<48 小时「X 小时 Y 分后重置」；更长「X 天后重置」。 */
-export function formatResetCountdown(resetAt: number | undefined, now: number): string {
+/** 窗口倒计时（辉哥 2026-09-21 定稿）：'5h-3:00' / '周-1d3h' / '月-28d20h'；已过期「即将重置」；无法计算空串。
+ * - 5h 短窗口用 H:MM 钟表式；周/月长窗口用 DdHh（分钟舍弃）；
+ * - level 归一化值（5h/session/weekly/monthly）与智谱 kind（tokens-5h/tokens-week/tools-month）都认。 */
+export function formatWindowCountdown(level: string | undefined, resetAt: number | undefined, now: number): string {
   const remaining = typeof resetAt === 'number' && Number.isFinite(resetAt) ? resetAt - now : NaN
   if (!Number.isFinite(remaining)) return ''
   if (remaining <= 0) return '即将重置'
-  const minutes = Math.ceil(remaining / 60_000)
-  if (minutes < 60) return minutes + ' 分钟后重置'
-  const hours = Math.floor(minutes / 60)
-  if (hours < 48) {
-    const mins = minutes % 60
-    return mins === 0 ? hours + ' 小时后重置' : hours + ' 小时 ' + mins + ' 分后重置'
+  const prefix = level === undefined ? '' : levelPrefix(level)
+  const totalMinutes = Math.max(1, Math.ceil(remaining / 60_000))
+  if (prefix === '5h') {
+    const hours = Math.floor(totalMinutes / 60)
+    return '5h-' + hours + ':' + String(totalMinutes % 60).padStart(2, '0')
   }
-  return Math.floor(hours / 24) + ' 天后重置'
+  const totalHours = Math.floor(totalMinutes / 60)
+  if (totalHours < 1) return prefix + '-' + totalMinutes + 'm'
+  if (totalHours < 24) return prefix + '-' + totalHours + 'h'
+  return prefix + '-' + Math.floor(totalHours / 24) + 'd' + (totalHours % 24) + 'h'
+}
+
+/** 窗口前缀：短窗口 '5h'、周 '周'、月 '月'；认不出的无前缀（仅时长）。 */
+function levelPrefix(level: string): string {
+  const value = level.toLowerCase()
+  if (value === '5h' || value === 'session' || value === 'interval' || value === 'tokens-5h' || value === 'short-window') return '5h'
+  if (value === 'weekly' || value === 'week' || value === 'tokens-week') return '周'
+  if (value === 'monthly' || value === 'month' || value === 'tools-month') return '月'
+  return value
 }
 
 /** 卡片一行的展示模型。 */
@@ -100,11 +112,15 @@ export interface ArkQuotaRow {
   title: string
 }
 
+/** 上层窗口阻断阈值：周/月用量达到该百分比即视为满，5 小时窗口实际不可用（浮点容差）。 */
+const WINDOW_BLOCKED_PERCENT = 99.5
+
 /**
  * 从方舟用量 dashboard（/api/dsh-devforge/ark/dashboard 载荷的 dashboard 字段）提取
  * 各套餐的 5 小时窗口行，与智谱主 Key 行同一「盯紧短窗口」视角（辉哥 2026-09-21 定稿）。
  * - 只保留 subscribed === true 且存在 5h 窗口的套餐；AK/SK 未配置时 Host 返回空 plans，自然产出空行；
  * - 5 小时窗口 level 已由 Host 归一化（0.34.8），这里按字面量 '5h' 匹配；
+ * - 周或月额度满（≥99.5%）时上层约束已阻断用量，5h 行强制显示 100%（danger）并在 label/title 注明（辉哥定稿）；
  * - usedPercent 缺失时按 used/total 换算并 clamp 到 [0, 100]。
  */
 export function extractArkRows(dashboard: unknown): ArkQuotaRow[] {
@@ -118,22 +134,39 @@ export function extractArkRows(dashboard: unknown): ArkQuotaRow[] {
     if (entry.subscribed !== true || !Array.isArray(entry.periods)) continue
     const label = entry.product === 'agent-plan' ? '方舟 Agent' : entry.product === 'coding-plan' ? '方舟 Coding' : null
     if (label === null) continue
+    // 闭包内 TS 窄化失效（unknown 收窄不进闭包），先落到显式数组类型。
+    const periods: unknown[] = entry.periods
+    const windowPercent = (level: string): number | undefined => {
+      const row = periods.find((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && (item as { level?: unknown }).level === level)
+      if (row === undefined) return undefined
+      const used = finiteNumber(row.used)
+      const total = finiteNumber(row.total)
+      const raw = finiteNumber(row.usedPercent) ?? (used !== undefined && total !== undefined && total > 0 ? used / total * 100 : undefined)
+      return raw === undefined ? undefined : Math.max(0, Math.min(100, raw))
+    }
     const period = entry.periods.find((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && (item as { level?: unknown }).level === '5h')
     if (period === undefined) continue
     const used = finiteNumber(period.used)
     const total = finiteNumber(period.total)
     const rawPercent = finiteNumber(period.usedPercent) ?? (used !== undefined && total !== undefined && total > 0 ? used / total * 100 : 0)
-    const percent = Math.max(0, Math.min(100, rawPercent))
+    // 周或月额度满 ⇒ 上层约束阻断，5 小时窗口实际不可用：显示拉满并注明原因。
+    const weeklyBlocked = (windowPercent('weekly') ?? 0) >= WINDOW_BLOCKED_PERCENT
+    const monthlyBlocked = (windowPercent('monthly') ?? 0) >= WINDOW_BLOCKED_PERCENT
+    const blocked = weeklyBlocked || monthlyBlocked
+    const percent = blocked ? 100 : Math.max(0, Math.min(100, rawPercent))
+    const blockedNote = blocked
+      ? '（' + (weeklyBlocked && monthlyBlocked ? '周/月额度已满' : weeklyBlocked ? '周额度已满' : '月额度已满') + '，5 小时窗口不可用）'
+      : ''
     const resetAt = normalizeReset(period.resetAt)
     rows.push({
       key: String(entry.product),
-      label,
+      label: blocked ? label + ' · 已阻断' : label,
       percent: Math.round(percent * 10) / 10,
       level: percentLevel(percent),
       resetAt,
       title: resetAt === undefined
-        ? label + ' · 5 小时额度 · 重置时间未知'
-        : label + ' · 5 小时额度 · ' + new Date(resetAt).toLocaleString('zh-CN') + ' 重置',
+        ? label + ' · 5 小时额度 · 重置时间未知' + (blockedNote === '' ? '' : ' ' + blockedNote)
+        : label + ' · 5 小时额度 · ' + new Date(resetAt).toLocaleString('zh-CN') + ' 重置' + (blockedNote === '' ? '' : ' ' + blockedNote),
     })
   }
   return rows

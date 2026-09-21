@@ -13,11 +13,14 @@ const MS_MIN = 60_000
 const MS_HOUR = 60 * MS_MIN
 const MS_DAY = 24 * MS_HOUR
 
-test('方舟重置：基本分钟/小时/天文本', () => {
-  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 30 * MS_MIN }, NOW).text, '30 分钟后重置')
-  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 2 * MS_HOUR + 15 * MS_MIN }, NOW).text, '2 小时 15 分钟后重置')
-  assert.equal(resolveArkReset({ level: 'weekly', resetAt: NOW + 6 * MS_DAY + 3 * MS_HOUR }, NOW).text, '6 天 3 小时后重置')
-  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 41 * MS_MIN }, NOW).text, '41 分钟后重置')
+test('方舟重置：紧凑文本 5h-0:30 / 5h-2:15 / 周-6d3h（辉哥定稿格式）', () => {
+  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 30 * MS_MIN }, NOW).text, '5h-0:30')
+  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 2 * MS_HOUR + 15 * MS_MIN }, NOW).text, '5h-2:15')
+  assert.equal(resolveArkReset({ level: 'weekly', resetAt: NOW + 6 * MS_DAY + 3 * MS_HOUR }, NOW).text, '周-6d3h')
+  assert.equal(resolveArkReset({ level: '5h', resetAt: NOW + 41 * MS_MIN }, NOW).text, '5h-0:41')
+  assert.equal(resolveArkReset({ level: 'monthly', resetAt: NOW + 28 * MS_DAY + 20 * MS_HOUR }, NOW).text, '月-28d20h')
+  assert.equal(resolveArkReset({ level: 'weekly', resetAt: NOW + 5 * MS_HOUR }, NOW).text, '周-5h')
+  assert.equal(resolveArkReset({ level: 'weekly', resetAt: NOW + 45 * MS_MIN }, NOW).text, '周-45m')
 })
 
 test('方舟重置：缺失 resetAt 返回未知视图', () => {
@@ -48,12 +51,12 @@ test('方舟重置：周窗口临界 6h 与 24h', () => {
 
 test('智谱重置：兼容 ISO 字符串、秒级与毫秒级数字', () => {
   const iso = resolveZhipuReset(new Date(NOW + 30 * MS_MIN).toISOString(), NOW, 'tokens-5h')
-  assert.equal(iso.text, '30 分钟后重置')
+  assert.equal(iso.text, '5h-0:30')
   assert.equal(iso.urgency, 'danger')
   const seconds = resolveZhipuReset(Math.floor((NOW + 30 * MS_MIN) / 1000), NOW, 'tokens-5h')
-  assert.equal(seconds.text, '30 分钟后重置')
+  assert.equal(seconds.text, '5h-0:30')
   const millis = resolveZhipuReset(NOW + 30 * MS_MIN, NOW, 'tokens-5h')
-  assert.equal(millis.text, '30 分钟后重置')
+  assert.equal(millis.text, '5h-0:30')
 })
 
 test('智谱重置：非法字符串返回未知视图', () => {
@@ -81,10 +84,10 @@ test('通用重置：按 level 字段推断窗口级别', () => {
   assert.equal(resolveGenericReset(NOW + 30 * MS_MIN, NOW, 'monthly').urgency, 'danger')
 })
 
-test('Overview 重置：单一粒度文案', () => {
-  assert.equal(resolveOverviewReset(NOW + 30 * MS_MIN, NOW, 'short-window').text, '30 分钟后重置')
-  assert.equal(resolveOverviewReset(NOW + 5 * MS_HOUR, NOW, 'weekly').text, '5 小时后重置')
-  assert.equal(resolveOverviewReset(NOW + 3 * MS_DAY, NOW, 'monthly').text, '3 天后重置')
+test('Overview 重置：紧凑窗口文案', () => {
+  assert.equal(resolveOverviewReset(NOW + 30 * MS_MIN, NOW, 'short-window').text, '5h-0:30')
+  assert.equal(resolveOverviewReset(NOW + 5 * MS_HOUR, NOW, 'weekly').text, '周-5h')
+  assert.equal(resolveOverviewReset(NOW + 3 * MS_DAY, NOW, 'monthly').text, '月-3d0h')
 })
 
 test('Overview 重置：保留 Overview 原剩余 <= 0 直接即将重置语义', () => {

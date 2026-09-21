@@ -164,6 +164,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
         {skin !== undefined && <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>}
         <span className={css['toolbarSpacer']} />
+        <a className={css['promoLink']} href="https://modagentai.com" target="_blank" rel="noopener noreferrer" title="打开天工造梦官网 modagentai.com（新标签）">进入官网</a>
         <a className={css['promoLink']} href="https://www.rainyun.com/MzkwMTQ0_" target="_blank" rel="noopener noreferrer sponsored" title="雨云服务器购买 · 点击直达（新标签打开）">⚡ 雨云服务器购买</a>
       </div>
 
