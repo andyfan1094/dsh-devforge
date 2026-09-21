@@ -112,11 +112,18 @@ test('内置记忆：检索全量扫描活跃条目，不再受最新 200 条窗
   assert.equal(hits[0]?.id, 'precise', '窗口外的旧精确条目必须可检索')
 })
 
-test('内置记忆：有界新近度让新事实在同分时排前（7 天内加分）', () => {
+test('内置记忆：有界新近度让新事实在同分时排前（7 天内加分）', (t) => {
+  // 同词元覆盖、同重要度：唯一分差必须来自 recencyBoost（7 天内 +0.1，31 天外 +0）。
+  // 此前两条同毫秒创建、updatedAt 相等，boost 相同，名次全靠同毫秒存储序碰运气（flaky）；
+  // 现在用 mock 时钟给旧事实真实的 31 天年龄，让"7 天内加分"的档位语义被真实测到。
+  const realNow = Date.now()
+  t.mock.timers.enable({ apis: ['Date'] })
+  t.mock.timers.setTime(realNow - 31 * 86_400_000)
   const store = makeStore()
-  // 同词元覆盖、同重要度：更新时间新者优先（recencyBoost 对齐排序 tie-break 之外的显式加分）。
   store.create({ content: '记忆中枢检索会先做分词再匹配', importance: 3 }, 'old-1')
+  t.mock.timers.setTime(realNow)
   store.create({ content: '记忆中枢检索会先做分词再匹配并注入', importance: 3 }, 'new-1')
   const hits = store.search('记忆中枢检索分词')
-  assert.equal(hits[0]?.id, 'new-1', '同分时新条目靠前')
+  assert.equal(hits[0]?.id, 'new-1', '7 天内新事实凭 recencyBoost 排前')
+  assert.equal(hits[1]?.id, 'old-1', '旧事实仍可召回，只是排后')
 })

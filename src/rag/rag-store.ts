@@ -96,7 +96,7 @@ export class RagStore {
   // ── 切块 ──
 
   listChunks(docId: string): RagChunkRecord[] {
-    const rows = this.db.prepare("SELECT data FROM docs WHERE domain = 'rag.chunk' AND json_extract(data, '$.docId') = ? ORDER BY sort_order").all(docId) as Array<{ data: string }>
+    const rows = this.db.prepare("SELECT data FROM docs WHERE domain = 'rag.chunk' AND json_extract(data, '$.docId') = ? ORDER BY sort_order, rowid").all(docId) as Array<{ data: string }>
     return rows.map(row => JSON.parse(row.data) as RagChunkRecord)
   }
 
@@ -151,7 +151,10 @@ export class RagStore {
 
   /** 列出某域全部条目（id + 解析后 data，一次查询取回）。 */
   listDomainDocs(domain: string): Array<{ id: string; data: unknown }> {
-    const rows = this.db.prepare('SELECT id, data FROM docs WHERE domain = ? ORDER BY sort_order').all(domain) as Array<{ id: string; data: string }>
+    // sort_order 取毫秒时间戳（upsertDoc），同毫秒写入的行排序值全等；
+    // 不加 rowid 次级键时返回序随 SQLite 内部布局漂移，上层按"更新时间序渲染、
+    // 装不下即停"的消费者（如记忆项目档案卡）在全量高负载下会随机翻车。
+    const rows = this.db.prepare('SELECT id, data FROM docs WHERE domain = ? ORDER BY sort_order, rowid').all(domain) as Array<{ id: string; data: string }>
     return rows.map((row) => {
       try { return { id: row.id, data: JSON.parse(row.data) as unknown } }
       catch { return { id: row.id, data: null } }
@@ -182,7 +185,7 @@ export class RagStore {
   // ── 内部 ──
 
   private listDomain(domain: string): unknown[] {
-    const rows = this.db.prepare('SELECT data FROM docs WHERE domain = ? ORDER BY sort_order').all(domain) as Array<{ data: string }>
+    const rows = this.db.prepare('SELECT data FROM docs WHERE domain = ? ORDER BY sort_order, rowid').all(domain) as Array<{ data: string }>
     return rows.map(row => JSON.parse(row.data))
   }
 
