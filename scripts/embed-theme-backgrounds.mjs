@@ -22,8 +22,8 @@ const ASSETS = [
   ['devforge-wisteria', 'devforge-wisteria.jpg'],
   ['devforge-crystal-violet', 'devforge-crystal-violet.jpg'],
   ['devforge-china-red', 'devforge-china-red.jpg'],
-  ['devforge-jinx', 'devforge-jinx.jpg'],
-  ['devforge-jinx-day', 'devforge-jinx-day.jpg'],
+  // 金克斯立绘：透明 PNG 免抠人物，深浅两个变体共用同一张（底色由各自主题提供）。
+  ['devforge-jinx', 'devforge-jinx.png'],
 ]
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -33,7 +33,8 @@ const output = join(root, 'src/client/theme/backgrounds.ts')
 /** 读取并编码单张主题背景，缺失资源直接失败，避免生成半套主题。 */
 async function encodeAsset(fileName) {
   const bytes = await readFile(join(assetDir, fileName))
-  return 'data:image/jpeg;base64,' + bytes.toString('base64')
+  const mime = fileName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+  return 'data:' + mime + ';base64,' + bytes.toString('base64')
 }
 
 const entries = []

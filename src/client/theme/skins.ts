@@ -559,10 +559,10 @@ export const SKINS: readonly SkinDefinition[] = [
     },
   },
   {
-    // 金克斯之夜（辉哥 2026-09-21 定稿）：官方原皮打底 + 双城之战风格立绘贴右。
+    // 金克斯之夜（辉哥 2026-09-21 定稿）：官方原皮打底 + 金克斯透明立绘贴右。
     // tokens 全部取官方深色主题原值（直接引用官方 static 阶梯变量），观感与官方原皮一致；
-    // 立绘（AI 生成，粉蓝霓虹 + 鲨鱼炮）高撑满、贴右侧，人物落在主内容区右侧留白带，
-    // 左半近黑负空间自然融入深色底，内容卡片有实色背景不受干扰。
+    // 立绘（gpt-image-2 生成，透明 PNG 免抠，原画风双长辫+鲨鱼炮）高撑满、贴右侧，
+    // 与之日变体共用同一张透明立绘（辉哥定稿：不要背景只要人物），底色由各自主题提供。
     id: 'devforge-jinx',
     labelKey: 'skin.jinx',
     backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
@@ -602,11 +602,11 @@ export const SKINS: readonly SkinDefinition[] = [
   },
   {
     // 金克斯之日（辉哥 2026-09-21 定稿）：金克斯之夜的浅色变体，深浅适配成对。
-    // tokens 全部取官方浅色主题原值（官方原皮浅色观感）；立绘同一人物改亮调日光感，
-    // 左半近白负空间融入浅色底；深浅切换时由运行时按 pairId 自动落到对应变体。
+    // tokens 全部取官方浅色主题原值（官方原皮浅色观感）；与之夜共用同一张透明立绘，
+    // 人物在浅色底上同样干净；深浅切换时由运行时按 pairId 自动落到对应变体。
     id: 'devforge-jinx-day',
     labelKey: 'skin.jinxDay',
-    backgroundImage: THEME_BACKGROUNDS['devforge-jinx-day'],
+    backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
     backgroundPosition: 'right center',
     backgroundSize: 'auto 100%',
     pairId: 'devforge-jinx',

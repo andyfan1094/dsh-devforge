@@ -106,14 +106,23 @@ test('SKINS 恰好 16 套，覆盖现有浅色与深色主题，且 id 唯一', 
   assert.equal(darkCount, 8, '深色主题应保持 8 套')
 })
 
-test('SKINS 每套都绑定唯一的内嵌高质量背景图', () => {
-  const backgrounds = new Set<string>()
+test('SKINS 每套都绑定内嵌高质量背景图（成对变体共用透明立绘）', () => {
+  const backgrounds = new Map<string, string[]>()
   for (const s of SKINS) {
-    assert.match(s.backgroundImage, /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/, s.id + ' 背景必须是 JPEG data URL')
+    assert.match(s.backgroundImage, /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/, s.id + ' 背景必须是 JPEG/PNG data URL')
     assert.ok(s.backgroundImage.length > 50_000, s.id + ' 背景 data URL 体积异常，可能只剩占位符')
-    backgrounds.add(s.backgroundImage)
+    const owners = backgrounds.get(s.backgroundImage) ?? []
+    owners.push(s.id)
+    backgrounds.set(s.backgroundImage, owners)
   }
-  assert.equal(backgrounds.size, SKINS.length, '每套主题必须使用不同背景图')
+  // 深浅成对变体（金克斯之夜/之日）共用同一张透明立绘，其余主题背景必须互不相同。
+  for (const [, owners] of backgrounds) {
+    if (owners.length === 1) continue
+    const pair = owners.map((id) => findSkin(id))
+    assert.ok(pair.every((s) => s?.pairId !== undefined), '共用背景只允许发生在成对变体之间：' + owners.join('/'))
+    assert.equal(pair[0]!.pairId, pair[1]!.id, '共用背景的必须是互相成对的变体')
+    assert.equal(pair[1]!.pairId, pair[0]!.id, '共用背景的必须是互相成对的变体')
+  }
 })
 
 test('SKINS 的 labelKey 全部命中 zh/en 双语字典', () => {
@@ -186,8 +195,9 @@ test('金克斯深浅成对：之夜/之日互为变体，深浅切换自动落�
   assert.equal(day!.colorScheme, 'light')
   assert.equal(night!.pairId, 'devforge-jinx-day', '之夜的成对变体应是之日')
   assert.equal(day!.pairId, 'devforge-jinx', '之日的成对变体应是之夜')
-  // 两变体立绘不同（深色底 vs 浅色底），但定位策略一致（贴右、高撑满）
-  assert.notEqual(night!.backgroundImage, day!.backgroundImage)
+  // 两变体共用同一张透明立绘（辉哥定稿：不要背景只要人物），定位策略一致（贴右、高撑满）
+  assert.equal(night!.backgroundImage, day!.backgroundImage)
+  assert.match(night!.backgroundImage, /^data:image\/png;base64,/, '金克斯立绘必须是透明 PNG')
   assert.equal(day!.backgroundPosition, 'right center')
   assert.equal(day!.backgroundSize, 'auto 100%')
   // 之日也是官方原皮浅色打底：全部引用官方 static 阶梯或官方边框/交互黑蓝
