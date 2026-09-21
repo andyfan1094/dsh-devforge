@@ -331,3 +331,84 @@ test('通知：关闭时不发送且清除旧模型，重新打开后不能冒�
   assert.equal(sent.length, 1)
   assert.equal(sent[0].card.header.title.content, '【DSH 处理完成】')
 })
+
+test('通知：请求剥离 Harness 注入的系统上下文，只保留用户真实输入', async () => {
+  const sent = []
+  const notifier = makeNotifier(sent)
+  const session = { id: 's-injection-tail' }
+  // 模拟真实注入结构：用户输入在前，<<system-reminder>> skills 列表与记忆候选堆缀尾。
+  const injectedText = [
+    '给飞书通知瘦身',
+    '',
+    '<<system-reminder>> A skill is a reusable set of task-specific instructions. The following skills are available in this session: aipro-server-services、bossstatic-project-deploy、browser-use …（大量 skills 描述）',
+    '',
+    '…（内容过长，已截断）',
+    '',
+    '[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关；版本号、路径、发布状态等可变事实以条目日期与实时核验为准：',
+    '[2026-09-19 · session-reflection · fact] 天工造梦项目即 dsh-devforge 插件仓库',
+    '---',
+    '[记忆中枢自动注入] 以下是检索到的历史记忆候选（并非当前用户输入）：',
+    '[mnemon/docs/mnemon-c8f4c388 · 天工造梦内置记忆与 Mnemon 迁移交接]',
+  ].join('\n')
+  notifier.observe(session, { type: 'user/message', data: { content: [{ type: 'text', text: injectedText }] } })
+  notifier.observe(session, route('glm-5.3'))
+  notifier.observe(session, { type: 'turn/start', data: { turn: 1 } })
+  notifier.observe(session, assistant('已改完并通过测试。'))
+  notifier.observe(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await sleep(80)
+  assert.equal(sent.length, 1)
+  const text = JSON.stringify(sent[0].card)
+  assert.match(text, /给飞书通知瘦身/)
+  assert.doesNotMatch(text, /system-reminder/)
+  assert.doesNotMatch(text, /内置长期记忆/)
+  assert.doesNotMatch(text, /记忆中枢自动注入/)
+  assert.doesNotMatch(text, /aipro-server-services/)
+})
+
+test('通知：前置 [常驻记忆] 注入被跳过，附件描述段不混入请求', async () => {
+  const sent = []
+  const notifier = makeNotifier(sent)
+  const session = { id: 's-injection-head' }
+  const injectedText = [
+    '[常驻记忆] 以下是每轮固定加载的记忆（钉选条目，必须遵守）：',
+    '[agent-proposal · fact] 【2026-09-20 魔搭 OCR 集群全线投产】3507 测试 + 3503 生产双上线',
+    '---',
+    '',
+    '帮我把官网版本更新一下',
+    '',
+    'Image "image.png" (sha256:ca13d5a1cad5); request preview 839x792px.',
+    '',
+    '[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关。',
+  ].join('\n')
+  notifier.observe(session, { type: 'user/message', data: { content: [{ type: 'text', text: injectedText }] } })
+  notifier.observe(session, { type: 'turn/start', data: { turn: 1 } })
+  notifier.observe(session, assistant('已更新。'))
+  notifier.observe(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await sleep(80)
+  assert.equal(sent.length, 1)
+  const text = JSON.stringify(sent[0].card)
+  assert.match(text, /帮我把官网版本更新一下/)
+  assert.doesNotMatch(text, /常驻记忆/)
+  assert.doesNotMatch(text, /agent-proposal/)
+  assert.doesNotMatch(text, /sha256:ca13d5a1cad5/)
+  assert.doesNotMatch(text, /内置长期记忆/)
+})
+
+test('通知：整条消息均为注入时回退原文截断，请求栏不空白', async () => {
+  const sent = []
+  const notifier = makeNotifier(sent)
+  const session = { id: 's-injection-only' }
+  const injectedText = [
+    '[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关。',
+    '---',
+    '[记忆中枢自动注入] 以下是检索到的历史记忆候选（并非当前用户输入）。',
+  ].join('\n')
+  notifier.observe(session, { type: 'user/message', data: { content: [{ type: 'text', text: injectedText }] } })
+  notifier.observe(session, { type: 'turn/start', data: { turn: 1 } })
+  notifier.observe(session, assistant('已处理。'))
+  notifier.observe(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await sleep(80)
+  assert.equal(sent.length, 1)
+  const request = sent[0].card.body.elements.find((element) => element.text?.content.startsWith('**请求**'))
+  assert.match(request.text.content, /未记录原始请求|内置长期记忆/)
+})

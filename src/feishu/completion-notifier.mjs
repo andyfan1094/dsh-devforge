@@ -287,6 +287,32 @@ function assistantTextOf(message) {
     .trim()
 }
 
+/** 段落级注入特征：Harness 在用户消息里追加的系统上下文（skills 列表、记忆候选、运行时快照、附件描述）。 */
+const INJECTION_HINT = /<{1,2}system-reminder>|\[(?:常驻记忆|内置长期记忆|记忆中枢自动注入|记忆中枢|当前运行时上下文|agent-proposal|session-reflection|mnemon)|Current runtime context\.|^Image "/m
+
+/**
+ * 从原始用户消息提取用户真实输入：
+ * Harness 注入的系统上下文（<<system-reminder>> skills 列表、[内置长期记忆] 候选、
+ * [记忆中枢自动注入] 等）与用户输入以空行分段——注入堆要么前置、要么缀尾。
+ * 按双换行分段：跳过前置注入段，收集干净段，遇到尾部注入段即停。
+ * 全部段落都是注入时返回 ''，调用方回退原文截断。
+ */
+function extractUserInput(text) {
+  const collected = []
+  let started = false
+  for (const paragraph of String(text ?? '').split(/\n{2,}/)) {
+    const trimmed = paragraph.trim()
+    if (trimmed === '') continue
+    if (INJECTION_HINT.test(trimmed)) {
+      if (started) break
+      continue
+    }
+    started = true
+    collected.push(trimmed)
+  }
+  return collected.join('\n\n')
+}
+
 function userTextOf(data) {
   const message = data?.message ?? data
   const blocks = message?.content
@@ -294,10 +320,9 @@ function userTextOf(data) {
     const text = blocks
       .filter((block) => block?.type === 'text' && typeof block.text === 'string')
       .map((block) => block.text)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (text !== '') return text.slice(0, 2_000)
+      .join('\n')
+    const userInput = extractUserInput(text)
+    if (userInput !== '') return userInput.replace(/\s+/g, ' ').trim().slice(0, 2_000)
   }
   return String(message?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 2_000)
 }
