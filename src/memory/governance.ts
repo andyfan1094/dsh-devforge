@@ -371,8 +371,10 @@ export class MemoryGovernanceService {
 
   quality(): MemoryQualityStats {
     const quality = this.native.qualityBase()
-    quality.candidates = this.listCandidates({ states: ['pending', 'needs-resolution'], limit: 1000 }).length
-    quality.conflicts = this.native.listRelations().filter((item) => item.kind === 'conflicts-with').length + this.listCandidates({ states: ['needs-resolution'], limit: 1000 }).length
+    // 候选一次全量、内存分组计数：两个状态各扫一遍域是双倍 JSON 解析开销（0.34.2 性能修复）。
+    const candidateRows = this.listCandidates({ limit: 1000 })
+    quality.candidates = candidateRows.filter((item) => item.state === 'pending' || item.state === 'needs-resolution').length
+    quality.conflicts = this.native.listRelations().filter((item) => item.kind === 'conflicts-with').length + candidateRows.filter((item) => item.state === 'needs-resolution').length
     const feedback = this.rag.listDomainDocs(MEMORY_FEEDBACK_DOMAIN).map((row) => row.data as Partial<MemoryRecallFeedback>)
     quality.helpful = feedback.filter((item) => item.verdict === 'useful').length
     quality.irrelevant = feedback.filter((item) => item.verdict === 'irrelevant').length

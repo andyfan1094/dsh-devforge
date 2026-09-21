@@ -110,6 +110,16 @@ export class RagStore {
     })
   }
 
+  /** 按主键取单个域文档（O(log n) 索引查询）。教训（2026-09-21）：单条查找禁止用
+   *  listDomainDocs().find() 全量替代——native.getMeta 在 listMetas 循环里逐条调它，
+   *  记忆涨到 642 条后放大成 642² 次大 JSON 解析，status/quality 接口卡死 20 秒。 */
+  getDomainDoc(domain: string, id: string): { id: string; data: unknown } | undefined {
+    const row = this.db.prepare('SELECT id, data FROM docs WHERE domain = ? AND id = ?').get(domain, id) as { id: string; data: string } | undefined
+    if (row === undefined) return undefined
+    try { return { id: row.id, data: JSON.parse(row.data) as unknown } }
+    catch { return { id: row.id, data: null } }
+  }
+
   // ── 向量缓存（rag-vec.db，本地派生物）──
 
   getVector(hash: string): Float32Array | null {

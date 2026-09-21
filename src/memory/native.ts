@@ -269,7 +269,7 @@ export class NativeMemoryStore {
 
   get(id: string): NativeMemoryEntry | undefined {
     if (!this.validId(id)) return undefined
-    const row = this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN).find((item) => item.id === id)
+    const row = this.rag.getDomainDoc(NATIVE_MEMORY_DOMAIN, id)
     if (row === undefined) return undefined
     const stored = asStoredEntry(row.data, row.id)
     if (stored === undefined) return undefined
@@ -277,7 +277,7 @@ export class NativeMemoryStore {
   }
 
   getMeta(id: string): MemoryEntryMeta | undefined {
-    const entryRow = this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN).find((item) => item.id === id)
+    const entryRow = this.rag.getDomainDoc(NATIVE_MEMORY_DOMAIN, id)
     if (entryRow === undefined) return undefined
     const stored = asStoredEntry(entryRow.data, entryRow.id)
     return stored === undefined ? undefined : this.metaFor(stored)
@@ -471,7 +471,9 @@ export class NativeMemoryStore {
 
   listMetas(): MemoryEntryMeta[] {
     const storedById = new Map(this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN).map((row) => [row.id, asStoredEntry(row.data, row.id)]))
-    return [...storedById.entries()].flatMap(([id, stored]) => stored === undefined ? [] : [this.getMeta(id) ?? fallbackMeta(stored)])
+    // 元数据一次全域拉取建 Map：逐条 getMeta 会把 O(n) 放大成 O(n²)（642 条记忆 ≈ 41 万次 JSON 解析，接口卡死 20 秒）。
+    const metaById = new Map(this.rag.listDomainDocs(MEMORY_META_DOMAIN).map((row) => [row.id, row.data]))
+    return [...storedById.entries()].flatMap(([id, stored]) => stored === undefined ? [] : [asMeta(metaById.get(id), stored) ?? fallbackMeta(stored)])
   }
 
   /** 基于真实状态计算质量基线；候选、复盘和反馈域计数由治理服务补齐。 */
@@ -520,7 +522,7 @@ export class NativeMemoryStore {
   }
 
   private metaFor(stored: StoredMemoryEntry): MemoryEntryMeta {
-    const row = this.rag.listDomainDocs(MEMORY_META_DOMAIN).find((item) => item.id === stored.id)
+    const row = this.rag.getDomainDoc(MEMORY_META_DOMAIN, stored.id)
     return asMeta(row?.data, stored)
   }
 
