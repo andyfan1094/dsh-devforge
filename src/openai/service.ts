@@ -5,6 +5,7 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
+import { assertModelsNotReferencedByBrainRouter, normalizeDeleteIds } from '../model-tombstones.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
 import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayModelInfo, OpenAiGatewayModelPatch, OpenAiGatewayStatus } from './protocol.ts'
 
@@ -379,6 +380,30 @@ export class OpenAiGatewayService {
       ? { ...model, contextWindow: patch.contextWindow, ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}) }
       : model)
     // cleanLegacy=false：单模型容量修改不得牵动其它端点路由。
+    await this.writeProviders([{ endpoint, index, models: nextModels }], false)
+    return await this.readStatus()
+  }
+
+  /**
+   * 批量删除一个端点内的模型（单个/批量同一入口）：按 endpointId 定位端点与下标，
+   * 按 id 过滤后走 writeProviders 单端点写回。不写墓碑——中转站目录由端点 /v1/models
+   * 同步驱动，启动链路 ensureProvider 只迁移档案不会复活被删模型。
+   */
+  async deleteModels(input: { endpointId: unknown; ids: unknown }): Promise<OpenAiGatewayStatus> {
+    const ids = new Set(normalizeDeleteIds(input.ids, (message, status) => new OpenAiServiceError(message, status)))
+    const endpoints = this.endpointConfigs()
+    const endpointId = typeof input.endpointId === 'string' ? input.endpointId : ''
+    const index = endpoints.findIndex((item) => item.id === endpointId)
+    if (index < 0) throw new OpenAiServiceError('指定端点不存在', 404)
+    const endpoint = endpoints[index] as OpenAiGatewayEndpointConfig
+    const providerId = openAiProviderId(endpoint, index)
+    assertModelsNotReferencedByBrainRouter(this.ctx, providerId, ids, (message, status) => new OpenAiServiceError(message, status))
+    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const models = readProviderModels(section?.providers?.[providerId])
+    const nextModels = models.filter((model) => !(typeof model.id === 'string' && ids.has(model.id)))
+    // 保留保护：端点模型目录不允许被删空。
+    if (nextModels.length === 0) throw new OpenAiServiceError('至少保留一个模型', 400)
+    // cleanLegacy=false：单端点删除不得牵动其它端点路由。
     await this.writeProviders([{ endpoint, index, models: nextModels }], false)
     return await this.readStatus()
   }

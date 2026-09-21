@@ -20,6 +20,10 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
   const [loading, setLoading] = useState(true)
   const [savingKey, setSavingKey] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  /** 模型目录勾选的模型 id 集合。 */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  /** 模型删除进行中（期间勾选与删除按钮全部禁用）。 */
+  const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const mounted = useRef(true)
   const controller = useRef<AbortController | null>(null)
@@ -82,6 +86,42 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
   const models = status?.models ?? []
   const routeReady = status?.providerConfigured === true && status.models.length > 0 && status.models.every((model) => model.configured)
 
+  /** 模型清单变化（删除/同步/刷新）后清空勾选，防止悬空 id。 */
+  const routeModelKey = models.map((model) => model.id).join(',')
+  useEffect(() => { setSelectedIds(new Set()) }, [routeModelKey])
+
+  /** 删除已配置模型（单个或批量）：先弹确认，成功后以接口返回的最新状态刷新并清空勾选。 */
+  const deleteModels = async (ids: string[]): Promise<void> => {
+    if (ids.length === 0 || deleting) return
+    if (!window.confirm(ids.length === 1 ? '删除模型「' + ids[0] + '」？' : '删除选中的 ' + ids.length + ' 个模型？')) return
+    setDeleting(true)
+    setNotice(null)
+    try {
+      const next = await api.deleteSiliconFlowModels(ids)
+      if (!mounted.current) return
+      applyStatus(next)
+      setNotice({ kind: 'success', text: '已删除 ' + ids.length + ' 个模型。' })
+    } catch (error) {
+      if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+    } finally { if (mounted.current) setDeleting(false) }
+  }
+
+  /** 勾选或取消一个模型。 */
+  const toggleModel = (id: string): void => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /** 全选/全不选（空列表不可全选）。 */
+  const allSelected = models.length > 0 && models.every((model) => selectedIds.has(model.id))
+  const toggleAllModels = (): void => {
+    setSelectedIds(() => (allSelected ? new Set() : new Set(models.map((model) => model.id))))
+  }
+
   return (
     <section className={css['zhipuWorkspace']}>
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
@@ -106,13 +146,28 @@ export function SiliconFlowCodingPlanTab(props: { api: DevforgeApi; apiKeyEnv: s
           <button type="button" className={css['ghostButton']} disabled={syncing || status?.credentialConfigured !== true || status?.syncChatModels === false} onClick={() => { void syncModels() }}>{syncing ? '同步中…' : status?.syncChatModels === false ? '只嵌入模式 · 同步已停用' : '从硅基流动同步'}</button>
         </div>
         <p className={css['sectionHint']}>同步按系列精选：每个系列只保留版本最高的对话模型；图片/视频/语音/OCR/向量/重排等非对话模型与 Pro/LoRA 变体自动跳过，以在线清单为准。在插件设置中关闭「同步对话模型目录」即进入只嵌入模式：启动自动补齐与手动同步都会冻结目录（对话模型不再被合并回来），记忆中枢 bge-m3 向量不受影响。</p>
+        {models.length > 0 && (
+          <div className={css['modelToolbar']}>
+            <label className={css['checkRow']}>
+              <input type="checkbox" checked={allSelected} disabled={deleting} onChange={toggleAllModels} />
+              全选
+            </label>
+            <button type="button" className={css['ghostButton']} disabled={deleting || selectedIds.size === 0} onClick={() => { void deleteModels([...selectedIds]) }}>删除选中 {selectedIds.size} 个</button>
+          </div>
+        )}
         {models.length === 0 ? <div className={css['empty']}>暂无模型。先保存 Key，再点击「从硅基流动同步」。</div> : (
           <div className={css['tableWrap']} style={{ maxHeight: 430, overflow: 'auto' }}>
             <div className={css['resourceList']}>
               {models.map((model) => <div key={model.id} className={css['resourceRow']}>
-                <div className={css['resourceInfo']}><strong className={css['resourceTitle']}>{model.id}</strong><span className={css['resourceMeta']}>{model.configured ? '已写入 DSH 模型路由' : '待同步到 DSH'}</span></div>
-                {model.free && <span className={css['badge']} data-kind="success">免费</span>}
-                <span className={css['badge']} data-kind={model.configured ? 'success' : 'pending'}>{model.configured ? '已接入' : '待接入'}</span>
+                <label className={css['modelRowCheck']}>
+                  <input type="checkbox" checked={selectedIds.has(model.id)} disabled={deleting} onChange={() => toggleModel(model.id)} aria-label={'选择模型 ' + model.id} />
+                  <span className={css['resourceInfo']}><strong className={css['resourceTitle']}>{model.id}</strong><span className={css['resourceMeta']}>{model.configured ? '已写入 DSH 模型路由' : '待同步到 DSH'}</span></span>
+                </label>
+                <span className={css['modelRowEnd']}>
+                  {model.free && <span className={css['badge']} data-kind="success">免费</span>}
+                  <span className={css['badge']} data-kind={model.configured ? 'success' : 'pending'}>{model.configured ? '已接入' : '待接入'}</span>
+                  <button type="button" className={css['ghostButton']} disabled={deleting} onClick={() => { void deleteModels([model.id]) }}>删除</button>
+                </span>
               </div>)}
             </div>
           </div>

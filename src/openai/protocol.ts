@@ -7,6 +7,8 @@ export const OPENAI_GATEWAY_API = {
   endpoint: '/api/dsh-devforge/openai/endpoint',
   model: '/api/dsh-devforge/openai/model',
   fetchModels: '/api/dsh-devforge/openai/fetch-models',
+  /** 批量删除端点内模型（body { endpointId, ids }；不写墓碑，目录由端点同步驱动）。 */
+  modelsDelete: '/api/dsh-devforge/openai-gateway/models/delete',
 } as const
 
 /** 端点聊天协议：OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages。 */

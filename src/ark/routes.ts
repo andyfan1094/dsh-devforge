@@ -87,7 +87,32 @@ export function makeArkRoutes(service: ArkCodingPlanService): WebRoute[] {
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
-        try { writeJson(res, 200, { ok: true, status: await service.ensureModels() }) } catch (error) { writeError(res, error) }
+        // 用户手动点击=全量补齐：restore=true 合并全部默认模型并清除对应墓碑。
+        try { writeJson(res, 200, { ok: true, status: await service.ensureModels(true) }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ARK_API.codingSetup,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        // Coding Plan 手动补齐：restore=true 全量恢复官方模型池并清除对应墓碑。
+        try { writeJson(res, 200, { ok: true, status: await service.ensureCodingModels(true) }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ARK_API.modelsDelete,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          // plan 缺省操作 Agent Plan 路由；传 'coding' 时操作 Coding Plan 路由。
+          const plan = body.plan === 'coding' ? 'coding' : 'agent'
+          writeJson(res, 200, { ok: true, status: await service.deleteModels(body.ids, plan) })
+        } catch (error) { writeError(res, error) }
       },
     },
     {
@@ -122,4 +147,21 @@ export function makeArkRoutes(service: ArkCodingPlanService): WebRoute[] {
       },
     },
   ]
+}
+
+/** 读取请求体为 JSON（模型删除只传 id 清单与套餐标识，体积很小）。 */
+async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{ [key: string]: unknown }> {
+  const chunks: Buffer[] = []
+  let total = 0
+  const maxBytes = 8 * 1024
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += buffer.length
+    if (total > maxBytes) throw new ArkServiceError('请求体超过 8 KiB 上限。', 400)
+    chunks.push(buffer)
+  }
+  if (total === 0) throw new ArkServiceError('请求体为空。', 400)
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as { [key: string]: unknown } } catch {
+    throw new ArkServiceError('请求体不是合法 JSON。', 400)
+  }
 }

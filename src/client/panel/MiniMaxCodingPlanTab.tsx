@@ -66,6 +66,10 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
   const [fetching, setFetching] = useState(false)
   const [savingKey, setSavingKey] = useState(false)
   const [keyDraft, setKeyDraft] = useState('')
+  /** 模型列表勾选的模型 id 集合。 */
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set())
+  /** 模型删除进行中（期间勾选与删除按钮全部禁用）。 */
+  const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -75,6 +79,7 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
   const setupController = useRef<AbortController | null>(null)
   const fetchController = useRef<AbortController | null>(null)
   const keyController = useRef<AbortController | null>(null)
+  const deleteController = useRef<AbortController | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     const generation = refreshGeneration.current + 1
@@ -109,12 +114,55 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
       setupController.current?.abort()
       fetchController.current?.abort()
       keyController.current?.abort()
+      deleteController.current?.abort()
     }
   }, [refresh])
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+
+  /** 模型清单变化（删除/刷新/官方拉取）后清空勾选，防止悬空 id。 */
+  const routeModelKey = useMemo(() => (status?.models ?? []).map((model) => model.id).join(','), [status])
+  useEffect(() => { setSelectedModelIds(new Set()) }, [routeModelKey])
+
+  /** 删除模型路由（单个或批量）：先弹确认，成功后以接口返回的最新状态刷新并清空勾选。 */
+  const deleteRouteModels = async (ids: string[]): Promise<void> => {
+    if (ids.length === 0 || deleting) return
+    if (!window.confirm(ids.length === 1 ? '删除模型「' + ids[0] + '」？' : '删除选中的 ' + ids.length + ' 个模型？')) return
+    deleteController.current?.abort()
+    const controller = new AbortController()
+    deleteController.current = controller
+    setDeleting(true)
+    setNotice(null)
+    try {
+      const nextStatus = await api.deleteMiniMaxModels(ids, controller.signal)
+      if (!mounted.current || controller.signal.aborted) return
+      setStatus(nextStatus)
+      onStatusChange?.(nextStatus)
+      setNotice({ kind: 'success', text: '已删除 ' + ids.length + ' 个模型。' })
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setDeleting(false)
+    }
+  }
+
+  /** 勾选或取消一个模型。 */
+  const toggleRouteModel = (id: string): void => {
+    setSelectedModelIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /** 全选/全不选（空列表不可全选）。 */
+  const allRouteSelected = (status?.models.length ?? 0) > 0 && (status?.models ?? []).every((model) => selectedModelIds.has(model.id))
+  const toggleAllRouteModels = (): void => {
+    setSelectedModelIds(() => (allRouteSelected ? new Set() : new Set((status?.models ?? []).map((model) => model.id))))
+  }
 
   const setupModels = async (): Promise<void> => {
     if (settingUp) return
@@ -214,14 +262,29 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
         <h3 className={css['sectionTitle']}>模型路由（minimax-cn）</h3>
         <div className={css['modelToolbar']}>
           <button type="button" className={css['ghostButton']} disabled={fetching || !status?.credentialConfigured} onClick={() => { void fetchOfficialModels() }} title="调官方 /v1/models 拉取最新模型并合并进 provider">{fetching ? '拉取中…' : '从官方拉取模型'}</button>
+          {status !== null && status.models.length > 0 && (
+            <>
+              <label className={css['checkRow']}>
+                <input type="checkbox" checked={allRouteSelected} disabled={deleting} onChange={toggleAllRouteModels} />
+                全选
+              </label>
+              <button type="button" className={css['ghostButton']} disabled={deleting || selectedModelIds.size === 0} onClick={() => { void deleteRouteModels([...selectedModelIds]) }}>删除选中 {selectedModelIds.size} 个</button>
+            </>
+          )}
         </div>
         {status?.models.length === 0 ? (
           <div className={css['empty']}>尚未配置任何模型。</div>
         ) : (
           status?.models.map((model) => (
             <div key={model.id} className={css['metricRow']}>
-              <span>{model.id}</span>
-              <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
+              <label className={css['modelRowCheck']}>
+                <input type="checkbox" checked={selectedModelIds.has(model.id)} disabled={deleting} onChange={() => toggleRouteModel(model.id)} aria-label={'选择模型 ' + model.id} />
+                <span>{model.id}</span>
+              </label>
+              <span className={css['modelRowEnd']}>
+                <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待补齐'}</strong>
+                <button type="button" className={css['ghostButton']} disabled={deleting} onClick={() => { void deleteRouteModels([model.id]) }}>删除</button>
+              </span>
             </div>
           ))
         )}

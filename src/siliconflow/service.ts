@@ -12,6 +12,8 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import type { SiliconFlowStatus } from './protocol.ts'
+import { clearRestoredTombstones, deleteProviderModelsWithTombstone, listDeletedModels, normalizeDeleteIds } from '../model-tombstones.ts'
+import { getDb } from '../store/db.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 /** llm-pi-ai 下的 provider 路由 id（模型目录 providers 键）。 */
@@ -158,19 +160,27 @@ export class SiliconFlowService {
     }
   }
 
-  /** 拉取在线模型清单，按系列精选最新版对话模型后合并进 DSH 模型目录。 */
-  async ensureModels(): Promise<SiliconFlowStatus> {
+  /**
+   * 拉取在线模型清单，按系列精选最新版对话模型后合并进 DSH 模型目录。
+   * restore=false（启动自动补齐）用墓碑过滤在线清单，防止刚删掉的模型复活；
+   * restore=true（面板手动同步）全量合并，成功后清除已恢复模型的墓碑。
+   */
+  async ensureModels(restore = false): Promise<SiliconFlowStatus> {
     // 只嵌入模式：冻结目录（只增不减的合并会让删掉的对话模型在每次补齐后回来），
     // 直接返回当前状态，不请求上游、不写设置。
     if (!this.config.syncChatModels) return await this.status()
     const apiKey = await this.resolveApiKey()
     const ids = curateLatestChatModels(parseModelIds(await this.get('/models', apiKey)))
     if (ids.length === 0) throw new SiliconFlowServiceError('硅基流动模型清单为空（检查 Key 与网络）。', 502)
+    // 墓碑过滤在「上游清单非空」判定之后：上游故障不因墓碑而误报为空。
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), SILICONFLOW_PROVIDER_ID))
+    const effectiveIds = skipIds === undefined ? ids : ids.filter((id) => !skipIds.has(id))
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new SiliconFlowServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
-      const merged = mergeSiliconFlowProvider(current?.providers?.[SILICONFLOW_PROVIDER_ID], this.config.apiKeyEnv, ids)
+      const merged = mergeSiliconFlowProvider(current?.providers?.[SILICONFLOW_PROVIDER_ID], this.config.apiKeyEnv, effectiveIds)
+      if (restore) clearRestoredTombstones(getDb(), SILICONFLOW_PROVIDER_ID, ids, merged)
       if (deepEqualJson(merged, current?.providers?.[SILICONFLOW_PROVIDER_ID])) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{ op: 'set', path: ['providers', SILICONFLOW_PROVIDER_ID], value: merged }], descriptor.revision)
@@ -184,6 +194,20 @@ export class SiliconFlowService {
       }
     }
     throw new SiliconFlowServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /**
+   * 批量删除 siliconflow 路由内的模型（单个/批量同一入口），并写入墓碑防启动复活。
+   * 校验（ids 形状）、主脑路由引用保护、保留保护与并发重试统一走公共实现。
+   */
+  async deleteModels(ids: unknown): Promise<SiliconFlowStatus> {
+    await deleteProviderModelsWithTombstone({
+      ctx: this.ctx,
+      providerId: SILICONFLOW_PROVIDER_ID,
+      ids: normalizeDeleteIds(ids, (message, status) => new SiliconFlowServiceError(message, status)),
+      errorFactory: (message, status) => new SiliconFlowServiceError(message, status),
+    })
+    return await this.status()
   }
 
   /** 在线模型清单（不写目录，面板浏览用）。 */

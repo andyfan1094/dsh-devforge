@@ -1,11 +1,14 @@
-/** 火山方舟 Agent Plan 服务：数据面模型路由与控制面套餐用量。 */
+/** 火山方舟 Agent/Coding Plan 服务：数据面模型路由与控制面套餐用量。 */
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import type { ArkStatus, ArkUsageCredentialsResult, ArkUsageDashboard } from './protocol.ts'
+import { ARK_CODING_BASE_URL, ARK_CODING_DEFAULT_MODELS, ARK_CODING_PROVIDER_ID, FIVE_TIER_REASONING, KIMI_REASONING } from './protocol.ts'
 import { fetchArkPlanUsage } from './usage.ts'
+import { clearRestoredTombstones, deleteProviderModelsWithTombstone, listDeletedModels, normalizeDeleteIds } from '../model-tombstones.ts'
+import { getDb } from '../store/db.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 const ARK_USAGE_CACHE_TTL_MS = 5 * 60 * 1000
@@ -18,10 +21,6 @@ const DEFAULT_USAGE_TIMEOUT_MS = 15_000
 export const ARK_PLAN_BASE_URL = 'https://ark.cn-beijing.volces.com/api/plan/v3'
 export const ARK_PROVIDER_ID = 'volcengine-ark-plan'
 
-/** 大多数方舟思考模型支持的五档推理强度。 */
-const FIVE_TIER_REASONING = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } as const
-/** Kimi K3 的 Agent Plan 档位以网关实际支持的精简集合为准。 */
-const KIMI_REASONING = { off: null, low: 'low', high: 'high', max: 'max' } as const
 /** Kimi Code 在 completions 协议下只提供思考开关。 */
 const KIMI_CODE_REASONING = { off: null, high: 'high' } as const
 
@@ -77,7 +76,7 @@ function mergeExistingModel(model: Record<string, unknown>, defaults: Record<str
 }
 
 /** 合并自定义方舟 provider，固定 Plan 数据面并补齐模型与推理档位。 */
-export function mergeArkProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
+export function mergeArkProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, skipIds?: ReadonlySet<string>): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
   const defaultsById = new Map<string, Record<string, unknown>>()
   for (const model of ARK_DEFAULT_MODELS) defaultsById.set(model.id, model as unknown as Record<string, unknown>)
@@ -86,7 +85,7 @@ export function mergeArkProvider(provider: Record<string, unknown> | undefined, 
     return mergeExistingModel(model, defaultsById.get(id))
   })
   const ids = new Set(mergedExisting.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  const additions = ARK_DEFAULT_MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  const additions = ARK_DEFAULT_MODELS.filter((model) => !ids.has(model.id) && !(skipIds?.has(model.id) ?? false)).map((model) => ({ ...model }))
   const existingCompat = provider?.compat !== null && typeof provider?.compat === 'object' && !Array.isArray(provider?.compat)
     ? provider.compat as Record<string, unknown>
     : {}
@@ -99,6 +98,30 @@ export function mergeArkProvider(provider: Record<string, unknown> | undefined, 
     // 方舟网关只接受 system/user/assistant/tool 角色，reasoning 模型必须禁用 developer 角色分发。
     compat: { ...existingCompat, supportsDeveloperRole: false },
     models: [...mergedExisting, ...additions],
+  }
+}
+
+/**
+ * 合并 Coding Plan provider：displayName/api/baseURL 固定官方值防漂移，只补缺失模型，
+ * 保留用户显式字段。skipIds 为启动自动补齐（restore=false）时需要跳过的墓碑模型 id。
+ */
+export function mergeArkCodingProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, skipIds?: ReadonlySet<string>): Record<string, unknown> {
+  const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
+  const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
+  const additions = ARK_CODING_DEFAULT_MODELS.filter((model) => !ids.has(model.id) && !(skipIds?.has(model.id) ?? false)).map((model) => ({ ...model }))
+  const existingCompat = provider?.compat !== null && typeof provider?.compat === 'object' && !Array.isArray(provider?.compat)
+    ? provider.compat as Record<string, unknown>
+    : {}
+  return {
+    ...(provider ?? {}),
+    displayName: typeof provider?.displayName === 'string' ? provider.displayName : '火山方舟 Coding Plan',
+    apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
+    // Coding Plan 走 OpenAI Chat Completions；api/baseURL 无条件覆盖官方地址，防止配置漂移把 Key 带去未知端点。
+    api: 'openai-completions',
+    baseURL: ARK_CODING_BASE_URL,
+    // 与 Agent Plan 一致：方舟网关不支持 developer 角色，reasoning 模型必须禁用。
+    compat: { ...existingCompat, supportsDeveloperRole: false },
+    models: [...existing, ...additions],
   }
 }
 
@@ -156,6 +179,11 @@ export class ArkCodingPlanService {
     const configuredIds = new Set(liveIds)
     const displayIds = liveIds.length > 0 ? liveIds : ARK_DEFAULT_MODELS.map((model) => model.id)
     const baseURL = typeof provider?.baseURL === 'string' ? provider.baseURL : ARK_PLAN_BASE_URL
+    // Coding Plan 数据面 provider 的模型清单（展示逻辑与 Agent Plan 一致：未配置时回退内置池）。
+    const codingProvider = section?.providers?.[ARK_CODING_PROVIDER_ID]
+    const codingLiveIds = (codingProvider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
+    const codingConfiguredIds = new Set(codingLiveIds)
+    const codingDisplayIds = codingLiveIds.length > 0 ? codingLiveIds : ARK_CODING_DEFAULT_MODELS.map((model) => model.id)
     return {
       enabled: this.config.enabled,
       credentialConfigured: apiCredential.configured,
@@ -163,6 +191,8 @@ export class ArkCodingPlanService {
       providerConfigured: provider !== undefined,
       models: displayIds.map((id) => ({ id, configured: configuredIds.has(id) })),
       baseURL,
+      codingProviderConfigured: codingProvider !== undefined,
+      codingModels: codingDisplayIds.map((id) => ({ id, configured: codingConfiguredIds.has(id) })),
       usageAccessKeyEnv: this.usageAccessKeyEnv(),
       usageAccessKeyConfigured: accessCredential.configured,
       usageSecretKeyEnv: this.usageSecretKeyEnv(),
@@ -171,14 +201,20 @@ export class ArkCodingPlanService {
     }
   }
 
-  /** 补齐 Agent Plan 官方文本模型池和缺失的推理档位，不覆盖用户显式字段。 */
-  async ensureModels(): Promise<ArkStatus> {
+  /**
+   * 补齐 Agent Plan 官方文本模型池和缺失的推理档位，不覆盖用户显式字段。
+   * restore=false（启动自动补齐）跳过墓碑模型防复活；restore=true（面板手动补齐）全量合并，
+   * 成功后清除已恢复模型的墓碑。
+   */
+  async ensureModels(restore = false): Promise<ArkStatus> {
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), ARK_PROVIDER_ID))
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new ArkServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[ARK_PROVIDER_ID]
-      const merged = mergeArkProvider(provider, this.config.apiKeyEnv)
+      const merged = mergeArkProvider(provider, this.config.apiKeyEnv, skipIds)
+      if (restore) clearRestoredTombstones(getDb(), ARK_PROVIDER_ID, ARK_DEFAULT_MODELS.map((model) => model.id), merged)
       if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
@@ -196,6 +232,54 @@ export class ArkCodingPlanService {
       }
     }
     throw new ArkServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /**
+   * 补齐 Coding Plan provider 与官方模型池（凭据与 Agent Plan 共用 ARK_CODING_PLAN_API_KEY）。
+   * restore 语义同 ensureModels：false 跳过墓碑，true 全量合并并清墓碑。
+   */
+  async ensureCodingModels(restore = false): Promise<ArkStatus> {
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), ARK_CODING_PROVIDER_ID))
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ArkServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
+      const provider = current?.providers?.[ARK_CODING_PROVIDER_ID]
+      const merged = mergeArkCodingProvider(provider, this.config.apiKeyEnv, skipIds)
+      if (restore) clearRestoredTombstones(getDb(), ARK_CODING_PROVIDER_ID, ARK_CODING_DEFAULT_MODELS.map((model) => model.id), merged)
+      if (deepEqualJson(merged, provider)) return await this.status()
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
+          op: 'set',
+          path: ['providers', ARK_CODING_PROVIDER_ID],
+          value: merged,
+        }], descriptor.revision)
+        return await this.status()
+      } catch (error) {
+        if (error instanceof SettingsConflictError) {
+          if (attempt === 1) throw new ArkServiceError('模型设置并发更新，请重试。', 409)
+          continue
+        }
+        throw error
+      }
+    }
+    throw new ArkServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /**
+   * 批量删除模型并写入墓碑防启动复活：plan='agent' 操作 Agent Plan 路由，
+   * plan='coding' 操作 Coding Plan 路由。校验（ids 形状）、主脑路由引用保护、
+   * 保留保护与并发重试统一走公共实现。
+   */
+  async deleteModels(ids: unknown, plan: 'agent' | 'coding' = 'agent'): Promise<ArkStatus> {
+    const providerId = plan === 'coding' ? ARK_CODING_PROVIDER_ID : ARK_PROVIDER_ID
+    await deleteProviderModelsWithTombstone({
+      ctx: this.ctx,
+      providerId,
+      ids: normalizeDeleteIds(ids, (message, status) => new ArkServiceError(message, status)),
+      errorFactory: (message, status) => new ArkServiceError(message, status),
+    })
+    return await this.status()
   }
 
   /** 读取套餐用量；默认复用五分钟缓存。 */

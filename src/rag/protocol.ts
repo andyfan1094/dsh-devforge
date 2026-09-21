@@ -29,7 +29,11 @@ export const RAG_API = {
   reembed: '/api/dsh-devforge/rag/reembed',
 } as const
 
-/** 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容服务；siliconflow=硅基流动免费档）。 */
+/**
+ * 向量渠道（对应天工造梦已接的 Provider；ollama=本机；custom=任意 OpenAI 兼容服务；
+ * siliconflow=硅基流动免费档；ark=火山方舟 Coding Plan 套餐向量端点（doubao-embedding-vision-251215，
+ * 2026-09-21 实测可用，2048 维））。
+ */
 export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom' | 'siliconflow'
 
 /** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */

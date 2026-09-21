@@ -78,6 +78,14 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
   const [keyDraft, setKeyDraft] = useState('')
   const [accessKeyDraft, setAccessKeyDraft] = useState('')
   const [secretKeyDraft, setSecretKeyDraft] = useState('')
+  /** Agent Plan 模型列表勾选集合（与 Coding Plan 列表相互独立）。 */
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set())
+  /** Coding Plan 模型列表勾选集合。 */
+  const [selectedCodingIds, setSelectedCodingIds] = useState<Set<string>>(new Set())
+  /** 模型删除进行中（两个列表共用一个删除 busy，期间勾选与删除按钮全部禁用）。 */
+  const [deleting, setDeleting] = useState(false)
+  /** Coding Plan 模型同步进行中。 */
+  const [syncingCoding, setSyncingCoding] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -136,6 +144,15 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
     return () => window.clearInterval(timer)
   }, [])
 
+  /** Coding Plan 模型清单（ArkStatus.codingModels 由后端并行添加；字段未落地前 typecheck 报缺失属已知并行差异）。 */
+  const codingModels: Array<{ id: string; configured: boolean }> = status?.codingModels ?? []
+
+  /** 各自的模型清单变化（删除/同步/刷新）后清空对应列表勾选，防止悬空 id；两列表互不影响。 */
+  const agentModelKey = useMemo(() => (status?.models ?? []).map((model) => model.id).join(','), [status])
+  useEffect(() => { setSelectedAgentIds(new Set()) }, [agentModelKey])
+  const codingModelKey = useMemo(() => codingModels.map((model) => model.id).join(','), [codingModels])
+  useEffect(() => { setSelectedCodingIds(new Set()) }, [codingModelKey])
+
   /** 补齐模型路由以及旧模型记录缺失的 reasoningEfforts。 */
   const syncModels = async (): Promise<void> => {
     if (syncing) return
@@ -152,6 +169,92 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
     } finally {
       if (mounted.current) setSyncing(false)
     }
+  }
+
+  /** 同步 Coding Plan（volcengine-ark-coding）官方模型池；与 Agent Plan 模型池相互独立。 */
+  const syncCodingModels = async (): Promise<void> => {
+    if (syncingCoding) return
+    cancelBackgroundRefresh()
+    setSyncingCoding(true)
+    setError('')
+    try {
+      const next = await api.setupArkCodingModels()
+      if (!mounted.current) return
+      applyStatus(next)
+      setNotice({ kind: 'success', text: 'Coding Plan 模型已同步，共 ' + (next.codingModels?.length ?? 0) + ' 个。' })
+    } catch (cause) {
+      if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setSyncingCoding(false)
+    }
+  }
+
+  /** 删除 Agent Plan 模型路由（单个或批量）：先弹确认，成功后以最新状态回写并清空勾选。 */
+  const deleteAgentModels = async (ids: string[]): Promise<void> => {
+    if (ids.length === 0 || deleting) return
+    if (!window.confirm(ids.length === 1 ? '删除模型「' + ids[0] + '」？' : '删除选中的 ' + ids.length + ' 个模型？')) return
+    setDeleting(true)
+    setNotice(null)
+    try {
+      const next = await api.deleteArkModels(ids, 'agent')
+      if (!mounted.current) return
+      applyStatus(next)
+      setNotice({ kind: 'success', text: '已删除 ' + ids.length + ' 个模型。' })
+    } catch (cause) {
+      if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setDeleting(false)
+    }
+  }
+
+  /** 删除 Coding Plan 模型路由（单个或批量），plan = coding 只影响 Coding 模型池。 */
+  const deleteCodingModels = async (ids: string[]): Promise<void> => {
+    if (ids.length === 0 || deleting) return
+    if (!window.confirm(ids.length === 1 ? '删除模型「' + ids[0] + '」？' : '删除选中的 ' + ids.length + ' 个模型？')) return
+    setDeleting(true)
+    setNotice(null)
+    try {
+      const next = await api.deleteArkModels(ids, 'coding')
+      if (!mounted.current) return
+      applyStatus(next)
+      setNotice({ kind: 'success', text: '已删除 ' + ids.length + ' 个模型。' })
+    } catch (cause) {
+      if (mounted.current) setNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
+    } finally {
+      if (mounted.current) setDeleting(false)
+    }
+  }
+
+  /** 勾选或取消一个 Agent Plan 模型。 */
+  const toggleAgentModel = (id: string): void => {
+    setSelectedAgentIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /** Agent Plan 列表全选/全不选（空列表不可全选）。 */
+  const allAgentSelected = (status?.models.length ?? 0) > 0 && (status?.models ?? []).every((model) => selectedAgentIds.has(model.id))
+  const toggleAllAgentModels = (): void => {
+    setSelectedAgentIds(() => (allAgentSelected ? new Set() : new Set((status?.models ?? []).map((model) => model.id))))
+  }
+
+  /** 勾选或取消一个 Coding Plan 模型。 */
+  const toggleCodingModel = (id: string): void => {
+    setSelectedCodingIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /** Coding Plan 列表全选/全不选（空列表不可全选）。 */
+  const allCodingSelected = codingModels.length > 0 && codingModels.every((model) => selectedCodingIds.has(model.id))
+  const toggleAllCodingModels = (): void => {
+    setSelectedCodingIds(() => (allCodingSelected ? new Set() : new Set(codingModels.map((model) => model.id))))
   }
 
   /** 保存模型调用用的 Plan Key；它不参与套餐用量查询。 */
@@ -217,6 +320,7 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
     }
   }
 
+  /** Agent Plan 就绪判定：只看 Agent 模型池（status.models），Coding Plan（codingModels）不参与，两者互不影响。 */
   const modelsReady = useMemo(() => status?.providerConfigured === true && status.models.length > 1 && status.models.every((model) => model.configured), [status])
   const usageConfigured = status?.usageAccessKeyConfigured === true && status.usageSecretKeyConfigured === true
 
@@ -257,11 +361,59 @@ export function ArkCodingPlanTab({ api, apiKeyEnv, section = 'config', embedded 
           <h3 className={css['sectionTitle']}>模型路由（volcengine-ark-plan）</h3>
           <div className={css['modelToolbar']}>
             <button type="button" className={css['ghostButton']} disabled={syncing || !status?.credentialConfigured} onClick={() => { void syncModels() }}>{syncing ? '同步中…' : '同步模型与推理档位'}</button>
+            {status !== null && status.models.length > 0 && (
+              <>
+                <label className={css['checkRow']}>
+                  <input type="checkbox" checked={allAgentSelected} disabled={deleting} onChange={toggleAllAgentModels} />
+                  全选
+                </label>
+                <button type="button" className={css['ghostButton']} disabled={deleting || selectedAgentIds.size === 0} onClick={() => { void deleteAgentModels([...selectedAgentIds]) }}>删除选中 {selectedAgentIds.size} 个</button>
+              </>
+            )}
           </div>
           {status?.models.length === 0 ? <div className={css['empty']}>尚未配置任何模型。</div> : status?.models.map((model) => (
             <div key={model.id} className={css['metricRow']}>
-              <span>{model.id}</span>
-              <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待同步'}</strong>
+              <label className={css['modelRowCheck']}>
+                <input type="checkbox" checked={selectedAgentIds.has(model.id)} disabled={deleting} onChange={() => toggleAgentModel(model.id)} aria-label={'选择模型 ' + model.id} />
+                <span>{model.id}</span>
+              </label>
+              <span className={css['modelRowEnd']}>
+                <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待同步'}</strong>
+                <button type="button" className={css['ghostButton']} disabled={deleting} onClick={() => { void deleteAgentModels([model.id]) }}>删除</button>
+              </span>
+            </div>
+          ))}
+        </section>
+
+        <section className={css['usageSection']}>
+          <h3 className={css['sectionTitle']}>Coding Plan（volcengine-ark-coding）</h3>
+          <p className={css['planInfoHint']}>
+            官方 OpenAI 兼容端点 <code>https://ark.cn-beijing.volces.com/api/coding/v3</code>；凭据与 Agent Plan 共用 <code>ARK_CODING_PLAN_API_KEY</code>（ark- 前缀）；模型池与套餐额度独立于 Agent Plan，可单独同步与增删。
+          </p>
+          <div className={css['modelToolbar']}>
+            <button type="button" className={css['ghostButton']} disabled={syncingCoding || deleting} onClick={() => { void syncCodingModels() }} title="拉取官方 Coding Plan 模型池并写入模型路由">{syncingCoding ? '同步中…' : '同步 Coding Plan 模型'}</button>
+            {codingModels.length > 0 && (
+              <>
+                <label className={css['checkRow']}>
+                  <input type="checkbox" checked={allCodingSelected} disabled={deleting} onChange={toggleAllCodingModels} />
+                  全选
+                </label>
+                <button type="button" className={css['ghostButton']} disabled={deleting || selectedCodingIds.size === 0} onClick={() => { void deleteCodingModels([...selectedCodingIds]) }}>删除选中 {selectedCodingIds.size} 个</button>
+              </>
+            )}
+          </div>
+          {codingModels.length === 0 ? (
+            <div className={css['empty']}>尚未同步任何模型。点击「同步 Coding Plan 模型」拉取官方模型池。</div>
+          ) : codingModels.map((model) => (
+            <div key={model.id} className={css['metricRow']}>
+              <label className={css['modelRowCheck']}>
+                <input type="checkbox" checked={selectedCodingIds.has(model.id)} disabled={deleting} onChange={() => toggleCodingModel(model.id)} aria-label={'选择模型 ' + model.id} />
+                <span>{model.id}</span>
+              </label>
+              <span className={css['modelRowEnd']}>
+                <strong data-state={model.configured ? 'ok' : 'pending'}>{model.configured ? '已就绪' : '待同步'}</strong>
+                <button type="button" className={css['ghostButton']} disabled={deleting} onClick={() => { void deleteCodingModels([model.id]) }}>删除</button>
+              </span>
             </div>
           ))}
         </section>

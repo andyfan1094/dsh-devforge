@@ -67,7 +67,20 @@ export function makeMiniMaxRoutes(service: MiniMaxService): WebRoute[] {
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
-        try { writeJson(res, 200, { ok: true, status: await service.ensureModels() }) } catch (error) { writeError(res, error) }
+        // 用户手动点击=全量补齐：restore=true 合并全部默认模型并清除对应墓碑。
+        try { writeJson(res, 200, { ok: true, status: await service.ensureModels(true) }) } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: MINIMAX_API.modelsDelete,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          writeJson(res, 200, { ok: true, status: await service.deleteModels(body.ids) })
+        } catch (error) { writeError(res, error) }
       },
     },
     {
@@ -101,4 +114,20 @@ export function makeMiniMaxRoutes(service: MiniMaxService): WebRoute[] {
       },
     },
   ]
+}
+
+/** 读取请求体为 JSON（模型删除只传 id 清单，体积很小）。 */
+async function readJsonBody(req: import('node:http').IncomingMessage): Promise<{ [key: string]: unknown }> {
+  const chunks: Buffer[] = []
+  let total = 0
+  const maxBytes = 8 * 1024
+  for await (const chunk of req) {
+    total += (chunk as Buffer).length
+    if (total > maxBytes) throw new MiniMaxServiceError('请求体超过 8 KiB 上限。', 400)
+    chunks.push(chunk as Buffer)
+  }
+  if (total === 0) throw new MiniMaxServiceError('请求体为空。', 400)
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as { [key: string]: unknown } } catch {
+    throw new MiniMaxServiceError('请求体不是合法 JSON。', 400)
+  }
 }

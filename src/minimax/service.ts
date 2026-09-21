@@ -7,6 +7,8 @@ import { deepEqualJson } from '../provider-settings.ts'
 import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { MiniMaxApiClient } from './api-client.ts'
 import type { MiniMaxDashboard, MiniMaxStatus } from './protocol.ts'
+import { clearRestoredTombstones, deleteProviderModelsWithTombstone, listDeletedModels, normalizeDeleteIds, removeDeletedModels } from '../model-tombstones.ts'
+import { getDb } from '../store/db.ts'
 
 const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 
@@ -29,10 +31,10 @@ export const MINIMAX_MODELS = [
 ] as const
 
 /** 合并 minimax-cn 配置：只补缺失模型和凭据引用，保留用户显式字段。 */
-export function mergeMiniMaxProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
+export function mergeMiniMaxProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, skipIds?: ReadonlySet<string>): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
   const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  const additions = MINIMAX_MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  const additions = MINIMAX_MODELS.filter((model) => !ids.has(model.id) && !(skipIds?.has(model.id) ?? false)).map((model) => ({ ...model }))
   return {
     ...(provider ?? {}),
     apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
@@ -127,14 +129,20 @@ export class MiniMaxService {
     return await client.fetchRemains({ signal })
   }
 
-  /** 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。 */
-  async ensureModels(): Promise<MiniMaxStatus> {
+  /**
+   * 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。
+   * restore=false（启动自动补齐）跳过墓碑模型防复活；restore=true（面板手动补齐）全量合并，
+   * 成功后清除已恢复模型的墓碑。
+   */
+  async ensureModels(restore = false): Promise<MiniMaxStatus> {
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), MINIMAX_PROVIDER_ID))
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new MiniMaxServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[MINIMAX_PROVIDER_ID]
-      const merged = mergeMiniMaxProvider(provider, this.config.apiKeyEnv)
+      const merged = mergeMiniMaxProvider(provider, this.config.apiKeyEnv, skipIds)
+      if (restore) clearRestoredTombstones(getDb(), MINIMAX_PROVIDER_ID, MINIMAX_MODELS.map((model) => model.id), merged)
       if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
@@ -152,6 +160,20 @@ export class MiniMaxService {
       }
     }
     throw new MiniMaxServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /**
+   * 批量删除 minimax-cn 路由内的模型（单个/批量同一入口），并写入墓碑防启动复活。
+   * 校验（ids 形状）、主脑路由引用保护、保留保护与并发重试统一走公共实现。
+   */
+  async deleteModels(ids: unknown): Promise<MiniMaxStatus> {
+    await deleteProviderModelsWithTombstone({
+      ctx: this.ctx,
+      providerId: MINIMAX_PROVIDER_ID,
+      ids: normalizeDeleteIds(ids, (message, status) => new MiniMaxServiceError(message, status)),
+      errorFactory: (message, status) => new MiniMaxServiceError(message, status),
+    })
+    return await this.status()
   }
 
   /** 校验并构造凭据引用，避免错误配置以内部异常呈现。 */
@@ -182,6 +204,8 @@ export class MiniMaxService {
           path: ['providers', MINIMAX_PROVIDER_ID, 'models'],
           value: merged,
         }], descriptor.revision)
+        // 手动拉官方清单视为全量恢复：合并成功的模型清墓碑，下次启动补齐不再被跳过。
+        removeDeletedModels(getDb(), MINIMAX_PROVIDER_ID, [...kept, ...added])
         return { status: await this.status(), added, kept, total: merged.length }
       } catch (error) {
         if (error instanceof SettingsConflictError) {

@@ -18,6 +18,10 @@ export const ZHIPU_API = {
   officialKeySave: '/api/dsh-devforge/zhipu/official/key',
   /** 官方 API 直调（开放平台）：从官方拉取最新模型清单合并进 provider。 */
   officialFetchModels: '/api/dsh-devforge/zhipu/official/fetch-models',
+  /** 批量删除 zai-coding-cn 路由内的模型（写墓碑防启动复活）。 */
+  modelsDelete: '/api/dsh-devforge/zhipu/models/delete',
+  /** 批量删除官方开放平台（zhipu-official）路由内的模型（写墓碑防启动复活）。 */
+  officialModelsDelete: '/api/dsh-devforge/zhipu/official/models/delete',
 } as const
 
 /** 智谱官方开放平台（按量付费）聊天路由 provider id。 */

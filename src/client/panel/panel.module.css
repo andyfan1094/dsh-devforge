@@ -962,3 +962,11 @@
   .guideNavButton, .featureRowSummary::before { transition: none; }
 }
 
+/* ===== 模型路由删除交互（五个供应商页签共用） ===== */
+/* 模型行左端勾选组：占满剩余宽度，checkbox 与模型名同行；模型名超长时省略号截断，不撑破紧凑行。 */
+.modelRowCheck { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 8px; color: var(--dsw-alias-label-primary, #1f2329); font-size: 12px; cursor: pointer; }
+.modelRowCheck input[type='checkbox'] { width: 15px; height: 15px; margin: 0; flex: none; accent-color: var(--dsw-alias-state-business-primary, #2563eb); }
+.modelRowCheck > span { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+/* 模型行右端操作组：状态徽标与删除按钮成组靠右，沿用行内紧凑密度。 */
+.modelRowEnd { display: flex; flex: none; min-width: 0; align-items: center; gap: 6px; }
+

@@ -552,6 +552,17 @@ export class DevforgeApi {
     return data.status
   }
 
+  /** 批量删除一个中转端点内的模型路由（单个或多个 id），返回刷新后的脱敏状态。 */
+  async deleteOpenAiModels(endpointId: string, ids: string[], signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
+    const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.modelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpointId, ids }),
+      signal,
+    }))
+    return data.status
+  }
+
   /** 读取智谱凭据和最新模型的脱敏状态。 */
   async getZhipuStatus(signal?: AbortSignal): Promise<ZhipuStatus> {
     const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.status, { signal }))
@@ -645,6 +656,28 @@ export class DevforgeApi {
     return await readJson(await fetch(ZHIPU_API.fetchModels, { method: 'POST', signal }))
   }
 
+  /** 批量删除智谱 Coding Plan 模型路由（单个或多个 id），返回刷新后的脱敏状态。 */
+  async deleteZhipuModels(ids: string[], signal?: AbortSignal): Promise<ZhipuStatus> {
+    const data = await readJson<{ status: ZhipuStatus }>(await fetch(ZHIPU_API.modelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 批量删除智谱官方 API 直调（开放平台）的模型路由，返回刷新后的官方脱敏状态。 */
+  async deleteZhipuOfficialModels(ids: string[], signal?: AbortSignal): Promise<ZhipuOfficialStatus> {
+    const data = await readJson<{ status: ZhipuOfficialStatus }>(await fetch(ZHIPU_API.officialModelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      signal,
+    }))
+    return data.status
+  }
+
   /** 补齐智谱官方 API（开放平台）provider 与默认模型。 */
   async setupZhipuOfficialModels(signal?: AbortSignal): Promise<ZhipuOfficialStatus> {
     const data = await readJson<{ status: ZhipuOfficialStatus }>(await fetch(ZHIPU_API.officialSetup, { method: 'POST', signal }))
@@ -672,15 +705,42 @@ export class DevforgeApi {
     return await readJson(await fetch(MINIMAX_API.fetchModels, { method: 'POST', signal }))
   }
 
+  /** 批量删除 MiniMax 模型路由（单个或多个 id），返回刷新后的脱敏状态。 */
+  async deleteMiniMaxModels(ids: string[], signal?: AbortSignal): Promise<MiniMaxStatus> {
+    const data = await readJson<{ status: MiniMaxStatus }>(await fetch(MINIMAX_API.modelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      signal,
+    }))
+    return data.status
+  }
+
   /** 读取硅基流动凭据和模型路由的脱敏状态。 */
   async getSiliconFlowStatus(signal?: AbortSignal): Promise<SiliconFlowStatus> {
     const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.status, { signal }))
     return data.status
   }
 
-  /** 拉取并同步硅基流动全部模型到 DSH 模型目录。 */
+  /** 拉取并同步硅基流动全部模型到 DSH 模型目录（restore: true 表示手动同步时恢复被冻结目录的完整精选清单）。 */
   async setupSiliconFlowModels(signal?: AbortSignal): Promise<SiliconFlowStatus> {
-    const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.ensure, { method: 'POST', signal }))
+    const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.ensure, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ restore: true }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 批量删除硅基流动已配置进 DSH 模型目录的模型（单个或多个 id），返回刷新后的脱敏状态。 */
+  async deleteSiliconFlowModels(ids: string[], signal?: AbortSignal): Promise<SiliconFlowStatus> {
+    const data = await readJson<{ status: SiliconFlowStatus }>(await fetch(SILICONFLOW_API.modelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      signal,
+    }))
     return data.status
   }
 
@@ -693,6 +753,23 @@ export class DevforgeApi {
   /** 同步方舟 Agent Plan 官方文本模型池与推理档位。 */
   async setupArkModels(signal?: AbortSignal): Promise<ArkStatus> {
     const data = await readJson<{ status: ArkStatus }>(await fetch(ARK_API.setup, { method: 'POST', signal }))
+    return data.status
+  }
+
+  /** 批量删除方舟模型路由；plan 指定 Agent Plan 或 Coding Plan 模型池，返回刷新后的脱敏状态。 */
+  async deleteArkModels(ids: string[], plan: 'agent' | 'coding', signal?: AbortSignal): Promise<ArkStatus> {
+    const data = await readJson<{ status: ArkStatus }>(await fetch(ARK_API.modelsDelete, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids, plan }),
+      signal,
+    }))
+    return data.status
+  }
+
+  /** 同步方舟 Coding Plan（volcengine-ark-coding）官方 OpenAI 兼容模型池。 */
+  async setupArkCodingModels(signal?: AbortSignal): Promise<ArkStatus> {
+    const data = await readJson<{ status: ArkStatus }>(await fetch(ARK_API.codingSetup, { method: 'POST', signal }))
     return data.status
   }
 

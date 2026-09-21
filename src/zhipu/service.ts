@@ -11,6 +11,7 @@ import { ZhipuKeyPool, firstSuccessful, newKeyId, nextKeyRef } from './key-pool.
 import { ZhipuServiceError } from './errors.ts'
 import { ZHIPU_OFFICIAL_BASE_URL, ZHIPU_OFFICIAL_PROVIDER_ID } from './protocol.ts'
 import type { ZhipuDashboard, ZhipuKeyUsage, ZhipuModelUsage, ZhipuOfficialStatus, ZhipuStatus, ZhipuToolUsage, ZhipuUsageWindow } from './protocol.ts'
+import { clearRestoredTombstones, deleteProviderModelsWithTombstone, listDeletedModels, normalizeDeleteIds, removeDeletedModels } from '../model-tombstones.ts'
 
 /** 兼容既有导入方（routes/tests）：错误类本体在 errors.ts。 */
 export { ZhipuServiceError }
@@ -30,11 +31,14 @@ export const ZHIPU_OFFICIAL_DEFAULT_MODELS = [
 /** 官方 API Key 的兜底受管凭据引用名（配置未指定时使用）。 */
 export const ZHIPU_OFFICIAL_DEFAULT_KEY_ENV = 'ZHIPU_OFFICIAL_API_KEY'
 
-/** 合并 zai-coding-cn 配置：只补缺失模型和凭据引用，保留用户显式字段。 */
-export function mergeZhipuProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
+/**
+ * 合并 zai-coding-cn 配置：只补缺失模型和凭据引用，保留用户显式字段。
+ * skipIds 为启动自动补齐（restore=false）时需要跳过的墓碑模型 id，防止刚删掉的模型复活。
+ */
+export function mergeZhipuProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, skipIds?: ReadonlySet<string>): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
   const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  const additions = MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  const additions = MODELS.filter((model) => !ids.has(model.id) && !(skipIds?.has(model.id) ?? false)).map((model) => ({ ...model }))
   return {
     ...(provider ?? {}),
     apiKeyEnv: typeof provider?.apiKeyEnv === 'string' ? provider.apiKeyEnv : fallbackApiKeyEnv,
@@ -42,11 +46,14 @@ export function mergeZhipuProvider(provider: Record<string, unknown> | undefined
   }
 }
 
-/** 合并官方开放平台 provider：端点强制固定官方地址，只补缺失模型和凭据引用，保留用户显式字段。 */
-export function mergeZhipuOfficialProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string): Record<string, unknown> {
+/**
+ * 合并官方开放平台 provider：端点强制固定官方地址，只补缺失模型和凭据引用，保留用户显式字段。
+ * skipIds 为启动自动补齐（restore=false）时需要跳过的墓碑模型 id。
+ */
+export function mergeZhipuOfficialProvider(provider: Record<string, unknown> | undefined, fallbackApiKeyEnv: string, skipIds?: ReadonlySet<string>): Record<string, unknown> {
   const existing = Array.isArray(provider?.models) ? provider.models as Array<Record<string, unknown>> : []
   const ids = new Set(existing.map((model) => model.id).filter((id): id is string => typeof id === 'string'))
-  const additions = ZHIPU_OFFICIAL_DEFAULT_MODELS.filter((model) => !ids.has(model.id)).map((model) => ({ ...model }))
+  const additions = ZHIPU_OFFICIAL_DEFAULT_MODELS.filter((model) => !ids.has(model.id) && !(skipIds?.has(model.id) ?? false)).map((model) => ({ ...model }))
   return {
     ...(provider ?? {}),
     displayName: typeof provider?.displayName === 'string' ? provider.displayName : '智谱开放平台',
@@ -180,14 +187,20 @@ export class ZhipuCodingPlanService {
     return await this.officialStatus()
   }
 
-  /** 补齐官方开放平台 provider 与默认模型，不覆盖用户显式字段；无变化时不产生写入。 */
-  async ensureOfficialModels(): Promise<ZhipuOfficialStatus> {
+  /**
+   * 补齐官方开放平台 provider 与默认模型，不覆盖用户显式字段；无变化时不产生写入。
+   * restore=false（启动自动补齐）跳过墓碑模型防复活；restore=true（面板手动补齐）全量合并，
+   * 成功后清除已恢复模型的墓碑。
+   */
+  async ensureOfficialModels(restore = false): Promise<ZhipuOfficialStatus> {
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), ZHIPU_OFFICIAL_PROVIDER_ID))
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[ZHIPU_OFFICIAL_PROVIDER_ID]
-      const merged = mergeZhipuOfficialProvider(provider, this.officialEnv())
+      const merged = mergeZhipuOfficialProvider(provider, this.officialEnv(), skipIds)
+      if (restore) clearRestoredTombstones(getDb(), ZHIPU_OFFICIAL_PROVIDER_ID, ZHIPU_OFFICIAL_DEFAULT_MODELS.map((model) => model.id), merged)
       if (deepEqualJson(merged, provider)) return await this.officialStatus()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
@@ -268,6 +281,8 @@ export class ZhipuCodingPlanService {
           path: ['providers', ZHIPU_OFFICIAL_PROVIDER_ID, 'models'],
           value: merged,
         }], descriptor.revision)
+        // 手动拉官方清单视为全量恢复：合并成功的模型清墓碑，下次启动补齐不再被跳过。
+        removeDeletedModels(getDb(), ZHIPU_OFFICIAL_PROVIDER_ID, [...kept, ...added])
         return { status: await this.officialStatus(), added, kept, total: merged.length }
       } catch (error) {
         if (error instanceof SettingsConflictError) {
@@ -440,14 +455,20 @@ export class ZhipuCodingPlanService {
     throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
   }
 
-  /** 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。 */
-  async ensureModels(): Promise<ZhipuStatus> {
+  /**
+   * 补齐官方 provider 路由和最新模型，不覆盖已有模型字段。
+   * restore=false（启动自动补齐）跳过墓碑模型防复活；restore=true（面板手动补齐）全量合并，
+   * 成功后清除已恢复模型的墓碑。
+   */
+  async ensureModels(restore = false): Promise<ZhipuStatus> {
+    const skipIds = restore ? undefined : new Set(listDeletedModels(getDb(), PROVIDER_ID))
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new ZhipuServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, Record<string, unknown>> } | undefined
       const provider = current?.providers?.[PROVIDER_ID]
-      const merged = mergeZhipuProvider(provider, this.config.apiKeyEnv)
+      const merged = mergeZhipuProvider(provider, this.config.apiKeyEnv, skipIds)
+      if (restore) clearRestoredTombstones(getDb(), PROVIDER_ID, MODELS.map((model) => model.id), merged)
       if (deepEqualJson(merged, provider)) return await this.status()
       try {
         await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, [{
@@ -465,6 +486,31 @@ export class ZhipuCodingPlanService {
       }
     }
     throw new ZhipuServiceError('模型设置并发更新，请重试。', 409)
+  }
+
+  /**
+   * 批量删除 zai-coding-cn 聊天路由内的模型（单个/批量同一入口），并写入墓碑防启动复活。
+   * 校验（ids 形状）、主脑路由引用保护、保留保护与并发重试统一走公共实现。
+   */
+  async deleteModels(ids: unknown): Promise<ZhipuStatus> {
+    await deleteProviderModelsWithTombstone({
+      ctx: this.ctx,
+      providerId: PROVIDER_ID,
+      ids: normalizeDeleteIds(ids, (message, status) => new ZhipuServiceError(message, status)),
+      errorFactory: (message, status) => new ZhipuServiceError(message, status),
+    })
+    return await this.status()
+  }
+
+  /** 批量删除官方开放平台（zhipu-official）路由内的模型，语义与 deleteModels 完全一致。 */
+  async deleteOfficialModels(ids: unknown): Promise<ZhipuOfficialStatus> {
+    await deleteProviderModelsWithTombstone({
+      ctx: this.ctx,
+      providerId: ZHIPU_OFFICIAL_PROVIDER_ID,
+      ids: normalizeDeleteIds(ids, (message, status) => new ZhipuServiceError(message, status)),
+      errorFactory: (message, status) => new ZhipuServiceError(message, status),
+    })
+    return await this.officialStatus()
   }
 
   /** 校验并构造聊天路由 provider 的凭据引用（主 Key 的脱敏状态仍按它上报）。 */
@@ -497,6 +543,8 @@ export class ZhipuCodingPlanService {
           path: ['providers', PROVIDER_ID, 'models'],
           value: merged,
         }], descriptor.revision)
+        // 手动拉官方清单视为全量恢复：合并成功的模型清墓碑，下次启动补齐不再被跳过。
+        removeDeletedModels(getDb(), PROVIDER_ID, [...kept, ...added])
         return { status: await this.status(), added, kept, total: merged.length }
       } catch (error) {
         if (error instanceof SettingsConflictError) {

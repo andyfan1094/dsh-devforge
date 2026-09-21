@@ -7,6 +7,8 @@ export const SILICONFLOW_API = {
   status: '/api/dsh-devforge/siliconflow/status',
   ensure: '/api/dsh-devforge/siliconflow/ensure',
   models: '/api/dsh-devforge/siliconflow/models',
+  /** 批量删除 siliconflow 路由内的模型（写墓碑防启动复活）。 */
+  modelsDelete: '/api/dsh-devforge/siliconflow/models/delete',
 } as const
 
 /** 硅基流动状态（面板卡片）。 */

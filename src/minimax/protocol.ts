@@ -6,6 +6,8 @@ export const MINIMAX_API = {
   dashboard: '/api/dsh-devforge/minimax/dashboard',
   setup: '/api/dsh-devforge/minimax/setup',
   fetchModels: '/api/dsh-devforge/minimax/fetch-models',
+  /** 批量删除 minimax-cn 路由内的模型（写墓碑防启动复活）。 */
+  modelsDelete: '/api/dsh-devforge/minimax/models/delete',
 } as const
 
 /** 凭据与模型路由的脱敏状态（不含任何 Key）。 */

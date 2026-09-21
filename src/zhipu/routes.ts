@@ -89,7 +89,7 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
-        try { writeJson(res, 200, { ok: true, status: await service.ensureModels() }) } catch (error) { writeError(res, error) }
+        try { writeJson(res, 200, { ok: true, status: await service.ensureModels(true) }) } catch (error) { writeError(res, error) }
       },
     },
     {
@@ -188,7 +188,7 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
       handler: async (req, res) => {
         if (!guardWrite(req, res)) return
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
-        try { writeJson(res, 200, { ok: true, status: await service.ensureOfficialModels() }) } catch (error) { writeError(res, error) }
+        try { writeJson(res, 200, { ok: true, status: await service.ensureOfficialModels(true) }) } catch (error) { writeError(res, error) }
       },
     },
     {
@@ -212,6 +212,30 @@ export function makeZhipuRoutes(service: ZhipuCodingPlanService): WebRoute[] {
         try {
           const result = await service.fetchOfficialModels()
           writeJson(res, 200, { ok: true, status: result.status, added: result.added, kept: result.kept, total: result.total })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.modelsDelete,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          writeJson(res, 200, { ok: true, status: await service.deleteModels(body.ids) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: ZHIPU_API.officialModelsDelete,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          writeJson(res, 200, { ok: true, status: await service.deleteOfficialModels(body.ids) })
         } catch (error) { writeError(res, error) }
       },
     },

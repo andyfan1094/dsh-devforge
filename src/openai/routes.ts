@@ -179,5 +179,18 @@ export function makeOpenAiRoutes(service: OpenAiGatewayService): WebRoute[] {
         }
       },
     },
+    {
+      kind: 'exact',
+      path: OPENAI_GATEWAY_API.modelsDelete,
+      handler: async (req, res) => {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readBody(req)
+          // endpointId/ids 的形状校验在服务端统一把关（ids 非法 400、端点不存在 404、删空 400）。
+          writeJson(res, 200, { ok: true, status: await service.deleteModels({ endpointId: body.endpointId, ids: body.ids }) })
+        } catch (error) { writeError(res, error) }
+      },
+    },
   ]
 }

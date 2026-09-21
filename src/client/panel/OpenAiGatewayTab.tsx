@@ -43,6 +43,10 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
   const [notice, setNotice] = useState<Notice | null>(null)
   const [modelDrafts, setModelDrafts] = useState<Record<string, ModelCapacityDraft>>({})
   const [savingModelKey, setSavingModelKey] = useState('')
+  /** 每个端点独立维护的模型勾选集合（键为端点 id，互不影响）。 */
+  const [selectedByEndpoint, setSelectedByEndpoint] = useState<Record<string, Set<string>>>({})
+  /** 模型删除进行中（期间全部端点的勾选与删除按钮禁用）。 */
+  const [deleting, setDeleting] = useState(false)
   const mounted = useRef(true)
   const controller = useRef<AbortController | null>(null)
 
@@ -79,6 +83,10 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     return () => { mounted.current = false; controller.current?.abort() }
   }, [refresh])
 
+  /** 任一端点的模型清单变化（获取/删除/刷新）后清空全部勾选，防止悬空 id。 */
+  const routeSignature = status === null ? '' : status.endpoints.map((endpoint) => endpoint.id + ':' + endpoint.models.map((model) => model.id).join('|')).join(';')
+  useEffect(() => { setSelectedByEndpoint({}) }, [routeSignature])
+
   const selected = endpoints.find((endpoint) => endpoint.id === selectedId) ?? endpoints[0]
   const selectedStatus: OpenAiGatewayEndpointStatus | undefined = status?.endpoints.find((endpoint) => endpoint.id === selected?.id)
   const selectedModels = selectedStatus?.models ?? (status?.endpoints.length === 0 && selected?.id === 'default' ? status.models : [])
@@ -88,6 +96,13 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
   const routeCount = status?.endpoints.filter((endpoint) => endpoint.models.length > 0).length ?? 0
   const allConfigured = endpoints.length > 0 && configuredCount === endpoints.length
   const routeReady = routeCount > 0
+
+  /** 当前端点的模型清单、勾选集合与全选/计数派生值（每个端点的勾选互不影响）。 */
+  const endpointModels = selectedStatus?.models ?? []
+  const currentEndpointId = selected?.id ?? ''
+  const endpointSelected = selectedByEndpoint[currentEndpointId] ?? new Set<string>()
+  const endpointAllSelected = endpointModels.length > 0 && endpointModels.every((model) => endpointSelected.has(model.id))
+  const endpointSelectedCount = endpointModels.filter((model) => endpointSelected.has(model.id)).length
 
   const updateSelected = (patch: Partial<EndpointDraft>): void => {
     if (selected === undefined) return
@@ -257,6 +272,44 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
     }
   }
 
+  /** 勾选或取消当前端点里的一个模型。 */
+  const toggleEndpointModel = (endpointId: string, modelId: string): void => {
+    setSelectedByEndpoint((current) => {
+      const next = new Set(current[endpointId] ?? [])
+      if (next.has(modelId)) next.delete(modelId)
+      else next.add(modelId)
+      return { ...current, [endpointId]: next }
+    })
+  }
+
+  /** 某端点模型列表全选/全不选（空列表不可全选）。 */
+  const toggleAllEndpointModels = (endpointId: string, models: OpenAiGatewayModelInfo[]): void => {
+    setSelectedByEndpoint((current) => {
+      const existing = current[endpointId] ?? new Set<string>()
+      const allSelected = models.length > 0 && models.every((model) => existing.has(model.id))
+      return { ...current, [endpointId]: allSelected ? new Set<string>() : new Set(models.map((model) => model.id)) }
+    })
+  }
+
+  /** 删除某端点内选中的模型（单个或批量）：先弹确认，成功后回写最新状态并清空该端点勾选。 */
+  const deleteEndpointModels = async (endpointId: string, ids: string[]): Promise<void> => {
+    if (endpointId === '' || ids.length === 0 || deleting) return
+    if (!window.confirm(ids.length === 1 ? '删除模型「' + ids[0] + '」？' : '删除选中的 ' + ids.length + ' 个模型？')) return
+    setDeleting(true)
+    setNotice(null)
+    try {
+      const next = await api.deleteOpenAiModels(endpointId, ids)
+      if (!mounted.current) return
+      applyStatus(next)
+      setSelectedByEndpoint((current) => ({ ...current, [endpointId]: new Set() }))
+      setNotice({ kind: 'success', text: '已删除 ' + ids.length + ' 个模型。' })
+    } catch (error) {
+      if (mounted.current) setNotice({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+    } finally {
+      if (mounted.current) setDeleting(false)
+    }
+  }
+
   return (
     <section className={css['openAiWorkspace']}>
       {notice !== null && <div className={css['banner']} data-kind={notice.kind === 'success' ? 'success' : 'error'}>{notice.text}<button type="button" className={css['ghostButton']} onClick={() => setNotice(null)}>关闭</button></div>}
@@ -311,13 +364,25 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
             </div>
             <div className={css['endpointModelList']}>
               <div className={css['metricRow']}><span>聊天模型路由</span><strong data-state={(selectedStatus?.models.length ?? 0) > 0 ? 'ok' : 'pending'}>{selectedStatus?.models.length ?? 0} 个模型</strong></div>
+              {(selectedStatus?.models.length ?? 0) > 0 && (
+                <div className={css['modelToolbar']}>
+                  <label className={css['checkRow']}>
+                    <input type="checkbox" checked={endpointAllSelected} disabled={deleting} onChange={() => { toggleAllEndpointModels(currentEndpointId, selectedStatus?.models ?? []) }} />
+                    全选
+                  </label>
+                  <button type="button" className={css['ghostButton']} disabled={deleting || endpointSelectedCount === 0} onClick={() => { void deleteEndpointModels(currentEndpointId, [...endpointSelected]) }}>删除选中 {endpointSelectedCount} 个</button>
+                </div>
+              )}
               {selectedStatus?.models.map((model) => {
                 const values = capacityValues(model)
                 const dirty = values.contextWindow !== values.contextCurrent || (anthropicEndpoint && values.maxTokens !== values.maxTokensCurrent)
                 const draftKey = (selected?.id ?? '') + '::' + model.id
                 const modelLabel = model.name !== undefined && model.name !== model.id ? model.name + ' · ' + model.id : model.id
                 return <div key={model.id} className={css['metricRow']}>
-                  <span className={css['modelRouteName']} title={modelLabel}>{modelLabel}</span>
+                  <label className={css['modelRowCheck']}>
+                    <input type="checkbox" checked={endpointSelected.has(model.id)} disabled={deleting} onChange={() => { toggleEndpointModel(currentEndpointId, model.id) }} aria-label={'选择模型 ' + model.id} />
+                    <span className={css['modelRouteName']} title={modelLabel}>{modelLabel}</span>
+                  </label>
                   <span className={css['modelCapacityEditor']}>
                     <label className={css['capacityField']}>
                       <span>上下文</span>
@@ -329,6 +394,7 @@ export function OpenAiGatewayTab({ api, apiKeyEnv, onStatusChange }: OpenAiGatew
                     </label>}
                     <button type="button" className={css['ghostButton'] + ' ' + css['capacitySave']} disabled={!dirty || savingModelKey !== ''} onClick={() => { void saveModelCapacity(model) }}>{savingModelKey === draftKey ? '保存中…' : '保存'}</button>
                     <strong data-state="ok">已注册</strong>
+                    <button type="button" className={css['ghostButton']} disabled={deleting} onClick={() => { void deleteEndpointModels(currentEndpointId, [model.id]) }}>删除</button>
                   </span>
                 </div>
               })}
