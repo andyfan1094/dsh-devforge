@@ -96,6 +96,9 @@ export function minimaxCard(status: { credentialConfigured: boolean } | null, da
   }
 }
 
+/** 方舟窗口级别 → 中文短标签；未归一化的未知级别显示原文，绝不误标成其它窗口（0.34.8 修复）。 */
+const ARK_LEVEL_LABELS: Record<string, string> = { '5h': '5 小时', session: '5 小时', weekly: '本周', monthly: '本月' }
+
 /** 方舟：Agent Plan 的 5h/周/月三段；Coding Plan 未订阅时不占位。 */
 export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyConfigured: boolean; usageSecretKeyConfigured: boolean } | null, dashboard: ArkUsageDashboard): OverviewCardState {
   const usageConfigured = (status?.usageAccessKeyConfigured ?? false) && (status?.usageSecretKeyConfigured ?? false)
@@ -104,7 +107,8 @@ export function arkCard(status: { credentialConfigured: boolean; usageAccessKeyC
     if (!plan.subscribed) continue
     const planLabel = plan.product === 'agent-plan' ? 'Agent Plan' : 'Coding Plan'
     for (const period of plan.periods) {
-      const label = period.level === '5h' ? planLabel + ' · 5 小时' : period.level === 'weekly' ? planLabel + ' · 本周' : planLabel + ' · 本月'
+      const levelText = ARK_LEVEL_LABELS[period.level] ?? period.level
+      const label = planLabel + ' · ' + levelText
       const usedPercent = Math.max(0, Math.min(100, period.usedPercent ?? 0))
       periods.push({ label, usedPercent, detail: percentText(usedPercent), resetAt: period.resetAt })
     }

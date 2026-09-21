@@ -109,6 +109,20 @@ function safeUpstreamError(code: unknown, message: unknown): string {
   return safeCode + ': ' + safeMessage
 }
 
+/**
+ * 归一化 Coding Plan 用量窗口级别（GetCodingPlanUsage 的 Level/Type 字段拼写不受我方控制）。
+ * 常见变体（FiveHours、five_hour、5hours、5-hour、MONTHLY 等）统一到 5h/weekly/monthly；
+ * 认不出的原样保留，展示端会显示原文而不是误标成其它窗口（0.34.8 修复「5 小时被标成本月」）。
+ */
+export function normalizeUsageLevel(raw: string): string {
+  const value = raw.trim().toLowerCase()
+  if (value === '' ) return raw
+  if (value === '5h' || value.includes('hour') || value.includes('five') || value === 'session') return '5h'
+  if (value.includes('week')) return 'weekly'
+  if (value.includes('month')) return 'monthly'
+  return raw
+}
+
 /** 将单个套餐响应规整为稳定的 Host/Client 契约。 */
 export function parseArkUsageResponse(product: ArkUsageProduct, status: number, text: string): ArkPlanUsage {
   let payload: unknown
@@ -185,7 +199,7 @@ export function parseArkUsageResponse(product: ArkUsageProduct, status: number, 
     let usedPercent = finiteNumber(row.Percent ?? row.UsedPercent ?? row.UsagePercent)
     if (usedPercent === undefined && used !== undefined && total !== undefined && total > 0) usedPercent = used / total * 100
     periods.push({
-      level: rawLevel,
+      level: normalizeUsageLevel(rawLevel),
       used,
       total,
       usedPercent: usedPercent === undefined ? undefined : Math.max(0, Math.min(100, usedPercent)),

@@ -69,6 +69,25 @@ test('方舟用量响应：适配真实 AFP 具名桶与 Coding Plan 未订阅�
   assert.deepEqual(coding.periods, [])
 })
 
+/** Coding Plan 上游 Level 拼写不受我方控制：常见变体必须归一化，否则「5 小时」会被展示层误标成「本月」（0.34.8）。 */
+test('方舟用量响应：Coding Plan 窗口级别变体归一化为 5h/weekly/monthly', () => {
+  const usage = parseArkUsageResponse('coding-plan', 200, JSON.stringify({
+    Result: {
+      QuotaUsage: [
+        { Level: 'FiveHours', Used: 400, Total: 1000, ResetTime: 1_800_000_000_000 },
+        { Level: 'WEEKLY', Used: 50, Total: 1000, ResetTime: 1_800_100_000_000 },
+        { Level: 'Monthly', Used: 30, Total: 1000, ResetTime: 1_800_200_000_000 },
+        { Level: 'five-hour', Used: 10, Total: 1000, ResetTime: 1_800_300_000_000 },
+      ],
+    },
+  }))
+  assert.equal(usage.subscribed, true)
+  // 归一化后排序落到固定槽位：5h（含变体）在前，weekly、monthly 随后；未知级别排最后且保留原文。
+  assert.deepEqual(usage.periods.map((period) => period.level), ['5h', '5h', 'weekly', 'monthly'])
+  assert.equal(usage.periods[0]?.usedPercent, 40)
+  assert.equal(usage.periods[2]?.usedPercent, 5)
+})
+
 /** OpenAPI 业务错误只返回短错误，不透传完整响应对象。 */
 test('方舟用量响应：规整 OpenAPI 权限错误与未知 schema', () => {
   const denied = parseArkUsageResponse('coding-plan', 403, JSON.stringify({
