@@ -89,37 +89,48 @@ export class ZhipuEmbedder {
     return vec
   }
 
-  /** 单批请求。 */
+  /** 单批请求。429/5xx 指数退避重试（0.34.5 教训：方舟账号级频控在批量嵌入时必撞，硬跑只会一片失败）；4xx 参数错误不重试。 */
   private async embedBatch(batch: string[], model: string): Promise<Float32Array[]> {
     const apiKey = await this.resolveApiKey()
     const target = (this.baseURLProvider?.() ?? '').trim() || this.baseURL
     if (target === '') throw new RagEmbeddingError('尚未配置 OpenAI 中转站地址，请先在天工造梦「Coding Plan」页签填写。', 400)
-    let response: Response
-    try {
-      response = await fetch(target + this.path, {
-        method: 'POST',
-        headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }),
-        body: buildRequestBody(model, batch),
-        signal: AbortSignal.timeout(this.timeoutMs),
+    // 退避序列 1s/3s/9s；上游带 Retry-After 时优先尊重（封顶 30s 防御异常大值）。
+    const backoffMs = [1_000, 3_000, 9_000]
+    for (let attempt = 0; ; attempt++) {
+      let response: Response
+      try {
+        response = await fetch(target + this.path, {
+          method: 'POST',
+          headers: upstreamRequestHeaders({ Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }),
+          body: buildRequestBody(model, batch),
+          signal: AbortSignal.timeout(this.timeoutMs),
+        })
+      } catch (error) {
+        throw new RagEmbeddingError('向量渠道请求失败：' + safeEmbeddingError(error))
+      }
+      if (!response.ok) {
+        const body = await response.text().catch(() => '')
+        const retryable = response.status === 429 || response.status >= 500
+        if (retryable && attempt < backoffMs.length) {
+          const retryAfter = Number(response.headers.get('retry-after'))
+          const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : backoffMs[attempt]!
+          await new Promise((resolve) => setTimeout(resolve, waitMs))
+          continue
+        }
+        throw new RagEmbeddingError('向量渠道 HTTP ' + response.status + '：' + safeEmbeddingError(body), response.status === 429 ? 429 : 502)
+      }
+      const payload = JSON.parse(await upstreamResponseText(response)) as { data?: Array<{ embedding?: number[]; index?: number }>; error?: { message?: string } }
+      if (payload.error?.message !== undefined) {
+        throw new RagEmbeddingError('向量渠道拒绝：' + safeEmbeddingError(payload.error.message))
+      }
+      if (!Array.isArray(payload.data) || payload.data.length !== batch.length) {
+        throw new RagEmbeddingError('向量渠道返回条数不符（期望 ' + batch.length + '）')
+      }
+      return payload.data.map(item => {
+        const vec = item.embedding
+        if (!Array.isArray(vec) || vec.length === 0) throw new RagEmbeddingError('向量渠道返回向量无效')
+        return Float32Array.from(vec)
       })
-    } catch (error) {
-      throw new RagEmbeddingError('向量渠道请求失败：' + safeEmbeddingError(error))
     }
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
-      throw new RagEmbeddingError('向量渠道 HTTP ' + response.status + '：' + safeEmbeddingError(body))
-    }
-    const payload = JSON.parse(await upstreamResponseText(response)) as { data?: Array<{ embedding?: number[]; index?: number }>; error?: { message?: string } }
-    if (payload.error?.message !== undefined) {
-      throw new RagEmbeddingError('向量渠道拒绝：' + safeEmbeddingError(payload.error.message))
-    }
-    if (!Array.isArray(payload.data) || payload.data.length !== batch.length) {
-      throw new RagEmbeddingError('向量渠道返回条数不符（期望 ' + batch.length + '）')
-    }
-    return payload.data.map(item => {
-      const vec = item.embedding
-      if (!Array.isArray(vec) || vec.length === 0) throw new RagEmbeddingError('向量渠道返回向量无效')
-      return Float32Array.from(vec)
-    })
   }
 }
