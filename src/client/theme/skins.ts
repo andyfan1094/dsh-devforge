@@ -561,13 +561,13 @@ export const SKINS: readonly SkinDefinition[] = [
   {
     // 金克斯之夜（辉哥 2026-09-21 定稿）：官方原皮打底 + 金克斯透明立绘贴右。
     // tokens 全部取官方深色主题原值（直接引用官方 static 阶梯变量），观感与官方原皮一致；
-    // 立绘（gpt-image-2 生成，透明 PNG 免抠，原画风双长辫+鲨鱼炮）高撑满、贴右侧，
-    // 与之日变体共用同一张透明立绘（辉哥定稿：不要背景只要人物），底色由各自主题提供。
+    // 立绘（gpt-image-2 生成，chibi 透明 PNG 免抠，星星瞳双长辫+迷你鲨鱼炮）高约半屏、贴右侧，
+    // 与之日变体共用同一张透明立绘（辉哥定稿：不要背景只要人物，小一号更可爱），底色由各自主题提供。
     id: 'devforge-jinx',
     labelKey: 'skin.jinx',
     backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
     backgroundPosition: 'right center',
-    backgroundSize: 'auto 100%',
+    backgroundSize: 'auto 55%',
     pairId: 'devforge-jinx-day',
     colorScheme: 'dark',
     tokens: {
@@ -608,7 +608,7 @@ export const SKINS: readonly SkinDefinition[] = [
     labelKey: 'skin.jinxDay',
     backgroundImage: THEME_BACKGROUNDS['devforge-jinx'],
     backgroundPosition: 'right center',
-    backgroundSize: 'auto 100%',
+    backgroundSize: 'auto 55%',
     pairId: 'devforge-jinx',
     colorScheme: 'light',
     tokens: {

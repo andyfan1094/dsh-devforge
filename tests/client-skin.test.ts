@@ -182,9 +182,9 @@ test('金克斯之夜皮肤：官方原皮打底 + 立绘贴右（辉哥 2026-09
   for (const key of REQUIRED_TOKEN_KEYS) {
     assert.ok(skin!.tokens[key] !== undefined, '金克斯皮肤缺 token：' + key)
   }
-  // 立绘贴右、高撑满：落点在主内容区右侧留白带
+  // 立绘贴右、高约半屏：落点在主内容区右侧留白带
   assert.equal(skin!.backgroundPosition, 'right center')
-  assert.equal(skin!.backgroundSize, 'auto 100%')
+  assert.equal(skin!.backgroundSize, 'auto 55%')
 })
 
 test('金克斯深浅成对：之夜/之日互为变体，深浅切换自动落对（辉哥定稿）', () => {
@@ -195,11 +195,11 @@ test('金克斯深浅成对：之夜/之日互为变体，深浅切换自动落�
   assert.equal(day!.colorScheme, 'light')
   assert.equal(night!.pairId, 'devforge-jinx-day', '之夜的成对变体应是之日')
   assert.equal(day!.pairId, 'devforge-jinx', '之日的成对变体应是之夜')
-  // 两变体共用同一张透明立绘（辉哥定稿：不要背景只要人物），定位策略一致（贴右、高撑满）
+  // 两变体共用同一张透明立绘（辉哥定稿：不要背景只要人物），定位策略一致（贴右、高约半屏）
   assert.equal(night!.backgroundImage, day!.backgroundImage)
   assert.match(night!.backgroundImage, /^data:image\/png;base64,/, '金克斯立绘必须是透明 PNG')
   assert.equal(day!.backgroundPosition, 'right center')
-  assert.equal(day!.backgroundSize, 'auto 100%')
+  assert.equal(day!.backgroundSize, 'auto 55%')
   // 之日也是官方原皮浅色打底：全部引用官方 static 阶梯或官方边框/交互黑蓝
   for (const [key, value] of Object.entries(day!.tokens)) {
     assert.match(value, /^var\(--dsw-static-(neutral|deepseek)|^#000000[0-9a-f]{2}$|^#263148[0-9a-f]{2}$/, key + ' 应引用官方 static 阶梯或官方浅色交互色')
