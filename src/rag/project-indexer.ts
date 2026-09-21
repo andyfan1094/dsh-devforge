@@ -15,8 +15,8 @@ import type { RagService } from './service.ts'
 /** 固定排除目录名（与 .gitignore 无关，恒跳过）。 */
 const ALWAYS_SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.next', 'target', '.venv', '__pycache__', '.pnpm-store', 'coverage'])
 
-/** 允许入库的文本扩展名（小写含点）。 */
-const ALLOWED_EXT = new Set(['.md', '.txt', '.csv', '.json', '.yaml', '.yml', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '.go', '.rs', '.java', '.sh', '.css', '.html'])
+/** 允许入库的文本扩展名（小写含点）。0.34.4 起纳入 .cs/.sql/.xml/.config：辉哥定稿，均辉 C# WebApi 与波斯通 WinForms/SQL 资料需要语义可检索。 */
+const ALLOWED_EXT = new Set(['.md', '.txt', '.csv', '.json', '.yaml', '.yml', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '.go', '.rs', '.java', '.sh', '.css', '.html', '.cs', '.sql', '.xml', '.config'])
 
 /** 单文件字节上限（超出跳过）。 */
 const MAX_FILE_BYTES = 256 * 1024
