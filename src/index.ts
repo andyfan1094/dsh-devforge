@@ -626,7 +626,10 @@ export function apply(ctx: Context, config?: Config): void {
     zhipu: new ZhipuEmbedder(zhipuPoolCredential('尚未配置智谱 API Key（Key 池为空），RAG 向量化不可用。')),
     // 方舟 Coding Plan 向量端点（套餐内额度，2026-09-21 实测 doubao-embedding-vision-251215 可调、2048 维；
     // 文本型 doubao-embedding-large-text-* 在套餐网关 404，勿用）。按量付费 /api/v3 会产生额外费用，禁止回切。
-    ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3', path: '/embeddings', model: 'doubao-embedding-vision-251215' }),
+    // batchSize=4 教训（2026-09-21）：默认 16 条/批 × 512 字中文会触发方舟 400 InvalidParameter「input limit
+    // exceeded」（实测 16 条爆、8 条过、4 条稳，中文 512 字约 500-800 token，4 条留足余量）；
+    // 20 篇 mnemon 长文档整批失败即此因。方舟按 token 计费，小批次不增加费用。
+    ark: new ZhipuEmbedder(ragCredential('ARK_CODING_PLAN_API_KEY', '尚未配置方舟 API Key（ARK_CODING_PLAN_API_KEY）。'), { baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3', path: '/embeddings', model: 'doubao-embedding-vision-251215', batchSize: 4 }),
     'openai-gateway': new ZhipuEmbedder(ragOpenAiCredential, { baseURLProvider: ragOpenAiBaseURL, path: '/v1/embeddings', model: 'text-embedding-3-small' }),
     // 本地 Ollama：零额度免费无限用（bge-m3 中文 1024 维）；key 占位不影响（Ollama 不校验）。
     ollama: new ZhipuEmbedder(async () => 'ollama-local', { baseURL: 'http://localhost:11434', path: '/v1/embeddings', model: 'bge-m3' }),
