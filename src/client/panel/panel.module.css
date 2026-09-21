@@ -970,3 +970,11 @@
 /* 模型行右端操作组：状态徽标与删除按钮成组靠右，沿用行内紧凑密度。 */
 .modelRowEnd { display: flex; flex: none; min-width: 0; align-items: center; gap: 6px; }
 
+/* ===== 记忆做梦运行详情（MemoryTab 运行历史） ===== */
+/* 可展开行：有详情的运行可点击，hover 反馈可发现性；展开态光标提示。 */
+.memoryTableRow[data-expandable] { cursor: pointer; }
+.memoryTableRow[data-expandable]:hover { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 4%, transparent); }
+/* 详情块：缩进左边框面板，展示实际路由、错误与跳过明细，紧凑小字号、长文本可换行。 */
+.dreamRunDetail { margin: 0 0 8px; padding: 8px 10px; border-left: 2px solid var(--dsw-alias-border-l1, #e5e7eb); background: var(--dsw-alias-bg-layer-2, #f8fafc); border-radius: 4px; font-size: 11.5px; line-height: 1.55; color: var(--dsw-alias-label-primary, #1f2329); overflow-wrap: anywhere; }
+.dreamRunDetail ul { margin: 4px 0 0; padding-left: 18px; }
+

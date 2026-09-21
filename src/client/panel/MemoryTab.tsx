@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import { type BrainRouterCatalogProvider } from '../../brain-router/protocol.ts'
-import { type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type NativeMemoryEntry } from '../../memory/protocol.ts'
+import { type MemoryDreamRun, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type NativeMemoryEntry } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
@@ -34,6 +34,19 @@ function fmtTime(ts: number): string {
   return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
 }
 
+/** 做梦运行完整摘要（悬浮提示与详情块共用；此前结果列被 CSS 截断且悬浮为空，看不到结果明细）。 */
+function dreamRunSummary(run: MemoryDreamRun): string {
+  if (run.status === 'failed') return run.error ?? '失败'
+  if (run.status === 'skipped') return run.error ?? '未达触发条件'
+  if (Array.isArray(run.proposals)) return '快照 ' + run.snapshot + ' · 治理建议 ' + run.proposals.length + ' 条（待人工审核）'
+  return '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '') + (run.retried === true ? '（模型解析重试后成功）' : '')
+}
+
+/** 该运行是否值得展开（失败/降级/有跳过/有建议/有错误），决定行是否可点击展开详情。 */
+function dreamHasDetail(run: MemoryDreamRun): boolean {
+  return run.status === 'failed' || run.status === 'degraded' || run.skipped.length > 0 || Array.isArray(run.proposals) || run.error !== undefined
+}
+
 /** 记忆工作台。 */
 export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [status, setStatus] = useState<MemoryStatus | null>(null)
@@ -52,6 +65,8 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [profile, setProfile] = useState<MemoryUserProfile | null>(null)
   const [habitsText, setHabitsText] = useState('')
   const [dream, setDream] = useState<MemoryDreamStatus | null>(null)
+  // 做梦运行详情展开 id（空=全部收起）：degraded 的跳过明细存在 run.skipped，此前 UI 无处可看。
+  const [dreamDetailId, setDreamDetailId] = useState('')
   const [catalog, setCatalog] = useState<BrainRouterCatalogProvider[]>([])
   // 布局状态：页签、工具栏过滤、分页、折叠面板。
   const [tab, setTab] = useState<MemoryTabId>('library')
@@ -316,11 +331,24 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
             <div className={css['inlineActions']}><button type="button" className={css['primaryButton']} disabled={busy || dream?.running === true} onClick={() => { void runDream() }}>{dream?.running === true ? '整理中…' : '立即整理一次'}</button></div>
             {dream !== null && dream.runs.length > 0 ? <div className={css['memoryTable']}>
               <div className={css['memoryTableHead']}><span>时间</span><span>状态</span><span>结果</span></div>
-              {dream.runs.slice(0, 6).map((run) => <div key={run.id} className={css['memoryTableRow']}>
-                <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
-                <span className={css['categoryBadge']}>{run.status}</span>
-                <span className={css['memoryDocTitle']} title={run.error ?? ''}>{run.status === 'failed' ? (run.error ?? '失败') : run.status === 'skipped' ? (run.error ?? '未达触发条件') : Array.isArray(run.proposals) ? '快照 ' + run.snapshot + ' · 治理建议 ' + run.proposals.length + ' 条（待人工审核）' : '快照 ' + run.snapshot + ' · 归档 ' + run.archived + ' · 合并 ' + run.merged + ' 组 · 修订 ' + run.updated + (run.skipped.length > 0 ? ' · 跳过 ' + run.skipped.length : '')}</span>
-              </div>)}
+              {dream.runs.slice(0, 6).map((run) => {
+                const expanded = dreamDetailId === run.id
+                return <div key={run.id} className={css['dreamRunBlock']}>
+                  <div className={css['memoryTableRow']} data-expandable={dreamHasDetail(run) ? '' : undefined} onClick={() => { if (dreamHasDetail(run)) setDreamDetailId(expanded ? '' : run.id) }}>
+                    <span className={css['nativeTime']}>{fmtTime(run.finishedAt)}{run.manual ? ' · 手动' : ''}</span>
+                    <span className={css['categoryBadge']}>{run.status}</span>
+                    <span className={css['memoryDocTitle']} title={dreamRunSummary(run) + (run.model !== '' ? ' · 模型 ' + run.model : '')}>{dreamRunSummary(run)}{dreamHasDetail(run) ? (expanded ? ' ▴' : ' ▾') : ''}</span>
+                  </div>
+                  {expanded && <div className={css['dreamRunDetail']}>
+                    <div>实际路由：{run.model === '' ? '（未调用模型）' : run.model}{run.retried === true ? '（首次解析失败，重试后成功）' : ''}</div>
+                    {run.error !== undefined && run.error !== '' && <div>错误：{run.error}</div>}
+                    {run.skipped.length > 0 && <div>跳过明细（安全护栏拦截，合法子集已应用）：
+                      <ul>{run.skipped.map((item, index) => <li key={index}>{item.ids.map((id) => id.slice(0, 8)).join(', ')}：{item.reason}</li>)}</ul>
+                    </div>}
+                    {Array.isArray(run.proposals) && run.proposals.length > 0 && <div>治理建议 {run.proposals.length} 条待人工审核，到「治理运维」页处理。</div>}
+                  </div>}
+                </div>
+              })}
             </div> : <div className={css['empty']}>还没有做梦记录。开启后按静默窗口自动整理，或点上方按钮立即整理。</div>}
           </section>
           <section className={css['memoryPanel']}>
