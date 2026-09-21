@@ -4,6 +4,9 @@ import { buildCompletionCard, sendCard } from './outbound.mjs'
 
 const MAX_TRACKED_SESSIONS = 200
 
+/** 飞书入站会话 id 前缀（legacy 与 v2 一致）：回复本来就直接发回飞书，完成时不再补发通知卡。 */
+const FEISHU_SESSION_PREFIX = 'session-feishu'
+
 /**
  * 订阅 Host session/event，整个任务收敛时只发一张汇总卡片（而非每轮一张）。
  *
@@ -40,6 +43,7 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
   function observe(session, event) {
     const sessionId = String(session?.id ?? '').trim()
     if (sessionId === '') return
+    if (sessionId.startsWith(FEISHU_SESSION_PREFIX)) return
     rememberSession(sessionId, session)
     const type = String(event?.type ?? '')
     if (type === 'user/message') {
@@ -234,7 +238,8 @@ export function createCompletionNotifier({ getConfig, getClient, getSessionTitle
 
   function observeAgentDisposed(sessionOrId) {
     const sessionId = String(typeof sessionOrId === 'string' ? sessionOrId : sessionOrId?.id ?? '').trim()
-    if (sessionId === '' || tasks.get(sessionId) === undefined) return false
+    if (sessionId === '' || sessionId.startsWith(FEISHU_SESSION_PREFIX)) return false
+    if (tasks.get(sessionId) === undefined) return false
     if (sessionOrId !== null && typeof sessionOrId === 'object') rememberSession(sessionId, sessionOrId)
     const terminal = goalTerminal.get(sessionId)
     const task = tasks.get(sessionId)

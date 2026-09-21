@@ -412,3 +412,27 @@ test('通知：整条消息均为注入时回退原文截断，请求栏不空�
   const request = sent[0].card.body.elements.find((element) => element.text?.content.startsWith('**请求**'))
   assert.match(request.text.content, /未记录原始请求|内置长期记忆/)
 })
+
+test('通知：飞书入站会话（session-feishu*）不发完成通知，回复已直发飞书', async () => {
+  const sent = []
+  const notifier = makeNotifier(sent)
+  const feishuSession = { id: 'session-feishu-v2-9f2c1a7b4d5e6f8091a2b3c4d5e6f708' }
+  notifier.observe(feishuSession, route('glm-5.3'))
+  notifier.observe(feishuSession, { type: 'user/message', data: { content: [{ type: 'text', text: '飞书里布置的任务' }] } })
+  notifier.observe(feishuSession, { type: 'turn/start', data: { turn: 1 } })
+  notifier.observe(feishuSession, assistant('任务结果会直接回复到飞书。'))
+  notifier.observe(feishuSession, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await sleep(120)
+  assert.equal(sent.length, 0)
+  // agent 卸载兜底路径同样静默
+  assert.equal(notifier.observeAgentDisposed(feishuSession), false)
+  // 同一 notifier 对普通 GUI 会话照常通知，证明过滤没有误伤
+  const guiSession = { id: 's-gui-normal' }
+  notifier.observe(guiSession, { type: 'user/message', data: { content: [{ type: 'text', text: '普通会话任务' }] } })
+  notifier.observe(guiSession, { type: 'turn/start', data: { turn: 1 } })
+  notifier.observe(guiSession, assistant('普通会话完成。'))
+  notifier.observe(guiSession, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await sleep(80)
+  assert.equal(sent.length, 1)
+  assert.match(JSON.stringify(sent[0].card), /普通会话任务/)
+})
