@@ -1,12 +1,13 @@
 /**
- * 天工造梦内的插件更新页：上半区检查 dsh-devforge 自身（官网清单/GitHub 兜底，
- * 一键升级不变），下半区检查 DeepSeek Harness 本体（官方 GitHub Tags）。
+ * 天工造梦内的插件更新页：顶部官网账号设置卡（登录制下载凭据，密码脱敏）；
+ * 中区检查 dsh-devforge 自身（官网清单，登录制下载）；下区检查 DeepSeek Harness 本体（官方 GitHub Tags）。
  * 本体不做一键升级：官方没有跨安装方式的升级协议，页面只提供「查看官方版本 /
  * 复制升级命令」，由用户在终端执行后点「重启 DSH」生效。
  * 红点聚合判定在 DevforgePanel：仅当任一项确认 update-available 才亮。
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
+import { PLUGIN_UPDATE_DEFAULT_SITE_API, PLUGIN_UPDATE_SITE_USERNAME_RE, type PluginUpdateSiteView } from '../../plugin-update.ts'
 import type { UpdateCheckItem } from '../../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../../harness-update.ts'
 import css from './panel.module.css'
@@ -78,6 +79,74 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
   const [done, setDone] = useState('')
   const { items, harness, enabled, loading, error } = state
 
+  // —— 官网账号设置卡状态（页签打开即读取；保存走 PUT，密码绝不回显）。 ——
+  const [siteState, setSiteState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [site, setSite] = useState<PluginUpdateSiteView | null>(null)
+  const [siteLoadError, setSiteLoadError] = useState('')
+  const [formApiUrl, setFormApiUrl] = useState('')
+  const [formUsername, setFormUsername] = useState('')
+  const [formPassword, setFormPassword] = useState('')
+  const [siteSaving, setSiteSaving] = useState(false)
+  const [siteSaveError, setSiteSaveError] = useState('')
+  const [siteSaved, setSiteSaved] = useState('')
+
+  /** 读取官网账号设置（脱敏视图）；失败进错误态可重试。 */
+  const loadSite = (): void => {
+    void (async () => {
+      try {
+        setSiteState('loading')
+        setSiteLoadError('')
+        const view = await api.getPluginUpdateSite()
+        setSite(view)
+        setFormApiUrl(view.apiUrl)
+        setFormUsername(view.username)
+        setFormPassword('')
+        setSiteState('ready')
+      } catch (e) {
+        setSiteLoadError(e instanceof Error ? e.message : String(e))
+        setSiteState('error')
+      }
+    })()
+  }
+
+  // 页签打开即加载一次官网账号配置。
+  useEffect(loadSite, [api])
+
+  /** 保存官网账号：先做前置校验（用户名格式/密码长度/地址协议），通过后 PUT。 */
+  const saveSite = (): void => {
+    if (siteSaving) return
+    const username = formUsername.trim()
+    const apiUrl = formApiUrl.trim()
+    if (!PLUGIN_UPDATE_SITE_USERNAME_RE.test(username)) {
+      setSiteSaveError('用户名格式不正确：3-32 位字母、数字或下划线')
+      return
+    }
+    if (formPassword !== '' && formPassword.length < 8) {
+      setSiteSaveError('密码至少 8 位')
+      return
+    }
+    if (apiUrl !== '' && !apiUrl.startsWith('https://')) {
+      setSiteSaveError('官网地址必须以 https:// 开头（留空使用默认官网）')
+      return
+    }
+    void (async () => {
+      try {
+        setSiteSaving(true)
+        setSiteSaveError('')
+        setSiteSaved('')
+        // password 空串 = 不修改已存密码（Host 侧规则，首次设置必须非空）。
+        const view = await api.putPluginUpdateSite({ apiUrl, username, password: formPassword })
+        setSite(view)
+        setFormPassword('')
+        setSiteSaved('已保存，常驻生效')
+      } catch (e) {
+        setSiteSaveError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setSiteSaving(false)
+      }
+    })()
+  }
+
   /** 一键升级（仅插件行）：完成后刷新列表并提示重启生效。 */
   const upgrade = (item: UpdateCheckItem): void => {
     if (busy !== '') return
@@ -113,10 +182,51 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
     <section className={css['tabBody']}>
       <div className={css['toolbar']}>
         <strong>插件更新</strong>
-        <span className={css['sectionHint']}>插件对比官网清单（GitHub 兜底）；DSH 本体对比官方 GitHub Tags；升级后需重启 DSH 生效</span>
+        <span className={css['sectionHint']}>插件对比官网清单（登录制下载，账号见下方官网账号卡）；DSH 本体对比官方 GitHub Tags；升级后需重启 DSH 生效</span>
         <span className={css['toolbarSpacer']} />
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={onRefresh}>检查更新</button>
       </div>
+      {/* 官网账号设置卡：登录制下载凭据；密码脱敏（仅 hasPassword + 掩码），保存后常驻生效。 */}
+      <section className={css['memoryPanel']}>
+        <div className={css['panelHeading']}>
+          <div>
+            <h3 className={css['sectionTitle']}>官网账号</h3>
+            <p className={css['sectionHint']}>官网下载已启用登录制，配置后插件检查更新与自动升级可用；账号由管理员分配</p>
+          </div>
+          <span className={css['badge']}>{site !== null && site.username !== '' && site.hasPassword ? '已配置' : '未配置'}</span>
+        </div>
+        {siteState === 'loading' && <div className={css['empty']} data-loading="">正在读取官网账号配置…</div>}
+        {siteState === 'error' && (
+          <div className={css['memoryForm']}>
+            <div className={css['banner']} data-kind="error">官网账号配置读取失败：{siteLoadError}</div>
+            <div className={css['formFooter']}><span className={css['sectionHint']}></span><button type="button" className={css['ghostButton']} onClick={loadSite}>重新加载</button></div>
+          </div>
+        )}
+        {siteState === 'ready' && site !== null && (
+          <div className={css['memoryForm']}>
+            {siteSaveError !== '' && <div className={css['banner']} data-kind="error">{siteSaveError}</div>}
+            {siteSaved !== '' && <div className={css['banner']} data-kind="success">{siteSaved}</div>}
+            <div className={css['compactFields']}>
+              <label className={css['compactField']}>
+                <span className={css['fieldLabel']}>官网地址（留空用默认）</span>
+                <input className={css['input']} value={formApiUrl} placeholder={PLUGIN_UPDATE_DEFAULT_SITE_API} onChange={(e) => { setFormApiUrl(e.target.value); setSiteSaved('') }}/>
+              </label>
+              <label className={css['compactField']}>
+                <span className={css['fieldLabel']}>用户名</span>
+                <input className={css['input']} value={formUsername} placeholder="官网账号（管理员分配）" onChange={(e) => { setFormUsername(e.target.value); setSiteSaved('') }}/>
+              </label>
+              <label className={css['compactField']}>
+                <span className={css['fieldLabel']}>密码{site.hasPassword ? <span className={css['sectionHint']}> {site.passwordMask}</span> : null}</span>
+                <input className={css['input']} type="password" autoComplete="new-password" value={formPassword} placeholder={site.hasPassword ? '已设置——留空表示不修改' : '未设置'} onChange={(e) => { setFormPassword(e.target.value); setSiteSaved('') }}/>
+              </label>
+            </div>
+            <div className={css['formFooter']}>
+              <span className={css['sectionHint']}>密码仅存本机 store.db（随 CNB 加密备份），接口只回传「是否已设置」，不回显明文。</span>
+              <button type="button" className={css['primaryButton']} disabled={siteSaving} onClick={saveSite}>{siteSaving ? '保存中…' : '保存官网账号'}</button>
+            </div>
+          </div>
+        )}
+      </section>
       {bannerError !== '' && <div className={css['banner']} data-kind="error">{bannerError}</div>}
       {done !== '' && <div className={css['banner']} data-kind="success">{done}</div>}
       {loading && <div className={css['empty']} data-loading="">正在检查更新…</div>}

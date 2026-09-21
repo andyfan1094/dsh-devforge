@@ -103,18 +103,14 @@ export interface PluginUpdateSitePatch {
  *   - password：缺省/空串 = 不修改已存密码；首次设置（现有为空）必须提供非空且 ≥8 位；上限 128 位防滥用。
  */
 export function applySitePatch(current: PluginUpdateSiteConfig, patch: PluginUpdateSitePatch): PluginUpdateSiteConfig {
-  // apiUrl：缺省保留；空串归一为缺省官网；非空必须 https 并去掉尾斜杠。
-  let apiUrl = current.apiUrl
-  if (typeof patch.apiUrl === 'string') {
-    const trimmed = patch.apiUrl.trim()
-    if (trimmed === '') {
-      apiUrl = PLUGIN_UPDATE_DEFAULT_SITE_API
-    } else {
-      if (!trimmed.startsWith('https://')) throw new Error('官网地址必须以 https:// 开头')
-      apiUrl = trimmed.replace(/\/+$/, '')
-    }
+  // apiUrl：缺省保留现有；空串归一为缺省官网；无论来自补丁还是存量，统一 https 校验 + 去尾斜杠（幂等归一）。
+  let apiUrl = typeof patch.apiUrl === 'string' ? patch.apiUrl.trim() : current.apiUrl
+  if (apiUrl === '') {
+    apiUrl = PLUGIN_UPDATE_DEFAULT_SITE_API
+  } else {
+    if (!apiUrl.startsWith('https://')) throw new Error('官网地址必须以 https:// 开头')
+    apiUrl = apiUrl.replace(/\/+$/, '')
   }
-  if (apiUrl.trim() === '') apiUrl = PLUGIN_UPDATE_DEFAULT_SITE_API
 
   // username：缺省保留现有；现有为空且未提供 = 首设缺失；提供则校验格式。
   let username = current.username
