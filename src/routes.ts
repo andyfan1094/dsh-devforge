@@ -8,7 +8,7 @@
  */
 
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import type { PluginUpdateApplyResult, UpdateCheckItem } from './plugin-update.ts'
+import type { PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from './plugin-update.ts'
 import type { HarnessUpdateCheckItem } from './harness-update.ts'
 import type { ForgeEngine } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
@@ -96,6 +96,10 @@ export function makeRoutes(
     apply: (packageName: string) => Promise<PluginUpdateApplyResult>
     /** DSH 本体检查（官方 GitHub Tags，含预发布版本比较与升级命令引导）。 */
     harnessCheck: () => Promise<HarnessUpdateCheckItem>
+    /** 官网账号设置读取（脱敏视图：明文密码不出 Host）。 */
+    siteGet: () => PluginUpdateSiteView
+    /** 官网账号设置写入（校验失败抛中文错误 → 400）。 */
+    sitePut: (patch: PluginUpdateSitePatch) => PluginUpdateSiteView
   },
   /** 一键发布执行器（可选；index.ts 闭包延迟取远程引擎，请求时才解引用）。 */
   deploy?: { run(id: string): Promise<ProjectDeployResult> },
@@ -165,6 +169,31 @@ export function makeRoutes(
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-update/site',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        // GET：脱敏视图（hasPassword 布尔 + 掩码，明文密码绝不回传）。
+        if (req.method === 'GET') {
+          writeJson(res, 200, { ok: true, site: pluginUpdate.siteGet() })
+          return
+        }
+        // PUT：保存官网账号；校验失败（格式/首设缺失）以 400 + 中文报错返回。
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          if (body === null) { writeJson(res, 400, { ok: false, error: '请求体不是合法 JSON' }); return }
+          try {
+            const site = pluginUpdate.sitePut(body)
+            writeJson(res, 200, { ok: true, site })
+          } catch (error) {
+            writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+          }
+          return
+        }
+        writeJson(res, 405, { ok: false, error: 'GET/PUT only' })
       },
     },
     {

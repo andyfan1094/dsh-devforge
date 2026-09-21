@@ -22,7 +22,7 @@ import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
-import type { PluginUpdateApplyResult, UpdateCheckItem } from '../plugin-update.ts'
+import type { PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -356,6 +356,22 @@ export class DevforgeApi {
   async checkHarnessUpdate(): Promise<HarnessUpdateCheckItem> {
     const data = await readJson<{ harness: HarnessUpdateCheckItem }>(await fetch(DEVFORGE_API.pluginUpdateHarness))
     return data.harness
+  }
+
+  /** 插件更新：读取官网账号设置（脱敏视图，无明文密码）。 */
+  async getPluginUpdateSite(): Promise<PluginUpdateSiteView> {
+    const data = await readJson<{ site: PluginUpdateSiteView }>(await fetch(DEVFORGE_API.pluginUpdateSite, { cache: 'no-store' }))
+    return data.site
+  }
+
+  /** 插件更新：保存官网账号设置（password 留空 = 不修改已存密码；校验失败抛 400 中文报错）。 */
+  async putPluginUpdateSite(patch: PluginUpdateSitePatch): Promise<PluginUpdateSiteView> {
+    const data = await readJson<{ site: PluginUpdateSiteView }>(await fetch(DEVFORGE_API.pluginUpdateSite, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }))
+    return data.site
   }
 
   /** 读取本地浏览器脱敏状态（不拉起浏览器进程）。 */

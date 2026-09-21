@@ -292,15 +292,16 @@ function assistantTextOf(message) {
     .trim()
 }
 
-/** 段落级注入特征：Harness 在用户消息里追加的系统上下文（skills 列表、记忆候选、运行时快照、附件描述）。 */
-const INJECTION_HINT = /<{1,2}system-reminder>|\[(?:常驻记忆|内置长期记忆|记忆中枢自动注入|记忆中枢|当前运行时上下文|agent-proposal|session-reflection|mnemon)|Current runtime context\.|^Image "/m
+/** 段落级注入特征：Harness 在用户消息里追加的系统上下文（skills 列表、记忆候选、运行时快照、附件描述），
+ * 以及以用户身份进入事件流的系统通知（后台任务完成、模型切换标注、上下文压缩检查点）。 */
+const INJECTION_HINT = /<{1,2}system-reminder>|\[(?:常驻记忆|内置长期记忆|记忆中枢自动注入|记忆中枢|当前运行时上下文|agent-proposal|session-reflection|mnemon)|Current runtime context\.|^Image "|^background job \S+ \(|Read its output with job_output\.|^\[model changed:|^This is an automatically generated checkpoint/m
 
 /**
  * 从原始用户消息提取用户真实输入：
  * Harness 注入的系统上下文（<<system-reminder>> skills 列表、[内置长期记忆] 候选、
  * [记忆中枢自动注入] 等）与用户输入以空行分段——注入堆要么前置、要么缀尾。
  * 按双换行分段：跳过前置注入段，收集干净段，遇到尾部注入段即停。
- * 全部段落都是注入时返回 ''，调用方回退原文截断。
+ * 全部段落都是注入时返回 ''（辉哥定稿：请求栏只认用户原文，纯系统消息不覆盖上一条真实输入）。
  */
 function extractUserInput(text) {
   const collected = []
@@ -327,7 +328,9 @@ function userTextOf(data) {
       .map((block) => block.text)
       .join('\n')
     const userInput = extractUserInput(text)
-    if (userInput !== '') return userInput.replace(/\s+/g, ' ').trim().slice(0, 2_000)
+    // 整条都是注入/系统通知时返回空串，trackUserText 据此不覆盖上一条用户真实输入。
+    return userInput.replace(/\s+/g, ' ').trim().slice(0, 2_000)
   }
-  return String(message?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 2_000)
+  const fallback = String(message?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 2_000)
+  return INJECTION_HINT.test(fallback) ? '' : fallback
 }

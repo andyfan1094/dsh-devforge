@@ -105,7 +105,7 @@ import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SAND
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
 import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
-import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, type PluginUpdateSiteConfig, type PluginUpdateSiteView } from './plugin-update.ts'
+import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, applySitePatch, toSiteView, type PluginUpdateSiteConfig, type PluginUpdateSitePatch, type PluginUpdateSiteView } from './plugin-update.ts'
 import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 
 /** cordis 插件名（稳定 id）。 */
@@ -586,20 +586,11 @@ export function apply(ctx: Context, config?: Config): void {
   }
   /** 官网账号设置读取（脱敏视图：明文密码不出 Host，浏览器只见 hasPassword + 掩码）。 */
   const pluginUpdateSiteGet = (): PluginUpdateSiteView => {
-    const site = pluginUpdateSiteRead()
-    return {
-      apiUrl: PLUGIN_UPDATE_DEFAULT_SITE_API,
-      username: site.username,
-      hasPassword: site.password !== '',
-      passwordMask: site.password === '' ? '' : '••••••••',
-    }
+    return toSiteView(pluginUpdateSiteRead())
   }
-  /** 官网账号设置写入（password 空串 = 不修改已存密码；apiUrl 固定官网，不接受外部改写）。 */
-  const pluginUpdateSitePut = (patch: { username?: unknown; password?: unknown }): PluginUpdateSiteView => {
-    const current = pluginUpdateSiteRead()
-    const username = typeof patch.username === 'string' ? patch.username.trim() : current.username
-    const password = typeof patch.password === 'string' && patch.password !== '' ? patch.password : current.password
-    pluginUpdateSiteWrite({ apiUrl: PLUGIN_UPDATE_DEFAULT_SITE_API, username, password })
+  /** 官网账号设置写入（校验与合并下沉 plugin-update.applySitePatch；password 空串 = 不修改已存密码）。 */
+  const pluginUpdateSitePut = (patch: PluginUpdateSitePatch): PluginUpdateSiteView => {
+    pluginUpdateSiteWrite(applySitePatch(pluginUpdateSiteRead(), patch))
     return pluginUpdateSiteGet()
   }
 
@@ -883,6 +874,8 @@ export function apply(ctx: Context, config?: Config): void {
       check: () => pluginUpdateService.check(),
       apply: (packageName: string) => pluginUpdateService.apply(packageName),
       harnessCheck: () => harnessCheck(),
+      siteGet: pluginUpdateSiteGet,
+      sitePut: pluginUpdateSitePut,
     }, {
       run: async (id: string) => {
         const entry = listProjects().find((project) => project.id === id)

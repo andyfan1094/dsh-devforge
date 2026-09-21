@@ -236,7 +236,8 @@ export function buildCompletionCard({ subject, request, response, model, turn, d
     },
     body: {
       elements: [
-        { tag: 'div', text: { tag: 'lark_md', content: '**请求**\n' + safeRequest } },
+        // 辉哥定稿：请求内容整体加粗，与正文视觉区分。
+        { tag: 'div', text: { tag: 'lark_md', content: '**请求**\n**' + safeRequest + '**' } },
         ...resultElements,
         ...(reasonText !== '' ? [{ tag: 'div', text: { tag: 'lark_md', content: reasonText } }] : []),
         { tag: 'hr' },

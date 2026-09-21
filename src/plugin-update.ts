@@ -68,6 +68,76 @@ export interface PluginUpdateSiteView {
   passwordMask: string
 }
 
+/** 官网用户名规则：3-32 位字母、数字或下划线（官网服务端同款约束）。 */
+export const PLUGIN_UPDATE_SITE_USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/
+
+/**
+ * 官网账号设置脱敏视图：明文密码绝不出 Host，浏览器只见 hasPassword 与掩码。
+ * apiUrl 空串按缺省官网（PLUGIN_UPDATE_DEFAULT_SITE_API）归一后返回。
+ */
+export function toSiteView(site: PluginUpdateSiteConfig): PluginUpdateSiteView {
+  const apiUrl = site.apiUrl.trim() !== '' ? site.apiUrl.trim() : PLUGIN_UPDATE_DEFAULT_SITE_API
+  return {
+    apiUrl,
+    username: site.username,
+    hasPassword: site.password !== '',
+    passwordMask: site.password === '' ? '' : '••••••••',
+  }
+}
+
+/** 官网账号设置 PUT 请求体（字段全部可选；缺省 = 保留现有值）。 */
+export interface PluginUpdateSitePatch {
+  /** 官网 API 根地址；空串 = 重置为缺省官网。 */
+  apiUrl?: unknown
+  /** 官网账号（管理员分配）。 */
+  username?: unknown
+  /** 官网密码；空串/缺省 = 不修改已存密码。 */
+  password?: unknown
+}
+
+/**
+ * 官网账号设置补丁的校验与合并：返回落库用的完整 site 配置；非法输入抛中文错误（路由层转 400）。
+ * 规则（辉哥定）：
+ *   - apiUrl：缺省保留现有；空串重置为缺省官网；非空必须 https:// 开头（登录密码走明文 body，拒绝 http）。
+ *   - username：缺省保留现有；现有为空且未提供 → 首设缺失报错；提供则 trim 后按 PLUGIN_UPDATE_SITE_USERNAME_RE 校验。
+ *   - password：缺省/空串 = 不修改已存密码；首次设置（现有为空）必须提供非空且 ≥8 位；上限 128 位防滥用。
+ */
+export function applySitePatch(current: PluginUpdateSiteConfig, patch: PluginUpdateSitePatch): PluginUpdateSiteConfig {
+  // apiUrl：缺省保留；空串归一为缺省官网；非空必须 https 并去掉尾斜杠。
+  let apiUrl = current.apiUrl
+  if (typeof patch.apiUrl === 'string') {
+    const trimmed = patch.apiUrl.trim()
+    if (trimmed === '') {
+      apiUrl = PLUGIN_UPDATE_DEFAULT_SITE_API
+    } else {
+      if (!trimmed.startsWith('https://')) throw new Error('官网地址必须以 https:// 开头')
+      apiUrl = trimmed.replace(/\/+$/, '')
+    }
+  }
+  if (apiUrl.trim() === '') apiUrl = PLUGIN_UPDATE_DEFAULT_SITE_API
+
+  // username：缺省保留现有；现有为空且未提供 = 首设缺失；提供则校验格式。
+  let username = current.username
+  if (typeof patch.username === 'string') {
+    username = patch.username.trim()
+    if (!PLUGIN_UPDATE_SITE_USERNAME_RE.test(username)) throw new Error('用户名格式不正确：3-32 位字母、数字或下划线')
+  } else if (username === '') {
+    throw new Error('缺少用户名：请填写官网账号（3-32 位字母、数字或下划线，账号由管理员分配）')
+  }
+
+  // password：缺省/空串 = 不修改；首次设置必须提供且 ≥8 位；上限 128 位。
+  let password = current.password
+  if (typeof patch.password === 'string' && patch.password !== '') {
+    if (patch.password.length < 8) throw new Error('密码至少 8 位')
+    if (patch.password.length > 128) throw new Error('密码过长（最多 128 位）')
+    password = patch.password
+  } else if (password === '') {
+    throw new Error('首次设置必须填写密码（至少 8 位）')
+  }
+
+  return { apiUrl, username, password }
+}
+
 /** 插件更新配置。 */
 export interface PluginUpdateConfig {
   /** 总开关；false 时 check/apply 都返回明确提示。 */

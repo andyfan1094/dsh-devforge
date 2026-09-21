@@ -35,6 +35,8 @@ export const DEVFORGE_API = {
   pluginUpdateApply: '/api/dsh-devforge/plugin-update/apply',
   /** 插件更新：DSH 本体检查（官方 GitHub Tags，含预发布版本比较）。 */
   pluginUpdateHarness: '/api/dsh-devforge/plugin-update/harness',
+  /** 插件更新：官网账号设置（GET 脱敏读取 / PUT 保存，密码不回传）。 */
+  pluginUpdateSite: '/api/dsh-devforge/plugin-update/site',
   /** 模型 token 计量：本机会话库聚合的三窗用量报告。 */
   tokenUsage: '/api/dsh-devforge/usage/tokens',
   /** 250k 压缩预设一键配置：GET 状态 / POST 创建（可设默认）。 */
