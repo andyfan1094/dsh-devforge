@@ -62,10 +62,9 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
       api.getArkStatus(),
       api.getMiniMaxStatus(),
       api.getSiliconFlowStatus(),
-      api.getOpenAiGatewayStatus(),
       api.getFeishuStatus(),
     ])
-    const [zhipu, ark, minimax, siliconflow, gateway, feishu] = results
+    const [zhipu, ark, minimax, siliconflow, feishu] = results
     const rows: ServiceRow[] = []
     rows.push({
       key: 'zhipu',
@@ -103,16 +102,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         ? (siliconflow.value.credentialConfigured ? `已配置 · ${siliconflow.value.syncChatModels ? '同步对话模型目录' : '仅向量嵌入模式'}` : '未配置 API Key')
         : '状态读取失败',
     })
-    rows.push({
-      key: 'gateway',
-      label: '天工造梦中转',
-      ok: gateway.status === 'fulfilled' && gateway.value.credentialConfigured,
-      detail: gateway.status === 'fulfilled'
-        ? (gateway.value.credentialConfigured
-          ? `已配置 · 端点 ${gateway.value.endpoints.length} 个 · 模型 ${gateway.value.models.length} 个`
-          : '未配置 API Key')
-        : '状态读取失败',
-    })
+
     rows.push({
       key: 'feishu',
       label: '飞书',
@@ -150,7 +140,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
     setSiteBusy(true)
     try {
       setSite(await api.logoutModagentai())
-      setSiteMsg('已退出官网账号（中转端点保留，令牌已失效）')
+      setSiteMsg('已退出官网账号（天工造梦模型路由已停用，重新登录即恢复）')
     } catch (error) {
       setSiteErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -183,11 +173,10 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         api.getArkStatus(),
         api.getMiniMaxStatus(),
         api.getSiliconFlowStatus(),
-        api.getOpenAiGatewayStatus(),
         api.getFeishuStatus(),
       ])
       if (cancelled) return
-      const [profile, meta, harness, zhipu, ark, minimax, siliconflow, gateway, feishu] = results
+      const [profile, meta, harness, zhipu, ark, minimax, siliconflow, feishu] = results
       if (profile.status === 'fulfilled') {
         setAlias(profile.value.alias)
         setIdentity(profile.value.identity)
@@ -231,16 +220,6 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         ok: siliconflow.status === 'fulfilled' && siliconflow.value.credentialConfigured,
         detail: siliconflow.status === 'fulfilled'
           ? (siliconflow.value.credentialConfigured ? `已配置 · ${siliconflow.value.syncChatModels ? '同步对话模型目录' : '仅向量嵌入模式'}` : '未配置 API Key')
-          : '状态读取失败',
-      })
-      rows.push({
-        key: 'gateway',
-        label: '天工造梦中转',
-        ok: gateway.status === 'fulfilled' && gateway.value.credentialConfigured,
-        detail: gateway.status === 'fulfilled'
-          ? (gateway.value.credentialConfigured
-            ? `已配置 · 端点 ${gateway.value.endpoints.length} 个 · 模型 ${gateway.value.models.length} 个`
-            : '未配置 API Key')
           : '状态读取失败',
       })
       rows.push({
@@ -348,6 +327,17 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
               </span>
             </div>
           ))}
+          {siteLoaded && (
+            <div className={css['metricRow']}>
+              <span>
+                <strong>天工造梦</strong>
+                <span className={css['sectionHint']}> {site?.loggedIn ? (site.autoApplied ? 'GLM-Flash 已进入模型路由' : '尚未配置，登录后点击「重新配置中转」') : '登录官网账号后自动配置'}</span>
+              </span>
+              <span className={css['sectionHint']} style={{ color: site?.loggedIn && site.autoApplied ? 'var(--dsw-alias-state-success-primary, #16a34a)' : 'var(--dsw-alias-label-tertiary)' }}>
+                {site?.loggedIn && site.autoApplied ? '● 已接入' : '○ 未接入'}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

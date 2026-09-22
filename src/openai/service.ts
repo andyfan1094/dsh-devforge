@@ -355,6 +355,41 @@ export class OpenAiGatewayService {
     return await this.saveConfig({ endpoints })
   }
 
+  /**
+   * 删除一个端点并清理其 llm-pi-ai provider 路由（modagentai 原生化迁移专用）。
+   * 不做主脑引用检查：迁移场景同模型由新 provider 接管，旧引用由用户重选一次即可。
+   */
+  async removeEndpoint(id: string): Promise<void> {
+    const current = this.endpointConfigs()
+    const endpoints = current.filter((item) => item.id !== id)
+    if (endpoints.length === current.length) return
+    const next: OpenAiCapabilityConfig = {
+      ...this.config,
+      baseURL: endpoints[0]?.baseURL ?? '',
+      apiKeyEnv: endpoints[0]?.apiKeyEnv ?? this.config.apiKeyEnv,
+      imageModel: endpoints[0]?.imageModel ?? '',
+      endpoints,
+    }
+    await this.writeDevforgeConfig(next)
+    Object.assign(this.config, next)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) return
+      const section = descriptor.value as ProviderSection | undefined
+      const providers = section?.providers ?? {}
+      const targetIds = current.filter((item) => item.id === id).map((item) => openAiProviderId(item, current.indexOf(item))).filter((providerId) => providers[providerId] !== undefined)
+      if (targetIds.length === 0) return
+      const mutations: SettingsMutation[] = targetIds.map((providerId) => ({ op: 'unset' as const, path: ['providers', providerId] }))
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, mutations, descriptor.revision)
+        return
+      } catch (error) {
+        if (error instanceof SettingsConflictError && attempt === 0) continue
+        throw error
+      }
+    }
+  }
+
   /** 修改一个端点内单个模型的上下文窗口（及 Anthropic 端点的输出上限）；显式覆盖值优先于默认档案且同步时不会被迁移重置。 */
   async saveModelProfile(patch: OpenAiGatewayModelPatch): Promise<OpenAiGatewayStatus> {
     const endpoints = this.endpointConfigs()

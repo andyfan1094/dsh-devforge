@@ -1,15 +1,52 @@
 /**
- * 官网账号服务（业务层）：登录 modagentai.com、保存会话令牌、自动写入中转端点。
+ * 官网账号服务（业务层）：登录 modagentai.com、保存会话令牌、自动配置天工造梦原生模型路由。
  *
  * 安全模型：会话令牌只进受管凭据（.credentials.yaml，0600），面板与日志永不回显；
- * 登录成功即自动把「天工造梦中转」写入 OpenAI 中转端点列表（BASE URL + 端点密钥引用），
- * 用户无需手动配置。账号信息（用户名/角色）存 store.db settings 表（插件内部状态，不进宿主设置面板）。
+ * 登录成功即直接在 DSH 模型体系（llm-pi-ai 段）注册「天工造梦」原生 provider，
+ * 不经过 OpenAI 中转端点体系。账号信息（用户名/角色）存 store.db settings 表。
  */
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { Context } from '@deepseek-ai/cordis'
+import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
+import { settingsNamespace } from '../settings-compat.ts'
+import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiStatus } from './protocol.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
+
+/** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
+const LLM_PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
+/** 天工造梦原生 provider id（模型切换行显示 tiangong/GLM-Flash）。 */
+const TIANGONG_PROVIDER_ID = 'tiangong'
+/** 旧 OpenAI 中转体系生成的 provider id（迁移时清理）。 */
+const LEGACY_GATEWAY_PROVIDER_ID = 'openai-gateway-modagentai'
+
+/** 天工造梦原生 provider 声明（GLM-Flash，实测上下文贴 256K；openai-completions 协议走 /chat/completions）。 */
+const TIANGONG_PROVIDER: Record<string, unknown> = {
+  apiKeyEnv: MODAGENTAI_GW_KEY_REF,
+  displayName: '天工造梦',
+  api: 'openai-completions',
+  baseURL: MODAGENTAI_GW_BASE,
+  models: [{
+    id: 'GLM-Flash',
+    name: 'GLM-Flash',
+    contextWindow: 262144,
+    input: ['text', 'image'],
+    reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
+  }],
+  defaultContextWindow: 262144,
+  defaultMaxTokens: 32768,
+  defaultInput: ['text', 'image'],
+  retryPolicy: {
+    mode: 'normal',
+    maxRetries: 5,
+    retryableCodes: ['RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE'],
+    backoff: { initialDelayMs: 1000, maxDelayMs: 120000, jitterRatio: 0.2 },
+  },
+}
+
+/** 设置段变更操作（与宿主 settings.mutate 对齐的最小类型）。 */
+type SettingsMutation = { op: 'set'; path: string[]; value: unknown } | { op: 'unset'; path: string[] }
 
 /** 官网账号业务错误（HTTP 语义状态码，面板直接展示文案）。 */
 export class ModagentaiServiceError extends Error {
@@ -187,26 +224,55 @@ export class ModagentaiService {
       }
     }
     await this.ctx.credentials.unset(credentialRef(MODAGENTAI_SESSION_REF))
+    // 同步停用天工造梦模型路由与端点密钥（重新登录即自动恢复）
+    try { await this.writeTiangongProvider(true) } catch { /* 宿主段未就绪也照常登出 */ }
+    try { await this.ctx.credentials.unset(credentialRef(MODAGENTAI_GW_KEY_REF)) } catch { /* 密钥本就不存在 */ }
     this.writeSettings({ ...EMPTY_SETTINGS })
     return await this.status()
   }
 
   /**
-   * 自动配置中转：写端点密钥 → upsert「天工造梦中转」端点 → 拉取模型目录建立聊天路由。
-   * 端点 upsert 按 id 定位，不会触碰用户手配的其它端点。
+   * 自动配置天工造梦模型路由：写端点密钥 → 直写 llm-pi-ai 段注册 tiangong 原生 provider
+   * （openai-completions 协议，GLM-Flash）→ 清理旧 OpenAI 中转体系残留。
    */
   async applyGateway(): Promise<ModagentaiStatus> {
     const token = await this.readToken()
     if (token === '') throw new ModagentaiServiceError('尚未登录官网账号。', 401)
     await this.ctx.credentials.set(credentialRef(MODAGENTAI_GW_KEY_REF), token)
-    await this.openai.saveEndpoint({ id: MODAGENTAI_ENDPOINT_ID, name: '天工造梦中转', baseURL: MODAGENTAI_GW_BASE, apiKeyEnv: MODAGENTAI_GW_KEY_REF })
-    const fetched = await this.openai.fetchModels(undefined, MODAGENTAI_ENDPOINT_ID)
-    const result = fetched.results.find((item) => item.endpointId === MODAGENTAI_ENDPOINT_ID)
-    if (result === undefined || !result.ok) {
-      throw new ModagentaiServiceError(result?.error ?? '模型目录获取失败。', 502)
+    await this.writeTiangongProvider(false)
+    try {
+      await this.openai.removeEndpoint(MODAGENTAI_ENDPOINT_ID)
+    } catch (error) {
+      // 旧体系清理失败不阻断主流程（provider 已由 tiangong 接管）
+      this.ctx.logger?.warn?.('[dsh-devforge] 旧中转端点清理失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))
     }
     const settings = this.readSettings()
-    this.writeSettings({ ...settings, autoApplied: true, appliedModels: result.modelCount })
+    this.writeSettings({ ...settings, autoApplied: true, appliedModels: 1 })
     return await this.status()
+  }
+
+  /** 直写 llm-pi-ai 段：注册/移除 tiangong 原生 provider，并清理旧 openai-gateway- 前缀路由。 */
+  private async writeTiangongProvider(remove: boolean): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+      if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+      const current = descriptor.value as { providers?: Record<string, unknown> } | undefined
+      const providers = current?.providers ?? {}
+      const mutations: SettingsMutation[] = []
+      if (remove) {
+        if (providers[TIANGONG_PROVIDER_ID] !== undefined) mutations.push({ op: 'unset', path: ['providers', TIANGONG_PROVIDER_ID] })
+      } else if (!deepEqualJson(TIANGONG_PROVIDER, providers[TIANGONG_PROVIDER_ID])) {
+        mutations.push({ op: 'set', path: ['providers', TIANGONG_PROVIDER_ID], value: TIANGONG_PROVIDER })
+      }
+      if (providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined) mutations.push({ op: 'unset', path: ['providers', LEGACY_GATEWAY_PROVIDER_ID] })
+      if (mutations.length === 0) return
+      try {
+        await this.ctx.settings.mutate(LLM_PI_AI_NAMESPACE, mutations, descriptor.revision)
+        return
+      } catch (error) {
+        if (error instanceof SettingsConflictError && attempt === 0) continue
+        throw error
+      }
+    }
   }
 }
