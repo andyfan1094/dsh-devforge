@@ -12,6 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiStatus } from './protocol.ts'
+import { TIANGONG_REASONING_EFFORTS, tiangongEffortsOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -32,7 +33,7 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
     name: 'GLM-Flash',
     contextWindow: 262144,
     input: ['text', 'image'],
-    reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
+    reasoningEfforts: TIANGONG_REASONING_EFFORTS,
   }],
   defaultContextWindow: 262144,
   defaultMaxTokens: 32768,
@@ -50,9 +51,13 @@ type SettingsMutation = { op: 'set'; path: string[]; value: unknown } | { op: 'u
 
 /** 官网账号业务错误（HTTP 语义状态码，面板直接展示文案）。 */
 export class ModagentaiServiceError extends Error {
-  constructor(message: string, public status = 400) {
+  /** HTTP 语义状态码（面板直接展示文案用）。 */
+  status: number
+
+  constructor(message: string, status = 400) {
     super(message)
     this.name = 'ModagentaiServiceError'
+    this.status = status
   }
 }
 
@@ -73,7 +78,13 @@ const SITE = 'https://modagentai.com'
 const HTTP_TIMEOUT = 30_000
 
 export class ModagentaiService {
-  constructor(private ctx: Context, private openai: OpenAiGatewayService) {}
+  private ctx: Context
+  private openai: OpenAiGatewayService
+
+  constructor(ctx: Context, openai: OpenAiGatewayService) {
+    this.ctx = ctx
+    this.openai = openai
+  }
 
   /** 读取账号会话信息（无则空对象）。 */
   private readSettings(): ModagentaiAccountSettings {
@@ -261,10 +272,14 @@ export class ModagentaiService {
     if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
     const section = descriptor.value as { providers?: Record<string, unknown> } | undefined
     const providers = section?.providers ?? {}
-    if (providers[LEGACY_GATEWAY_PROVIDER_ID] === undefined) return
+    // 旧中转残留需要迁移；已注册的 tiangong 声明若档位落后（缺 xhigh/max）同样要刷新。
+    const hasLegacy = providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined
+    if (!hasLegacy && !tiangongEffortsOutdated(providers[TIANGONG_PROVIDER_ID])) return
     const token = await this.readToken()
     if (token === '') return
-    this.ctx.logger?.info?.('[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider')
+    this.ctx.logger?.info?.(hasLegacy
+      ? '[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider'
+      : '[dsh-devforge] 天工造梦模型声明档位落后，自动刷新为五档（含 xhigh/max）')
     await this.applyGateway()
   }
 
@@ -292,3 +307,4 @@ export class ModagentaiService {
     }
   }
 }
+
