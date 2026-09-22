@@ -302,13 +302,14 @@ export function buildImagePrompt({ text = '', imagePath = '', imageMeta = null }
 /**
  * 飞书通道提示前缀。
  * 为什么需要：飞书桥创建的是独立 DSH 会话，模型并不知道消息来自飞书通道；
- * 它一旦调用 ask_user_question 等交互类工具，弹框只会出现在电脑端 Web 面板，
- * 手机飞书侧的用户既看不到也无法作答，任务会一直挂起（0.36.2 实测踩坑）。
- * 因此每轮普通消息前注入本提示，约束模型只用文字与用户交互。
+ * 它若依赖只存在于电脑端 Web 面板的交互（GUI 展示、文件预览等），手机飞书侧
+ * 的用户既看不到也无法操作（0.36.2 实测踩坑）。
+ * 因此每轮普通消息前注入本提示，约束模型只用飞书可达的方式与用户交互。
+ * 注意：ask_user_question 已由飞书答题器接管（0.36.3），问题会以互动卡片送达用户。
  */
 const FEISHU_CHANNEL_HINT = [
   '【通道提示】本会话经飞书通道接入：用户正在手机飞书上对话，看不到电脑端 Web 面板。',
-  '禁止调用 ask_user_question 等会弹交互框/审批框的工具——弹框只会出现在电脑端，用户无法看到也无法作答；需要向用户确认时，直接在回复文字里提问，等用户下一条飞书消息回答。',
+  '需要向用户提问或让用户做选择时，正常调用 ask_user_question——问题会以飞书互动卡片送达用户手机，用户点选后答案会自动返回给你；除该工具外，不要依赖其他只存在于电脑端 GUI 的交互方式。',
   '生成的文件、图片等产出直接以文字说明路径，或调用飞书发送工具（如 dsh_feishu_send_file / dsh_feishu_send_image）发给用户，不要依赖网页 GUI 展示。',
 ].join('\n')
 
@@ -330,6 +331,7 @@ export function createFeishuClient({
   logger,
   onStopRequest,
   onMenuCommand,
+  onCardAction,
   onLoadState,
   onSaveState,
 } = {}) {
@@ -918,7 +920,11 @@ export function createFeishuClient({
     try {
       const actionValue = data?.action?.value ?? {}
       const openMessageId = String(data?.context?.open_message_id ?? '')
-      if (String(actionValue.action ?? '') !== CARD_STOP_ACTION) return null
+      if (String(actionValue.action ?? '') !== CARD_STOP_ACTION) {
+        // 非停止按钮（如问答卡片的选项按钮）交给外部回调路由；没有回调则忽略。
+        if (typeof onCardAction === 'function') return await onCardAction(actionValue, data)
+        return null
+      }
       const entry = cardIndex.get(openMessageId)
       const chatId = entry?.chatId ?? ''
       if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }

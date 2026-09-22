@@ -8,6 +8,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
 import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
+import { createQuestionAnswerer } from './questions.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
 import { makeRoutes } from './routes.mjs'
@@ -222,6 +223,13 @@ export function apply(ctx, config = {}) {
   const send = async (chatId, text) => bridge === null ? false : bridge.sendText(chatId, text)
   const createStream = async (chatId, options) => bridge === null ? null : bridge.createStreamingCard?.(chatId, options)
   const tracker = createReplyTracker({ sendText: send, createStream, warn })
+  // 飞书答题器：接管飞书会话的 ask_user_question，弹框改为飞书互动卡片送达用户手机。
+  const questionAnswerer = createQuestionAnswerer({
+    getClient: () => bridge?.getClient?.() ?? null,
+    sendText,
+    warn,
+    info,
+  })
   const completionNotifier = createCompletionNotifier({
     getConfig: () => store.panel(),
     getClient: () => bridge?.getClient?.() ?? null,
@@ -544,6 +552,7 @@ export function apply(ctx, config = {}) {
       }
       const entry = { chatId: key, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting }
       conversations.set(key, entry)
+      questionAnswerer.registerAgent(handle.agent.id, key)
       lastSessionError = ''
       return entry
     })()
@@ -629,6 +638,11 @@ export function apply(ctx, config = {}) {
       if (reply !== null) await send(envelope.chatId, reply)
       return
     }
+    // 开放题等待自由作答时，把这条普通文本消费为答案，不再进入任务流。
+    if (envelope.kind !== 'edit' && questionAnswerer.hasPendingCustom(envelope.chatId)) {
+      const consumed = questionAnswerer.recordCustomAnswer(envelope.chatId, envelope.text)
+      if (consumed) return
+    }
     if (reconfiguring) {
       await send(envelope.chatId, '飞书 Agent 配置正在更新，请稍后重新发送。')
       return
@@ -705,6 +719,7 @@ export function apply(ctx, config = {}) {
 
   async function stopBridgeAndSessions() {
     tracker.dispose()
+    questionAnswerer.dispose()
     const currentBridge = bridge
     bridge = null
     const handles = [...conversations.values()].map((entry) => entry.handle)
@@ -729,6 +744,8 @@ export function apply(ctx, config = {}) {
       logger: ctx?.logger,
       onStopRequest: handleStopRequest,
       onMenuCommand: handleMenuCommand,
+      // 问题卡片按钮回调路由给飞书答题器（停止按钮仍由桥内部处理）。
+      onCardAction: (value) => questionAnswerer.handleCardValue(value),
       onLoadState: () => store.getState(),
       onSaveState: (patch) => store.setState(patch),
     })
@@ -919,12 +936,15 @@ export function apply(ctx, config = {}) {
   }
   try { disposers.push(ctx.on('session/event', (session, event) => { void tracker.observeSessionEvent(session, event) })) } catch {}
   try { disposers.push(ctx.on('session/event', (session, event) => { void completionNotifier.observe(session, event) })) } catch {}
+  // 飞书答题器挂上宿主 user-questions waterfall：飞书会话由卡片认领，其余放行。
+  try { disposers.push(ctx.on('user-questions/request', (request, next) => questionAnswerer.answer(request, next))) } catch {}
   try { disposers.push(ctx.on('agent/error', (payload) => { void tracker.observeAgentError(payload) })) } catch {}
   try {
     disposers.push(ctx.on('agent/disposed', (payload) => {
       const agent = payload?.agent ?? payload
       const sid = String(agent?.id ?? agent?.session?.id ?? '')
       for (const [chatId, entry] of conversations) if (entry.agent.id === sid) conversations.delete(chatId)
+      questionAnswerer.forgetAgent(sid)
       void tracker.observeAgentDisposed(sid)
       void completionNotifier.observeAgentDisposed(agent?.session ?? sid)
     }))
