@@ -17,6 +17,7 @@ import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEn
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEpisode, type MemoryGraph, type MemoryQualityStats, type MemoryRecallFeedback, type MemoryRecallTrace, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
+import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiStatus } from '../modagentai/protocol.ts'
 import { BRAIN_ROUTER_API, type BrainRouterCatalogProvider, type BrainRouterSettings, type BrainRouterStatus } from '../brain-router/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
@@ -532,6 +533,35 @@ export class DevforgeApi {
       body: JSON.stringify(action),
     }))
     return data.result
+  }
+
+  /** 读取官网账号登录态与中转自动配置状态。 */
+  async getModagentaiStatus(signal?: AbortSignal): Promise<ModagentaiStatus> {
+    const data = await readJson<{ status: ModagentaiStatus }>(await fetch(MODAGENTAI_API.status, { signal }))
+    return data.status
+  }
+
+  /** 登录官网账号（成功即自动配置中转端点与模型路由）。 */
+  async loginModagentai(input: { username: string; password: string }, signal?: AbortSignal): Promise<ModagentaiLoginResult> {
+    const data = await readJson<ModagentaiLoginResult & { ok: boolean }>(await fetch(MODAGENTAI_API.login, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal,
+    }))
+    return { status: data.status, gatewayApplied: data.gatewayApplied, gatewayModels: data.gatewayModels, message: data.message }
+  }
+
+  /** 退出官网账号（吊销官网会话并清空本机令牌）。 */
+  async logoutModagentai(signal?: AbortSignal): Promise<ModagentaiStatus> {
+    const data = await readJson<{ status: ModagentaiStatus }>(await fetch(MODAGENTAI_API.logout, { method: 'POST', signal }))
+    return data.status
+  }
+
+  /** 重新自动配置中转端点（登录后手动重试入口）。 */
+  async applyModagentaiGateway(signal?: AbortSignal): Promise<ModagentaiStatus> {
+    const data = await readJson<{ status: ModagentaiStatus }>(await fetch(MODAGENTAI_API.applyGateway, { method: 'POST', signal }))
+    return data.status
   }
 
   /** 读取 OpenAI 中转站、凭据、聊天路由与生图模型的脱敏状态。 */

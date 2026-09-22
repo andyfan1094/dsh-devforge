@@ -40,6 +40,8 @@ type Tab = 'profile' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' |
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
   // 首次打开展示个人中心（辉哥 2026-09-21 定稿：替换教程页）；其它页签保持原有行为。
   const [tab, setTab] = useState<Tab>('profile')
+  // 官网账号角色：'admin' 才显示 Coding Plan 页签（辉哥 2026-09-22 定稿，未登录/普通用户隐藏）
+  const [siteRole, setSiteRole] = useState<'' | 'admin' | 'user'>('')
   const [standards, setStandards] = useState<StandardSummary[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
   const [error, setError] = useState('')
@@ -121,8 +123,26 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
     try { localStorage.setItem('dsh-devforge-density', next) } catch { /* 存储失败仅影响记忆偏好，不影响当次生效 */ }
   }
 
-  /** 个人中心的「编辑身份/检查更新」等快捷入口只切换现有页签，不重复实现业务逻辑。 */
-  const navigateFromProfile = (target: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate'): void => { setTab(target) }
+  /** 个人中心的「编辑身份/检查更新」等快捷入口只切换现有页签，不重复实现业务逻辑；CodePlan 仅管理员可达。 */
+  const navigateFromProfile = (target: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate'): void => {
+    if (target === 'codeplan' && siteRole !== 'admin') return
+    setTab(target)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void api.getModagentaiStatus().then((status) => {
+      if (!cancelled) setSiteRole(status.role)
+    }).catch(() => {
+      if (!cancelled) setSiteRole('')
+    })
+    return () => { cancelled = true }
+  }, [api])
+
+  // 非管理员不留在 Coding Plan：登录态变化时自动回落个人中心
+  useEffect(() => {
+    if (tab === 'codeplan' && siteRole !== 'admin') setTab('profile')
+  }, [tab, siteRole])
 
   return (
     <div className={css['panel']} data-dsh-plugin="devforge" data-density={density}>
@@ -149,7 +169,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
         {/* 个人中心固定为首个页签（辉哥 2026-09-21 定稿：替换教程页）。 */}
         <button type="button" role="tab" aria-selected={tab === 'profile'} data-active={tab === 'profile' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('profile') }}><IconProfile />个人中心</button>
-        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
+        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} hidden={siteRole !== 'admin'} title="仅官网管理员可见" onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('rag') }}><IconTiangong />记忆中枢</button>
         <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
         <button type="button" role="tab" aria-selected={tab === 'workflow'} data-active={tab === 'workflow' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('workflow') }}><IconWorkflow />工作流</button>

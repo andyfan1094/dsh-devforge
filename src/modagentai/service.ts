@@ -1,0 +1,212 @@
+/**
+ * 官网账号服务（业务层）：登录 modagentai.com、保存会话令牌、自动写入中转端点。
+ *
+ * 安全模型：会话令牌只进受管凭据（.credentials.yaml，0600），面板与日志永不回显；
+ * 登录成功即自动把「天工造梦中转」写入 OpenAI 中转端点列表（BASE URL + 端点密钥引用），
+ * 用户无需手动配置。账号信息（用户名/角色）存 store.db settings 表（插件内部状态，不进宿主设置面板）。
+ */
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import type { Context } from '@deepseek-ai/cordis'
+import { getDb, getSettings, putSettings } from '../store/db.ts'
+import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiStatus } from './protocol.ts'
+import type { OpenAiGatewayService } from '../openai/service.ts'
+
+/** 官网账号业务错误（HTTP 语义状态码，面板直接展示文案）。 */
+export class ModagentaiServiceError extends Error {
+  constructor(message: string, public status = 400) {
+    super(message)
+    this.name = 'ModagentaiServiceError'
+  }
+}
+
+/** store.db settings 表里的账号会话信息（不含令牌本体）。 */
+interface ModagentaiAccountSettings {
+  username: string
+  role: string
+  autoApplied: boolean
+  appliedModels: number
+  appliedAt: number
+}
+
+const EMPTY_SETTINGS: ModagentaiAccountSettings = { username: '', role: '', autoApplied: false, appliedModels: 0, appliedAt: 0 }
+const SETTINGS_KEY = 'modagentai.settings'
+const SITE = 'https://modagentai.com'
+
+/** 30 秒网络超时；AbortSignal.timeout 在 Node 22 可用。 */
+const HTTP_TIMEOUT = 30_000
+
+export class ModagentaiService {
+  constructor(private ctx: Context, private openai: OpenAiGatewayService) {}
+
+  /** 读取账号会话信息（无则空对象）。 */
+  private readSettings(): ModagentaiAccountSettings {
+    const stored = getSettings(getDb(), SETTINGS_KEY)
+    if (stored === undefined || stored === null || typeof stored !== 'object') return { ...EMPTY_SETTINGS }
+    const raw = stored as Record<string, unknown>
+    return {
+      username: typeof raw.username === 'string' ? raw.username : '',
+      role: raw.role === 'admin' || raw.role === 'user' ? raw.role : '',
+      autoApplied: raw.autoApplied === true,
+      appliedModels: typeof raw.appliedModels === 'number' && Number.isFinite(raw.appliedModels) ? raw.appliedModels : 0,
+      appliedAt: typeof raw.appliedAt === 'number' && Number.isFinite(raw.appliedAt) ? raw.appliedAt : 0,
+    }
+  }
+
+  /** 原子写回账号会话信息。 */
+  private writeSettings(next: ModagentaiAccountSettings): void {
+    putSettings(getDb(), SETTINGS_KEY, next)
+  }
+
+  /** 读取受管凭据里的会话令牌（未配置返回空串）。 */
+  private async readToken(): Promise<string> {
+    try {
+      const resolved = await this.ctx.credentials.resolve(credentialRef(MODAGENTAI_SESSION_REF))
+      return resolved?.value.trim() ?? ''
+    } catch {
+      return ''
+    }
+  }
+
+  /** 组合状态视图（实时到官网校验令牌有效性）。 */
+  async status(): Promise<ModagentaiStatus> {
+    const settings = this.readSettings()
+    const token = await this.readToken()
+    const loggedIn = settings.username !== '' && token !== ''
+    let expired = false
+    if (loggedIn) {
+      try {
+        const res = await fetch(SITE + '/api/auth/me', {
+          headers: { authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' },
+          signal: AbortSignal.timeout(HTTP_TIMEOUT),
+        })
+        if (res.status === 401) expired = true
+      } catch {
+        // 网络不通不代表令牌失效，不标记过期
+      }
+    }
+    return {
+      loggedIn,
+      username: settings.username,
+      role: loggedIn ? (settings.role === 'admin' ? 'admin' : 'user') : '',
+      expired,
+      autoApplied: settings.autoApplied,
+      appliedModels: settings.appliedModels,
+    }
+  }
+
+  /**
+   * 登录官网账号：用户名密码 → 会话 Cookie → 兑换显式令牌 → 存受管凭据 → 自动配置中转。
+   * 登录成功但中转配置失败时不吞结果：返回 gatewayApplied=false 与原因，用户可手动重试。
+   */
+  async login(input: { username: unknown; password: unknown }): Promise<ModagentaiLoginResult> {
+    const username = typeof input.username === 'string' ? input.username.trim() : ''
+    const password = typeof input.password === 'string' ? input.password : ''
+    if (username === '' || password === '') throw new ModagentaiServiceError('请输入用户名和密码。', 400)
+    if (password.length > 512) throw new ModagentaiServiceError('密码长度异常。', 400)
+
+    // ① 登录拿会话 Cookie（HttpOnly 的 sid）
+    let sid = ''
+    let siteUser: { username?: unknown; role?: unknown } | undefined
+    try {
+      const res = await fetch(SITE + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'user-agent': 'DeepSeek-Harness/1.0' },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: unknown; user?: { username?: unknown; role?: unknown } } | null
+      if (res.status === 429) throw new ModagentaiServiceError('尝试过于频繁，请稍后再试。', 429)
+      if (res.status === 403 && payload !== null && typeof payload.error === 'string') throw new ModagentaiServiceError(payload.error, 403)
+      if (!res.ok || payload?.ok !== true || payload.user === null || typeof payload.user !== 'object') {
+        throw new ModagentaiServiceError('用户名或密码错误。', 401)
+      }
+      siteUser = payload.user
+      const setCookie = res.headers.get('set-cookie') ?? ''
+      const match = /(?:^|[,;]\s*)sid=([^;,\s]+)/.exec(setCookie)
+      if (match === null) throw new ModagentaiServiceError('官网未返回会话，请稍后重试。', 502)
+      sid = match[1]
+    } catch (error) {
+      if (error instanceof ModagentaiServiceError) throw error
+      throw new ModagentaiServiceError('官网连接失败：' + (error instanceof Error ? error.message : String(error)), 502)
+    }
+
+    // ② 用会话 Cookie 兑换显式令牌（即中转 API Key）
+    let token = ''
+    try {
+      const res = await fetch(SITE + '/api/download-token', {
+        method: 'POST',
+        headers: { cookie: 'sid=' + sid, 'user-agent': 'DeepSeek-Harness/1.0' },
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; token?: unknown } | null
+      if (!res.ok || payload?.ok !== true || typeof payload.token !== 'string' || payload.token.trim() === '') {
+        throw new ModagentaiServiceError('会话令牌签发失败，请稍后重试。', 502)
+      }
+      token = payload.token.trim()
+    } catch (error) {
+      if (error instanceof ModagentaiServiceError) throw error
+      throw new ModagentaiServiceError('会话令牌签发失败：' + (error instanceof Error ? error.message : String(error)), 502)
+    }
+
+    // ③ 令牌进受管凭据 + 账号信息进 store.db
+    await this.ctx.credentials.set(credentialRef(MODAGENTAI_SESSION_REF), token)
+    const role = siteUser?.role === 'admin' ? 'admin' : 'user'
+    const displayName = typeof siteUser?.username === 'string' && siteUser.username !== '' ? siteUser.username : username
+    const settings: ModagentaiAccountSettings = { username: displayName, role, autoApplied: false, appliedModels: 0, appliedAt: Date.now() }
+    this.writeSettings(settings)
+
+    // ④ 登录即自动配置中转（失败不回滚登录，用户可手动重试）
+    let gatewayApplied = false
+    let gatewayModels = 0
+    let applyMessage = ''
+    try {
+      const applied = await this.applyGateway()
+      gatewayApplied = true
+      gatewayModels = applied.appliedModels
+      applyMessage = '已自动配置中转（GLM-Flash）'
+    } catch (error) {
+      applyMessage = '中转自动配置失败：' + (error instanceof Error ? error.message : String(error)) + '（可在个人中心点「重新配置中转」重试）'
+    }
+
+    const status = await this.status()
+    return { status, gatewayApplied, gatewayModels, message: applyMessage }
+  }
+
+  /** 退出登录：尽力通知官网吊销会话，清空本机令牌与账号信息。 */
+  async logout(): Promise<ModagentaiStatus> {
+    const token = await this.readToken()
+    if (token !== '') {
+      try {
+        await fetch(SITE + '/api/auth/logout', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' },
+          signal: AbortSignal.timeout(HTTP_TIMEOUT),
+        })
+      } catch {
+        // 官网不可达也照常本地登出
+      }
+    }
+    await this.ctx.credentials.unset(credentialRef(MODAGENTAI_SESSION_REF))
+    this.writeSettings({ ...EMPTY_SETTINGS })
+    return await this.status()
+  }
+
+  /**
+   * 自动配置中转：写端点密钥 → upsert「天工造梦中转」端点 → 拉取模型目录建立聊天路由。
+   * 端点 upsert 按 id 定位，不会触碰用户手配的其它端点。
+   */
+  async applyGateway(): Promise<ModagentaiStatus> {
+    const token = await this.readToken()
+    if (token === '') throw new ModagentaiServiceError('尚未登录官网账号。', 401)
+    await this.ctx.credentials.set(credentialRef(MODAGENTAI_GW_KEY_REF), token)
+    await this.openai.saveEndpoint({ id: MODAGENTAI_ENDPOINT_ID, name: '天工造梦中转', baseURL: MODAGENTAI_GW_BASE, apiKeyEnv: MODAGENTAI_GW_KEY_REF })
+    const fetched = await this.openai.fetchModels(undefined, MODAGENTAI_ENDPOINT_ID)
+    const result = fetched.results.find((item) => item.endpointId === MODAGENTAI_ENDPOINT_ID)
+    if (result === undefined || !result.ok) {
+      throw new ModagentaiServiceError(result?.error ?? '模型目录获取失败。', 502)
+    }
+    const settings = this.readSettings()
+    this.writeSettings({ ...settings, autoApplied: true, appliedModels: result.modelCount })
+    return await this.status()
+  }
+}

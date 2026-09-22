@@ -1,10 +1,12 @@
 /**
  * 个人中心 —— 天工造梦面板首页（辉哥 2026-09-21 定稿：替换教程页）。
- * 聚合只读状态：身份卡（称呼/简介/习惯）、插件与 DSH 本体版本、各模型服务接入状态；
+ * 聚合只读状态：身份卡（称呼/简介/习惯）、插件与 DSH 本体版本、各模型服务接入状态、
+ * 官网账号登录（登录即自动配置中转，辉哥 2026-09-22 加）；
  * 全部并发拉取、逐项容错，任何一路失败不影响其余展示。
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
+import type { ModagentaiStatus } from '../../modagentai/protocol.ts'
 import css from './panel.module.css'
 
 /** 单条服务接入状态行。 */
@@ -31,6 +33,74 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
   const [harnessVersion, setHarnessVersion] = useState('')
   const [services, setServices] = useState<ServiceRow[]>([])
   const [loaded, setLoaded] = useState(false)
+
+  // —— 官网账号（登录即自动配置中转）——
+  const [site, setSite] = useState<ModagentaiStatus | null>(null)
+  const [siteLoaded, setSiteLoaded] = useState(false)
+  const [siteUser, setSiteUser] = useState('')
+  const [sitePass, setSitePass] = useState('')
+  const [siteBusy, setSiteBusy] = useState(false)
+  const [siteErr, setSiteErr] = useState('')
+  const [siteMsg, setSiteMsg] = useState('')
+
+  const refreshSite = useCallback(async () => {
+    try {
+      setSite(await api.getModagentaiStatus())
+    } catch {
+      setSite(null)
+    } finally {
+      setSiteLoaded(true)
+    }
+  }, [api])
+
+  useEffect(() => { void refreshSite() }, [refreshSite])
+
+  async function doSiteLogin(): Promise<void> {
+    setSiteErr(''); setSiteMsg('')
+    if (siteUser.trim() === '' || sitePass === '') { setSiteErr('请输入官网用户名和密码'); return }
+    setSiteBusy(true)
+    try {
+      const result = await api.loginModagentai({ username: siteUser.trim(), password: sitePass })
+      setSite(result.status)
+      setSitePass('')
+      if (result.gatewayApplied) {
+        setSiteMsg('登录成功，' + result.message + '，模型 ' + result.gatewayModels + ' 个已进入聊天路由')
+        if (result.status.role === 'admin') onNavigate('codeplan') // 管理员顺手跳 Coding Plan 看用量
+      } else {
+        setSiteErr(result.message)
+      }
+    } catch (error) {
+      setSiteErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSiteBusy(false)
+    }
+  }
+
+  async function doSiteLogout(): Promise<void> {
+    setSiteErr(''); setSiteMsg('')
+    setSiteBusy(true)
+    try {
+      setSite(await api.logoutModagentai())
+      setSiteMsg('已退出官网账号（中转端点保留，令牌已失效）')
+    } catch (error) {
+      setSiteErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSiteBusy(false)
+    }
+  }
+
+  async function doApplyGateway(): Promise<void> {
+    setSiteErr(''); setSiteMsg('')
+    setSiteBusy(true)
+    try {
+      setSite(await api.applyModagentaiGateway())
+      setSiteMsg('中转已重新配置完成')
+    } catch (error) {
+      setSiteErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSiteBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -132,6 +202,50 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         <div className={css['metricRow']}>
           <span className={css['sectionHint']}>习惯与硬偏好 {habitCount} 条 · 每轮固定注入，让每个模型都按你的习惯干活</span>
         </div>
+      </div>
+
+      <h3 className={css['sectionTitle']}>官网账号（modagentai.com）</h3>
+      <div className={css['metricList']}>
+        {!siteLoaded && <div className={css['empty']}>正在读取官网账号状态…</div>}
+        {siteLoaded && site !== null && site.loggedIn && (
+          <div className={css['metricRow']}>
+            <span>
+              <strong>👤 {site.username}</strong>
+              <span className={css['sectionHint']}> {site.role === 'admin' ? '管理员' : '普通用户'} · 中转{site.autoApplied ? `已自动配置（模型 ${site.appliedModels} 个）` : '未配置'}</span>
+              {site.expired && <span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-danger-primary, #dc2626)' }}> · 会话已失效，请重新登录</span>}
+            </span>
+            <span style={{ display: 'flex', gap: 8 }}>
+              {site.role === 'admin' && <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('codeplan') }}>Coding Plan</button>}
+              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doApplyGateway() }}>重新配置中转</button>
+              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doSiteLogout() }}>退出登录</button>
+            </span>
+          </div>
+        )}
+        {siteLoaded && (site === null || !site.loggedIn) && (
+          <div className={css['metricRow']}>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                value={siteUser}
+                placeholder="官网用户名"
+                onChange={(event) => { setSiteUser(event.target.value) }}
+                onKeyDown={(event) => { if (event.key === 'Enter' && !siteBusy) void doSiteLogin() }}
+                style={{ width: 160 }}
+              />
+              <input
+                value={sitePass}
+                type="password"
+                placeholder="官网密码"
+                onChange={(event) => { setSitePass(event.target.value) }}
+                onKeyDown={(event) => { if (event.key === 'Enter' && !siteBusy) void doSiteLogin() }}
+                style={{ width: 160 }}
+              />
+              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doSiteLogin() }}>{siteBusy ? '登录中…' : '登录'}</button>
+              <span className={css['sectionHint']}>登录后自动配置中转，可用管理员开放的模型</span>
+            </span>
+          </div>
+        )}
+        {siteErr !== '' && <div className={css['metricRow']}><span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-danger-primary, #dc2626)' }}>{siteErr}</span></div>}
+        {siteMsg !== '' && <div className={css['metricRow']}><span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-success-primary, #16a34a)' }}>{siteMsg}</span></div>}
       </div>
 
       <h3 className={css['sectionTitle']}>版本</h3>

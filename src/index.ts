@@ -90,6 +90,8 @@ import { makeArkRoutes } from './ark/routes.ts'
 import { ArkCodingPlanService, type ArkCapabilityConfig } from './ark/service.ts'
 import { makeOpenAiRoutes } from './openai/routes.ts'
 import { OpenAiGatewayService, type OpenAiCapabilityConfig } from './openai/service.ts'
+import { makeModagentaiRoutes } from './modagentai/routes.ts'
+import { ModagentaiService } from './modagentai/service.ts'
 import { activateOpenAiGenerateImage } from './openai/tools.ts'
 import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
@@ -537,6 +539,7 @@ export function apply(ctx: Context, config?: Config): void {
   const minimaxService = new MiniMaxService(ctx, minimaxConfig)
   const arkService = new ArkCodingPlanService(ctx, arkConfig)
   const openAiService = new OpenAiGatewayService(ctx, openAiConfig)
+const modagentaiService = new ModagentaiService(ctx, openAiService)
   const siliconFlowConfig: SiliconFlowCapabilityConfig = { enabled: true, apiKeyEnv: 'SILICONFLOW_API_KEY', timeoutMs: 15000, syncChatModels: true }
   const siliconFlowService = new SiliconFlowService(ctx, siliconFlowConfig)
   // MCP 服务器接入：官方 dsh-mcp-client 桥的挂载管理者（fiber 集随 store.db 配置 reconcile）。
@@ -896,6 +899,7 @@ export function apply(ctx: Context, config?: Config): void {
     ...makeMiniMaxRoutes(minimaxService),
     ...makeArkRoutes(arkService),
     ...makeOpenAiRoutes(openAiService),
+  ...makeModagentaiRoutes(modagentaiService),
     ...makeSiliconFlowRoutes(siliconFlowService),
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
