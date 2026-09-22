@@ -299,6 +299,30 @@ export function buildImagePrompt({ text = '', imagePath = '', imageMeta = null }
   return lines.join('\n')
 }
 
+/**
+ * 飞书通道提示前缀。
+ * 为什么需要：飞书桥创建的是独立 DSH 会话，模型并不知道消息来自飞书通道；
+ * 它一旦调用 ask_user_question 等交互类工具，弹框只会出现在电脑端 Web 面板，
+ * 手机飞书侧的用户既看不到也无法作答，任务会一直挂起（0.36.2 实测踩坑）。
+ * 因此每轮普通消息前注入本提示，约束模型只用文字与用户交互。
+ */
+const FEISHU_CHANNEL_HINT = [
+  '【通道提示】本会话经飞书通道接入：用户正在手机飞书上对话，看不到电脑端 Web 面板。',
+  '禁止调用 ask_user_question 等会弹交互框/审批框的工具——弹框只会出现在电脑端，用户无法看到也无法作答；需要向用户确认时，直接在回复文字里提问，等用户下一条飞书消息回答。',
+  '生成的文件、图片等产出直接以文字说明路径，或调用飞书发送工具（如 dsh_feishu_send_file / dsh_feishu_send_image）发给用户，不要依赖网页 GUI 展示。',
+].join('\n')
+
+/**
+ * 给发往模型的用户消息文本加飞书通道提示前缀。
+ * 输入为空时原样返回空串（纯图片消息由调用方决定是否仍需提示）；
+ * 非空时统一加前缀，保证长会话上下文被压缩后模型仍能每轮看到通道约束。
+ */
+export function withFeishuChannelHint(text) {
+  const value = String(text ?? '').trim()
+  if (value === '') return value
+  return FEISHU_CHANNEL_HINT + '\n\n' + value
+}
+
 export function createFeishuClient({
   config = {},
   onMessage,

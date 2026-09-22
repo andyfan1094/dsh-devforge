@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { basename, extname, resolve as resolvePath } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import { createFeishuClient, buildImagePrompt } from './feishu-client.mjs'
+import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
 import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
@@ -616,7 +616,8 @@ export function apply(ctx, config = {}) {
       const entry = conversations.get(String(envelope.chatId ?? '').trim())
       if (entry === undefined || entry.agent.status === 'running') return
       try {
-        entry.agent.followup(buildUserMessage(envelope.text))
+        // 编辑重发会开启新一轮对话，同样需要通道提示，防止模型触发电脑端交互弹框。
+        entry.agent.followup(buildUserMessage(withFeishuChannelHint(envelope.text)))
         await send(envelope.chatId, '已收到修改后的内容，正在重新处理。')
       } catch (error) {
         warn('failed to deliver edited Feishu message: ' + (error instanceof Error ? error.message : String(error)))
@@ -687,7 +688,10 @@ export function apply(ctx, config = {}) {
         }
       }
       ensureSessionTitle(conversation, hasImages && imageText === '' ? '图片' : imageText)
-      const payload = buildUserMessage(promptText, imageRefs)
+      // 通道提示只在开启新一轮的消息上注入；运行中插队（含「!」显式插话）发生在
+      // 当前轮次内部，轮次首条消息已带提示，重复注入只会增加噪音。
+      const hintText = (deliverAsSteer || isSteer) ? promptText : withFeishuChannelHint(promptText)
+      const payload = buildUserMessage(hintText, imageRefs)
       if (deliverAsSteer || isSteer) agent.steer(payload); else agent.followup(payload)
       if (resolved.ack) {
         const reacted = typeof channel.react === 'function' ? await channel.react(envelope.messageId, resolved.ackReaction) : false
