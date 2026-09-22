@@ -101,6 +101,7 @@ import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
 import { listProjects } from './projects/store.ts'
 import { startProjectAutoRegister } from './projects/auto-register.ts'
+import type { ProjectEntry } from './projects/protocol.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
@@ -991,6 +992,8 @@ export function apply(ctx: Context, config?: Config): void {
         // 项目清单与公约摘要的 5 秒缓存：系统提示装配频繁，库读 KB 级但无需每次进行。
         let projectsCache: { at: number; value: ReturnType<typeof listProjects> } | undefined
         let conventionCache: { at: number; value: string } | undefined
+        // 项目知识手册索引缓存（0.34.19）：RAG 文档名 + 记忆条目首行标题，按项目名或记忆作用域匹配。
+        let knowledgeCache: { at: number; value: Array<{ title: string; description: string; projectId?: string }> } | undefined
         const sources = {
           getProjects: () => {
             if (projectsCache === undefined || Date.now() - projectsCache.at > 5000) {
@@ -1003,6 +1006,38 @@ export function apply(ctx: Context, config?: Config): void {
               conventionCache = { at: Date.now(), value: renderConventionSummary(getConvention()) }
             }
             return conventionCache.value
+          },
+          getProjectKnowledge: (entry: ProjectEntry) => {
+            if (knowledgeCache === undefined || Date.now() - knowledgeCache.at > 15000) {
+              const items: Array<{ title: string; description: string; projectId?: string }> = []
+              for (const doc of ragStore.listDocs()) {
+                if (doc.status !== 'ready') continue
+                items.push({ title: doc.fileName.replace(/\.(md|markdown|txt)$/iu, '').slice(0, 120), description: doc.sourcePath ?? '' })
+              }
+              for (const memory of nativeMemory.list({ limit: 1000 })) {
+                if (memory.state !== 'active') continue
+                const firstLine = memory.content.split('\n').map((line) => line.trim()).find((line) => line !== '' && line !== '---') ?? ''
+                const title = firstLine.replace(/^#+\s*/u, '').slice(0, 120)
+                if (title === '') continue
+                items.push({ title, description: memory.scope.kind === 'project' ? '项目记忆' : '', projectId: memory.scope.kind === 'project' ? memory.scope.id : undefined })
+              }
+              knowledgeCache = { at: Date.now(), value: items }
+            }
+            const name = entry.name.trim().toLowerCase()
+            if (name === '') return ''
+            const seen = new Set<string>()
+            const hits = knowledgeCache.value.filter((item) => {
+              const matched = item.projectId === entry.id || item.title.toLowerCase().includes(name)
+              if (!matched || seen.has(item.title)) return false
+              seen.add(item.title)
+              return true
+            }).slice(0, 8)
+            if (hits.length === 0) return ''
+            return [
+              '【项目知识手册索引（dsh-devforge 注入）】',
+              '本项目沉淀了以下权威操作手册/交接文档。执行发布、部署、环境配置、排障等关键操作前，必须先读取对应手册全文并严格按手册执行，禁止凭印象自由发挥：',
+              ...hits.map((hit) => '- 《' + hit.title + '》' + (hit.description !== '' ? '：' + hit.description : '')),
+            ].join('\n')
           },
         }
         safeActivate(ctx, '项目约束注入', () => service.start(ctx, () => {

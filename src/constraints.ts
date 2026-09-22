@@ -181,6 +181,8 @@ export interface InjectionDataSources {
   getProjects?: () => import('./projects/protocol.ts').ProjectEntry[]
   /** 产出公约摘要文本（enabled=false 返回空串）。 */
   getConventionText?: () => string
+  /** 项目关联知识手册索引（按登记项目过滤；返回注入文本块，空串=无关联手册）。 */
+  getProjectKnowledge?: (entry: import('./projects/protocol.ts').ProjectEntry) => string
 }
 
 /**
@@ -347,7 +349,13 @@ export class ConstraintInjectionService {
       if (conventionText !== '') blocks.push(conventionText)
       const cwd = resolveAgentCwd(record.session)
       const project = matchProjectByCwd(cwd, this.sources.getProjects?.() ?? [])
-      if (project !== undefined) blocks.push(renderProjectCard(project))
+      if (project !== undefined) {
+        blocks.push(renderProjectCard(project))
+        // 项目知识手册索引（0.34.19）：解决「知识在库里但模型不知道去查」的召回断线——
+        // 每次会话必达告知本项目有哪些权威手册，关键操作前先读再干，禁止凭印象自由发挥。
+        const knowledge = this.sources.getProjectKnowledge?.(project) ?? ''
+        if (knowledge !== '') blocks.push(knowledge)
+      }
     } catch { /* 数据源异常时仅注入约束本体 */ }
     return blocks.filter((block) => block !== '').join('\n\n')
   }

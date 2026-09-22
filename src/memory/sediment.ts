@@ -11,6 +11,7 @@ import type { MemoryGovernanceService } from './governance.ts'
 import type { MemorySettings, MemoryEvidence, MemoryScopeContext, NativeMemoryCategory } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryStatsStore } from './stats.ts'
+import { appendProjectFact } from '../projects/store.ts'
 
 export type MemoryGenerateFn = (system: string, user: string) => Promise<string>
 
@@ -468,7 +469,36 @@ export class MemorySedimentService {
       this.lastSedimentAt = Date.now()
       this.stats?.update((prev) => ({ ...prev, sedimentTotal: prev.sedimentTotal + stored, lastSedimentAt: this.lastSedimentAt }))
     }
+    // 项目经验回流（0.34.19）：智能体自我进化闭环的最后一环——
+    // 反思产出的「可复用教训」与关键事实自动并入项目事实卡，该项目下次会话必达注入，
+    // 踩过的坑不再靠检索碰运气（如发布踩坑后找到的稳定办法，下次发布直接生效）。
+    this.reflectIntoProjectCard(scope, task, candidates)
     return stored
+  }
+
+  /**
+   * 把本次反思的项目相关经验回流进项目事实卡（scope.kind=project 时）：
+   * - task.lessons 全量回流（反思提示词要求只写可复用教训）；
+   * - items 仅回流 critical（关键事实），避免项目卡被流水账灌爆；
+   * - 去重/限长/裁剪由 appendProjectFact 统一保证；失败静默不影响反思主流程。
+   */
+  private reflectIntoProjectCard(scope: MemoryScopeContext, task: ReflectionTask, candidates: ExtractedCandidate[]): void {
+    try {
+      if (scope.kind !== 'project' || typeof scope.id !== 'string' || scope.id === '') return
+      const texts: string[] = []
+      if (Array.isArray(task.lessons)) {
+        for (const lesson of task.lessons) {
+          const text = normalizeMemoryText(typeof lesson === 'string' ? lesson : '')
+          if (text.length >= 8) texts.push(text)
+        }
+      }
+      for (const candidate of candidates) {
+        if (candidate.importance !== 'critical') continue
+        const text = normalizeMemoryText(typeof candidate.content === 'string' ? candidate.content : '')
+        if (text.length >= 8) texts.push(text)
+      }
+      for (const text of texts.slice(0, 5)) appendProjectFact(scope.id, text, 'agent')
+    } catch { /* 回流失败不影响记忆沉淀主流程 */ }
   }
 
   /** 技术复盘兜底：模型不可用时也按轮次留痕，保证任务复盘链路不断档。 */
