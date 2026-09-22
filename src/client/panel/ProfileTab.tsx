@@ -55,6 +55,74 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   useEffect(() => { void refreshSite() }, [refreshSite])
 
+  /** 服务接入列表重拉：登录/配置中转成功后刷新「OpenAI 中转」等行。 */
+  const refreshServices = useCallback(async () => {
+    const results = await Promise.allSettled([
+      api.getZhipuStatus(),
+      api.getArkStatus(),
+      api.getMiniMaxStatus(),
+      api.getSiliconFlowStatus(),
+      api.getOpenAiGatewayStatus(),
+      api.getFeishuStatus(),
+    ])
+    const [zhipu, ark, minimax, siliconflow, gateway, feishu] = results
+    const rows: ServiceRow[] = []
+    rows.push({
+      key: 'zhipu',
+      label: '智谱 GLM',
+      ok: zhipu.status === 'fulfilled' && zhipu.value.credentialConfigured,
+      detail: zhipu.status === 'fulfilled'
+        ? (zhipu.value.credentialConfigured
+          ? `已配置 · Key 池 ${zhipu.value.keys.length} 把${zhipu.value.mcpTools ? ' · 官方工具已启用' : ''}`
+          : '未配置 API Key')
+        : '状态读取失败',
+    })
+    rows.push({
+      key: 'ark',
+      label: '火山方舟',
+      ok: ark.status === 'fulfilled' && ark.value.credentialConfigured,
+      detail: ark.status === 'fulfilled'
+        ? (ark.value.credentialConfigured
+          ? `数据面已配置 · 控制面 ${ark.value.usageAccessKeyConfigured && ark.value.usageSecretKeyConfigured ? 'AK/SK 已配置' : '待配置 AK/SK'}`
+          : '未配置 API Key')
+        : '状态读取失败',
+    })
+    rows.push({
+      key: 'minimax',
+      label: 'MiniMax',
+      ok: minimax.status === 'fulfilled' && minimax.value.credentialConfigured,
+      detail: minimax.status === 'fulfilled'
+        ? (minimax.value.credentialConfigured ? `已配置${minimax.value.tools ? ' · 官方工具已启用' : ''}` : '未配置 API Key')
+        : '状态读取失败',
+    })
+    rows.push({
+      key: 'siliconflow',
+      label: '硅基流动',
+      ok: siliconflow.status === 'fulfilled' && siliconflow.value.credentialConfigured,
+      detail: siliconflow.status === 'fulfilled'
+        ? (siliconflow.value.credentialConfigured ? `已配置 · ${siliconflow.value.syncChatModels ? '同步对话模型目录' : '仅向量嵌入模式'}` : '未配置 API Key')
+        : '状态读取失败',
+    })
+    rows.push({
+      key: 'gateway',
+      label: 'OpenAI 中转',
+      ok: gateway.status === 'fulfilled' && gateway.value.credentialConfigured,
+      detail: gateway.status === 'fulfilled'
+        ? (gateway.value.credentialConfigured
+          ? `已配置 · 端点 ${gateway.value.endpoints.length} 个 · 模型 ${gateway.value.models.length} 个`
+          : '未配置 API Key')
+        : '状态读取失败',
+    })
+    rows.push({
+      key: 'feishu',
+      label: '飞书',
+      ok: feishu.status === 'fulfilled' && feishu.value.connected,
+      detail: feishu.status === 'fulfilled' ? (feishu.value.connected ? '已连接' : '未连接') : '状态读取失败',
+    })
+    setServices(rows)
+    setLoaded(true)
+  }, [api])
+
   async function doSiteLogin(): Promise<void> {
     setSiteErr(''); setSiteMsg('')
     if (siteUser.trim() === '' || sitePass === '') { setSiteErr('请输入官网用户名和密码'); return }
@@ -65,6 +133,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
       setSitePass('')
       if (result.gatewayApplied) {
         setSiteMsg('登录成功，' + result.message + '，模型 ' + result.gatewayModels + ' 个已进入聊天路由')
+        void refreshServices()
         if (result.status.role === 'admin') onNavigate('codeplan') // 管理员顺手跳 Coding Plan 看用量
       } else {
         setSiteErr(result.message)
@@ -95,6 +164,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
     try {
       setSite(await api.applyModagentaiGateway())
       setSiteMsg('中转已重新配置完成')
+      void refreshServices()
     } catch (error) {
       setSiteErr(error instanceof Error ? error.message : String(error))
     } finally {
