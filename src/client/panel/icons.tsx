@@ -120,6 +120,16 @@ export function IconGuide({ size }: IconProps): JSX.Element {
   )
 }
 
+/** 个人中心：人形头像，表达用户身份与接入状态。 */
+export function IconProfile({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
+    </svg>
+  )
+}
+
 /** 插件更新：循环升级箭头。 */
 export function IconUpdate({ size }: IconProps): JSX.Element {
   return (

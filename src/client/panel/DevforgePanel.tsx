@@ -13,8 +13,8 @@ import { ProjectsTab } from './ProjectsTab.tsx'
 import { ReposTab } from './ReposTab.tsx'
 import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
 import { SkinTab } from './SkinTab.tsx'
-import { GuideTab, type GuideDestination } from './GuideTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow, IconSkin, IconGuide, IconMcp, IconBrainRouter } from './icons.tsx'
+import { ProfileTab } from './ProfileTab.tsx'
+import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconWorkflow, IconSkin, IconProfile, IconMcp, IconBrainRouter } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import { RagTab } from './RagTab.tsx'
 import { MemoryTab } from './MemoryTab.tsx'
@@ -34,12 +34,12 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型。 */
-type Tab = 'guide' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'brainrouter' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
+type Tab = 'profile' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'brainrouter' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
-  // 首次打开先展示教程，让新用户知道从哪里注册与配置；其它页签保持原有行为。
-  const [tab, setTab] = useState<Tab>('guide')
+  // 首次打开展示个人中心（辉哥 2026-09-21 定稿：替换教程页）；其它页签保持原有行为。
+  const [tab, setTab] = useState<Tab>('profile')
   const [standards, setStandards] = useState<StandardSummary[]>([])
   const [viewing, setViewing] = useState<StandardDetail | null>(null)
   const [error, setError] = useState('')
@@ -121,8 +121,8 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
     try { localStorage.setItem('dsh-devforge-density', next) } catch { /* 存储失败仅影响记忆偏好，不影响当次生效 */ }
   }
 
-  /** 教程中的「去配置」只切换现有页签，不重复实现各功能的业务逻辑。 */
-  const navigateFromGuide = (target: GuideDestination): void => { setTab(target) }
+  /** 个人中心的「编辑身份/检查更新」等快捷入口只切换现有页签，不重复实现业务逻辑。 */
+  const navigateFromProfile = (target: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate'): void => { setTab(target) }
 
   return (
     <div className={css['panel']} data-dsh-plugin="devforge" data-density={density}>
@@ -147,8 +147,8 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
       </div>
 
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
-        {/* 教程固定为首个页签，入口位置与首次配置指引保持一致。 */}
-        <button type="button" role="tab" aria-selected={tab === 'guide'} data-active={tab === 'guide' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('guide') }}><IconGuide />教程</button>
+        {/* 个人中心固定为首个页签（辉哥 2026-09-21 定稿：替换教程页）。 */}
+        <button type="button" role="tab" aria-selected={tab === 'profile'} data-active={tab === 'profile' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('profile') }}><IconProfile />个人中心</button>
         <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
         <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('rag') }}><IconTiangong />记忆中枢</button>
         <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
@@ -171,7 +171,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
       <div className={css['panelContent']}>
         {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
 
-        {tab === 'guide' && <GuideTab onNavigate={navigateFromGuide} skinAvailable={skin !== undefined} api={api} />}
+        {tab === 'profile' && <ProfileTab api={api} onNavigate={navigateFromProfile} />}
 
         {tab === 'standards' && (
           <section className={css['tabBody']}>
