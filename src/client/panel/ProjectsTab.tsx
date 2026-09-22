@@ -379,6 +379,28 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
     })
   }
 
+  /** 记一笔项目事实（prompt 输入；后续会话经项目卡自动注入）。 */
+  const addFact = (entry: ProjectEntry): void => {
+    const input = window.prompt('为「' + entry.name + '」记录一条项目事实（一句话：数据库位置、发布方式、关键路径、踩过的坑等）：')
+    if (input === null) return
+    const text = input.trim()
+    if (text === '') return
+    void run(async () => {
+      const facts = [...(entry.facts ?? []), { text, at: Date.now(), source: 'user' as const }]
+      await api.saveProject({ id: entry.id, facts })
+      setNotice('事实已记录，本项目后续会话自动注入。')
+      await refresh()
+    })
+  }
+
+  /** 删除一条项目事实。 */
+  const removeFact = (entry: ProjectEntry, text: string): void => {
+    void run(async () => {
+      await api.saveProject({ id: entry.id, facts: (entry.facts ?? []).filter((fact) => fact.text !== text) })
+      await refresh()
+    })
+  }
+
   const inputProps = { autoComplete: 'off' } as const
 
   return (
@@ -429,6 +451,18 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                       网址：<a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
                     </span>
                   )}
+                  {(entry.facts ?? []).length > 0 && (
+                    <span className={css['resourceMeta']}>
+                      项目事实（{(entry.facts ?? []).length} 条，最近在前）：
+                      {(entry.facts ?? []).slice(-3).reverse().map((fact) => (
+                        <span key={fact.text} style={{ display: 'block' }}>
+                          · {fact.text}{' '}
+                          <button type="button" className={css['ghostButton']} style={{ fontSize: '0.85em', padding: '0 4px' }} title="删除该事实" onClick={() => { removeFact(entry, fact.text) }}>移除</button>
+                        </span>
+                      ))}
+                      {(entry.facts ?? []).length > 3 && <span style={{ display: 'block' }}>…等共 {(entry.facts ?? []).length} 条（全部随会话注入）</span>}
+                    </span>
+                  )}
                   <span className={css['resourceMeta']}>
                     发布服务器：
                     {entry.deployTargets.length === 0
@@ -445,6 +479,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { deploy(entry) }}>发布</button>
                   )}
                   <button type="button" className={css['ghostButton']} onClick={() => { setEditing(formFromEntry(entry)) }}>编辑</button>
+                  <button type="button" className={css['ghostButton']} title="记录一条项目事实，本项目后续会话自动注入" onClick={() => { addFact(entry) }}>记一笔</button>
                   <button type="button" className={css['dangerButton']} onClick={() => { void remove(entry) }}>删除</button>
                 </div>
               </div>

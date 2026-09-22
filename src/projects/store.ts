@@ -13,7 +13,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { getDb, listDocs } from '../store/db.ts'
-import type { DeployTarget, DetectedRemote, ProjectDetectResult, ProjectEntry, ProjectRelocateResult, RepoKind } from './protocol.ts'
+import type { DeployTarget, DetectedRemote, ProjectDetectResult, ProjectEntry, ProjectFact, ProjectRelocateResult, RepoKind } from './protocol.ts'
 
 /** 库内域常量：项目登记列表。 */
 const DOCS_DOMAIN = 'project.registry'
@@ -70,7 +70,26 @@ export function validateProjectPayload(payload: unknown): string | undefined {
   if (p.repoBranch !== undefined && typeof p.repoBranch !== 'string') return 'repoBranch 必须是字符串'
   if (p.siteUrl !== undefined && typeof p.siteUrl !== 'string') return 'siteUrl 必须是字符串'
   if (p.deployCommand !== undefined && typeof p.deployCommand !== 'string') return 'deployCommand 必须是字符串'
+  const factsError = validateProjectFacts(p.facts)
+  if (factsError !== undefined) return factsError
   return validateDeployTargets(p.deployTargets)
+}
+
+/** 项目事实条数上限（超出裁掉最旧的）。 */
+export const PROJECT_FACTS_LIMIT = 100
+
+/** 校验项目事实数组形状；返回错误消息或 undefined。 */
+export function validateProjectFacts(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return 'facts 必须是数组'
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return 'facts 元素必须是对象'
+    const f = item as Record<string, unknown>
+    if (typeof f.text !== 'string' || f.text.trim() === '') return 'facts.text 必须是非空字符串'
+    if (typeof f.at !== 'number' || !Number.isFinite(f.at)) return 'facts.at 必须是数字时间戳'
+    if (f.source !== 'agent' && f.source !== 'user') return 'facts.source 只能是 agent 或 user'
+  }
+  return undefined
 }
 
 /** 读取 meta 表单个值；不存在返回 undefined。 */
@@ -123,6 +142,7 @@ export function listProjects(): ProjectEntry[] {
       path: localPath,
       machinePaths,
       description: typeof parsed.description === 'string' ? parsed.description : '',
+      facts: validateProjectFacts(parsed.facts) === undefined ? parsed.facts as ProjectFact[] : undefined,
       repoKind: (parsed.repoKind ?? 'none') as RepoKind,
       repoUrl: typeof parsed.repoUrl === 'string' ? parsed.repoUrl : '',
       repoBranch: typeof parsed.repoBranch === 'string' ? parsed.repoBranch : '',
@@ -163,6 +183,9 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     path,
     machinePaths,
     description: typeof payload.description === 'string' ? payload.description : (existing?.description ?? ''),
+    facts: validateProjectFacts(payload.facts) === undefined
+      ? (payload.facts as ProjectFact[] | undefined ?? existing?.facts)
+      : existing?.facts,
     repoKind: (payload.repoKind ?? existing?.repoKind ?? 'none') as RepoKind,
     repoUrl: typeof payload.repoUrl === 'string' ? payload.repoUrl.trim() : (existing?.repoUrl ?? ''),
     repoBranch: typeof payload.repoBranch === 'string' ? payload.repoBranch.trim() : (existing?.repoBranch ?? ''),
@@ -186,6 +209,37 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     + 'ON CONFLICT(domain, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
   ).run(DOCS_DOMAIN, entry.id, JSON.stringify(entry), DOCS_DOMAIN, entry.createdAt, entry.updatedAt)
   return entry
+}
+
+/**
+ * 追加一条项目事实（模型 note 动作 / 面板手动共用）：
+ * 归一化空白后与既有事实去重；超出上限裁掉最旧的；返回结果消息。
+ */
+export function appendProjectFact(id: string, text: string, source: 'agent' | 'user'): { ok: boolean; message: string } {
+  const trimmed = typeof text === 'string' ? text.replace(/\s+/gu, ' ').trim() : ''
+  if (trimmed === '') return { ok: false, message: 'text 不能为空' }
+  if (trimmed.length > 300) return { ok: false, message: 'text 过长（最多 300 字）' }
+  const existing = getProject(id)
+  if (existing === undefined) return { ok: false, message: '项目不存在：' + id }
+  const facts = existing.facts ?? []
+  if (facts.some((fact) => fact.text === trimmed)) {
+    return { ok: true, message: '事实已存在，未重复记录：' + trimmed }
+  }
+  const next = [...facts, { text: trimmed, at: Date.now(), source }].slice(-PROJECT_FACTS_LIMIT)
+  saveProject({ id, facts: next })
+  return { ok: true, message: '已记录项目事实（' + existing.name + '，共 ' + next.length + ' 条）：' + trimmed }
+}
+
+/** 删除一条项目事实（按文本匹配；面板维护用）。 */
+export function removeProjectFact(id: string, text: string): { ok: boolean; message: string } {
+  const trimmed = typeof text === 'string' ? text.trim() : ''
+  const existing = getProject(id)
+  if (existing === undefined) return { ok: false, message: '项目不存在：' + id }
+  const facts = existing.facts ?? []
+  const next = facts.filter((fact) => fact.text !== trimmed)
+  if (next.length === facts.length) return { ok: false, message: '未找到该事实' }
+  saveProject({ id, facts: next })
+  return { ok: true, message: '已删除项目事实（剩 ' + next.length + ' 条）' }
 }
 
 /**

@@ -100,6 +100,7 @@ import { runProjectDeploy } from './projects/deploy.ts'
 import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
 import { listProjects } from './projects/store.ts'
+import { startProjectAutoRegister } from './projects/auto-register.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
@@ -1014,6 +1015,9 @@ export function apply(ctx: Context, config?: Config): void {
         }, sources))
         return () => service.dispose()
       }, 'dsh-devforge: constraints')
+      // 项目自动登记（0.34.18）：会话落到未登记的项目目录（有 .git/package.json 等标志）
+      // 即自动补登记，用户无需手动录入；幂等静默，失败不影响会话。
+      ctx.effect(() => startProjectAutoRegister(ctx), 'dsh-devforge: project-auto-register')
     }
     // 用户身份卡常驻注入（0.17.10）：身份/称呼/习惯挂每轮系统提示，先于项目约束（order 50 < 80）；
     // section 文本动态求值，面板保存身份卡即时生效，无需重启。

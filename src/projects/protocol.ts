@@ -42,6 +42,16 @@ export interface DeployTarget {
 }
 
 /** 项目登记条目。 */
+/** 项目事实一条（模型会话中记录或用户面板手动维护，随项目卡注入后续会话）。 */
+export interface ProjectFact {
+  /** 事实内容（一句话：数据库位置、发布方式、关键路径、踩过的坑等）。 */
+  text: string
+  /** 记录时间（毫秒）。 */
+  at: number
+  /** 来源：agent=模型会话中记录；user=用户面板手动维护。 */
+  source: 'agent' | 'user'
+}
+
 export interface ProjectEntry {
   /** 域内唯一 id。 */
   id: string
@@ -57,6 +67,8 @@ export interface ProjectEntry {
   machinePaths: Record<string, string>
   /** 项目描述。 */
   description: string
+  /** 项目事实（自动沉淀 + 手动维护；随项目卡注入后续会话，模型越用越懂该项目）。 */
+  facts?: ProjectFact[]
   /** 对应仓库类型。 */
   repoKind: RepoKind
   /** 仓库远端地址（origin 优先）。 */

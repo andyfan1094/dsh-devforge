@@ -202,7 +202,7 @@ export function matchProjectByCwd(cwd: string | undefined, entries: readonly imp
   return undefined
 }
 
-/** 渲染当前项目卡（未登记描述等字段留空省略）。 */
+/** 渲染当前项目卡（未登记描述等字段留空省略；事实最近在前最多 10 条）。 */
 export function renderProjectCard(entry: import('./projects/protocol.ts').ProjectEntry): string {
   const lines = [
     '【当前项目（dsh-devforge 注入）】',
@@ -218,6 +218,14 @@ export function renderProjectCard(entry: import('./projects/protocol.ts').Projec
   }
   lines.push('- 本机路径：' + entry.path)
   if (entry.pathExists === false) lines.push('- ⚠️ 本机路径失效：可能从其他电脑同步而来，请向用户确认本机实际路径（可重定位）。')
+  const facts = entry.facts ?? []
+  if (facts.length > 0) {
+    lines.push('- 项目事实（此前会话沉淀，最近在前）：')
+    for (const fact of facts.slice(-10).reverse()) {
+      lines.push('  · ' + new Date(fact.at).toISOString().slice(0, 10) + '：' + fact.text)
+    }
+  }
+  lines.push('- 项目记忆习惯：会话中确认的项目事实（数据库位置、发布方式、关键路径、部署流程、踩过的坑），随时用 devforge_project 工具的 note 动作记录（action=note + id 或 keyword + text）；下次会话自动带上，项目越用越懂。')
   return lines.join('\n')
 }
 
