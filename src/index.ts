@@ -560,6 +560,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         () => zhipuService.ensureOfficialModels(),
         () => minimaxService.ensureModels(),
         () => siliconFlowService.ensureModels(),
+        () => modagentaiService.migrateLegacyGateway(),
       ]
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (token !== autoEnsureToken) return

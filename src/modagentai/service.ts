@@ -251,9 +251,25 @@ export class ModagentaiService {
     return await this.status()
   }
 
+  /**
+   * 启动自愈：检测到旧 OpenAI 中转体系残留（openai-gateway-modagentai）且用户已登录时，
+   * 自动迁移到 tiangong 原生 provider。幂等：无残留或未登录时不做任何写入。
+   * 供启动自动补齐调度调用（llm-pi-ai 未就绪时抛错，由调度重试）。
+   */
+  async migrateLegacyGateway(): Promise<void> {
+    const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
+    if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
+    const section = descriptor.value as { providers?: Record<string, unknown> } | undefined
+    const providers = section?.providers ?? {}
+    if (providers[LEGACY_GATEWAY_PROVIDER_ID] === undefined) return
+    const token = await this.readToken()
+    if (token === '') return
+    this.ctx.logger?.info?.('[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider')
+    await this.applyGateway()
+  }
+
   /** 直写 llm-pi-ai 段：注册/移除 tiangong 原生 provider，并清理旧 openai-gateway- 前缀路由。 */
-  private async writeTiangongProvider(remove: boolean): Promise<void> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+  private async writeTiangongProvider(remove: boolean): Promise<void> {    for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, unknown> } | undefined
