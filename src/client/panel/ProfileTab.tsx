@@ -284,7 +284,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
       <h3 className={css['sectionTitle']}>快捷入口</h3>
       <div className={css['metricList']}>
         <div className={css['metricRow']}>
-          <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('codeplan') }}>Coding Plan · 用量与接入</button>
+          {(site?.role === 'admin') && <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('codeplan') }}>Coding Plan · 用量与接入</button>}
           <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('feishu') }}>飞书配置</button>
         </div>
       </div>
