@@ -55,7 +55,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   useEffect(() => { void refreshSite() }, [refreshSite])
 
-  /** 服务接入列表重拉：登录/配置中转成功后刷新「OpenAI 中转」等行。 */
+  /** 服务接入列表重拉：登录/配置中转成功后刷新「天工造梦中转」等行。 */
   const refreshServices = useCallback(async () => {
     const results = await Promise.allSettled([
       api.getZhipuStatus(),
@@ -105,7 +105,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
     })
     rows.push({
       key: 'gateway',
-      label: 'OpenAI 中转',
+      label: '天工造梦中转',
       ok: gateway.status === 'fulfilled' && gateway.value.credentialConfigured,
       detail: gateway.status === 'fulfilled'
         ? (gateway.value.credentialConfigured
@@ -235,7 +235,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
       })
       rows.push({
         key: 'gateway',
-        label: 'OpenAI 中转',
+        label: '天工造梦中转',
         ok: gateway.status === 'fulfilled' && gateway.value.credentialConfigured,
         detail: gateway.status === 'fulfilled'
           ? (gateway.value.credentialConfigured

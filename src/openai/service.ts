@@ -544,7 +544,7 @@ export class OpenAiGatewayService {
           continue
         }
         desired.add(providerId)
-        const provider = buildOpenAiEndpointProvider(update.endpoint, update.models, providers[providerId], update.index === 0 ? 'OpenAI 中转' : 'OpenAI 中转 · ' + update.endpoint.name)
+        const provider = buildOpenAiEndpointProvider(update.endpoint, update.models, providers[providerId], update.index === 0 ? '天工造梦' : '天工造梦 · ' + update.endpoint.name)
         if (!deepEqualJson(provider, providers[providerId])) mutations.push({ op: 'set', path: ['providers', providerId], value: provider })
       }
       if (cleanLegacy) {
