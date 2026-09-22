@@ -169,7 +169,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
       <div className={css['tabBar']} role="tablist" data-dsh-part="tab-bar">
         {/* 个人中心固定为首个页签（辉哥 2026-09-21 定稿：替换教程页）。 */}
         <button type="button" role="tab" aria-selected={tab === 'profile'} data-active={tab === 'profile' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('profile') }}><IconProfile />个人中心</button>
-        <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} hidden={siteRole !== 'admin'} title="仅官网管理员可见" onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>
+        {siteRole === 'admin' && <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="仅官网管理员可见" onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>}
         <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('rag') }}><IconTiangong />记忆中枢</button>
         <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
         <button type="button" role="tab" aria-selected={tab === 'workflow'} data-active={tab === 'workflow' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('workflow') }}><IconWorkflow />工作流</button>
