@@ -89,29 +89,32 @@ export function makeModagentaiRoutes(service: ModagentaiService): WebRoute[] {
       },
     },
     {
+      // GET 读取 / POST 保存共用一条 exact 路由：宿主 exact 表只按 path 索引不分 method，
+      // 同 path 注册两条会触发 duplicate 抛错且先注册者先命中（2026-09-23 暂存实测踩坑），
+      // 必须单条路由在 handler 内按 method 分流（与 login/logout 的 method 检查同模式）。
       kind: 'exact',
       path: MODAGENTAI_API.profile,
       async handler(req, res) {
-        if (!guard(req, res)) return
-        try {
-          writeJson(res, 200, { ok: true, profile: await service.profile() })
-        } catch (error) {
-          writeError(res, error)
+        if (req.method === 'GET') {
+          if (!guard(req, res)) return
+          try {
+            writeJson(res, 200, { ok: true, profile: await service.profile() })
+          } catch (error) {
+            writeError(res, error)
+          }
+          return
         }
-      },
-    },
-    {
-      kind: 'exact',
-      path: MODAGENTAI_API.profile,
-      async handler(req, res) {
-        if (!guardWrite(req, res)) return
-        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
-        try {
-          const body = await readBody(req)
-          writeJson(res, 200, { ok: true, profile: await service.updateProfile({ avatar: body.avatar, gender: body.gender, birthday: body.birthday }) })
-        } catch (error) {
-          writeError(res, error)
+        if (req.method === 'POST') {
+          if (!guardWrite(req, res)) return
+          try {
+            const body = await readBody(req)
+            writeJson(res, 200, { ok: true, profile: await service.updateProfile({ avatar: body.avatar, gender: body.gender, birthday: body.birthday }) })
+          } catch (error) {
+            writeError(res, error)
+          }
+          return
         }
+        writeJson(res, 405, { ok: false, error: 'GET/POST only' })
       },
     },
     {
