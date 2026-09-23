@@ -1,7 +1,8 @@
 /**
- * 个人中心 —— 页面只有一张「身份卡」（辉哥 2026-09-23 定稿 + 同日补充：一张卡两层身份）。
+ * 个人中心 —— 页面只有一张「身份卡」（辉哥 2026-09-23 定稿 + 同日两轮迭代：名片式排版）。
  * ① 官网账号身份：头像/性别/生日存官网 modagentai.com 关联账号（GET/POST /api/auth/profile，
- *    Bearer 令牌鉴权）；未登录（或会话失效）时卡内嵌极简登录表单（登录即自动配置中转）；
+ *    Bearer 令牌鉴权）；未登录（或会话失效）时卡内嵌极简登录表单（登录即自动配置中转）。
+ *    展示态元信息一行小字（性别 · 生日），点「编辑资料」才展开编辑控件，头像 56px 点击即换。
  * ② 插件内身份：称呼/身份简介/习惯与硬偏好（store.db memory.profile 单例，每轮常驻注入），
  *    编辑跳记忆工作台。两层身份同卡展示，官网层不依赖登录也照常显示插件身份段。
  */
@@ -60,25 +61,26 @@ function initialOf(username: string): string {
   return first === '' ? '?' : first.toUpperCase()
 }
 
+/** 性别枚举 → 展示文案。 */
+function genderLabelOf(gender: string | undefined): string {
+  return GENDER_OPTIONS.find((option) => option.value === gender)?.label ?? '未设置'
+}
+
 /** 插件内身份段属性（官网身份卡与登录表单卡共用，避免两处重复 JSX）。 */
 interface LocalIdentityProps {
   userProfile: MemoryUserProfile | null
   loaded: boolean
-  onEdit: () => void
 }
 
-/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入状态 + 编辑入口（memory.profile 单例，本地存储不依赖官网）。 */
-function LocalIdentity({ userProfile, loaded, onEdit }: LocalIdentityProps): JSX.Element {
+/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入状态（纯展示；编辑入口在卡片头部「编辑身份」）。 */
+function LocalIdentity({ userProfile, loaded }: LocalIdentityProps): JSX.Element {
   const alias = userProfile?.alias ?? ''
   const identity = userProfile?.identity ?? ''
   const habitCount = userProfile?.habits.length ?? 0
   const enabled = userProfile?.enabled ?? false
   return (
     <div className={css['identitySection']}>
-      <div className={css['identitySectionHead']}>
-        <span className={css['identitySectionTitle']}>插件身份</span>
-        <button type="button" className={css['ghostButton']} onClick={onEdit}>编辑身份</button>
-      </div>
+      <span className={css['identitySectionTitle']}>插件身份</span>
       {!loaded && <span className={css['identityHint']}>正在读取插件身份…</span>}
       {loaded && (
         <>
@@ -123,15 +125,16 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
   const [loginPass, setLoginPass] = useState('')
   const [loginErr, setLoginErr] = useState('')
 
-  // 资料态：性别/生日行内编辑暂存，点保存才提交；提示信息行
+  // 资料编辑：默认展示态（元信息一行小字），点「编辑资料」展开一行控件；保存/取消后回到展示态
+  const [editing, setEditing] = useState(false)
   const [gender, setGender] = useState('')
   const [birthday, setBirthday] = useState('')
-  const [saveMsg, setSaveMsg] = useState('')
-  const [saveErr, setSaveErr] = useState('')
+  const [statusMsg, setStatusMsg] = useState('')
+  const [statusErr, setStatusErr] = useState('')
 
   /** 拉取官网资料；把 gender/birthday 灌进编辑暂存。失败只落提示不崩页面。 */
   const refreshProfile = useCallback(async () => {
-    setLoadErr(''); setSaveMsg(''); setSaveErr(''); setLoginErr('')
+    setLoadErr(''); setStatusMsg(''); setStatusErr(''); setLoginErr('')
     try {
       const next = await api.getSiteProfile()
       setProfile(next)
@@ -172,7 +175,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         return
       }
       await refreshProfile()
-      if (!result.gatewayApplied) setSaveErr(result.message) // 登录成功但中转自动配置失败：进资料态并保留原因
+      if (!result.gatewayApplied) setStatusErr(result.message) // 登录成功但中转自动配置失败：进资料态并保留原因
     } catch (error) {
       setLoginErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -182,14 +185,15 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   /** 保存性别/生日（头像上传即时保存，不走这里）。 */
   async function doSave(): Promise<void> {
-    setSaveErr(''); setSaveMsg('')
+    setStatusErr(''); setStatusMsg('')
     setBusy(true)
     try {
       const next = await api.updateSiteProfile({ gender, birthday })
       setProfile(next)
-      setSaveMsg('资料已保存')
+      setEditing(false)
+      setStatusMsg('资料已保存')
     } catch (error) {
-      setSaveErr(error instanceof Error ? error.message : String(error))
+      setStatusErr(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
     }
@@ -197,22 +201,36 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   /** 选择头像 → 压缩成 dataURL → 立即保存（成功后刷新资料）。 */
   async function doUploadAvatar(file: File): Promise<void> {
-    setSaveErr(''); setSaveMsg('')
+    setStatusErr(''); setStatusMsg('')
     setBusy(true)
     try {
       const avatar = await fileToAvatarDataUrl(file)
       const next = await api.updateSiteProfile({ avatar })
       setProfile(next)
-      setSaveMsg('头像已更新')
+      setStatusMsg('头像已更新')
     } catch (error) {
-      setSaveErr(error instanceof Error ? error.message : String(error))
+      setStatusErr(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
     }
   }
 
+  /** 进入编辑态：以当前资料初始化编辑控件。 */
+  function startEdit(): void {
+    setGender(typeof profile?.gender === 'string' ? profile.gender : '')
+    setBirthday(typeof profile?.birthday === 'string' ? profile.birthday : '')
+    setStatusMsg(''); setStatusErr('')
+    setEditing(true)
+  }
+
   const expired = profile !== null && profile.loggedIn && profile.expired === true
   const loggedIn = profile !== null && profile.loggedIn && !expired
+  // 展示态元信息：性别 · 生日；两者都没设就提示「资料未完善」
+  const metaGender = genderLabelOf(profile?.gender)
+  const metaBirthday = typeof profile?.birthday === 'string' && profile.birthday !== '' ? profile.birthday : ''
+  const metaText = metaBirthday !== ''
+    ? `${metaGender} · ${metaBirthday}`
+    : (profile?.gender === undefined || profile.gender === null || profile.gender === '' ? '资料未完善' : metaGender)
 
   return (
     <div>
@@ -258,32 +276,21 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
             <span className={css['identityHint']}>登录后自动配置中转，可用管理员开放的模型</span>
             {loginErr !== '' && <span className={css['identityExpired']}>{loginErr}</span>}
           </div>
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onEdit={() => { onNavigate('memory') }} />
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} />
         </div>
       )}
 
-      {/* 已登录资料态：头像 + 用户名 + 角色徽章 + 行内编辑（性别/生日）+ 插件身份段 */}
+      {/* 已登录资料态：名片式排版——56px 头像 + 用户名徽章 + 元信息一行小字，编辑控件按需展开 */}
       {loaded && loadErr === '' && loggedIn && profile !== null && (
         <div className={css['identityCard']}>
           <div className={css['identityHead']}>
-            <div className={css['identityAvatar']}>
-              {profile.avatar !== undefined && profile.avatar !== ''
-                ? <img src={profile.avatar} alt="头像" />
-                : <span>{initialOf(profile.username)}</span>}
-            </div>
-            <div className={css['identityMeta']}>
-              <div className={css['identityNameRow']}>
-                <strong>{profile.username !== '' ? profile.username : '?'}</strong>
-                <span className={css['identityBadge']} data-role={profile.role === 'admin' ? 'admin' : 'user'}>{profile.role === 'admin' ? '管理员' : '普通用户'}</span>
+            {/* 头像即上传入口：点击头像直接换图 */}
+            <label className={css['identityAvatarBox']} data-busy={busy ? 'true' : undefined} title="点击更换头像">
+              <div className={css['identityAvatar']}>
+                {profile.avatar !== undefined && profile.avatar !== ''
+                  ? <img src={profile.avatar} alt="头像" />
+                  : <span>{initialOf(profile.username)}</span>}
               </div>
-              <span className={css['identityHint']}>头像、性别与生日保存在官网 modagentai.com 账号</span>
-            </div>
-            <label
-              className={css['identityAvatarPick']}
-              data-busy={busy ? 'true' : undefined}
-              aria-disabled={busy}
-            >
-              更换头像
               <input
                 className={css['identityFileInput']}
                 type="file"
@@ -296,27 +303,47 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
                 }}
               />
             </label>
+            <div className={css['identityMeta']}>
+              <div className={css['identityNameRow']}>
+                <strong>{profile.username !== '' ? profile.username : '?'}</strong>
+                <span className={css['identityBadge']} data-role={profile.role === 'admin' ? 'admin' : 'user'}>{profile.role === 'admin' ? '管理员' : '普通用户'}</span>
+              </div>
+              {!editing && (
+                <div className={css['identityMetaRow']}>
+                  <span>{metaText}</span>
+                  <span className={css['identityMetaDot']}>·</span>
+                  <span>头像、资料存官网账号</span>
+                </div>
+              )}
+              <div className={css['identityActions']}>
+                <button type="button" className={css['identityLink']} disabled={busy} onClick={() => { if (!editing) startEdit() }}>
+                  {editing ? '编辑中…' : '编辑资料'}
+                </button>
+                <span className={css['identityMetaDot']}>·</span>
+                <button type="button" className={css['identityLink']} disabled={busy} onClick={() => { onNavigate('memory') }}>编辑身份</button>
+              </div>
+            </div>
           </div>
-          <div className={css['identityForm']}>
-            <label className={css['identityField']}>
-              <span>性别</span>
-              <select value={gender} onChange={(event) => { setGender(event.target.value) }}>
+          {/* 编辑态：一行紧凑控件（性别 + 生日 + 保存/取消），平时完全不占版面 */}
+          {editing && (
+            <div className={css['identityEditRow']}>
+              <select value={gender} onChange={(event) => { setGender(event.target.value) }} aria-label="性别">
                 {GENDER_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
-            </label>
-            <label className={css['identityField']}>
-              <span>生日</span>
-              <input type="date" value={birthday} onChange={(event) => { setBirthday(event.target.value) }} />
-            </label>
-            <div className={css['identityFormActions']}>
-              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSave() }}>{busy ? '保存中…' : '保存资料'}</button>
+              <input type="date" value={birthday} onChange={(event) => { setBirthday(event.target.value) }} aria-label="生日" />
+              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSave() }}>{busy ? '保存中…' : '保存'}</button>
+              <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { setEditing(false) }}>取消</button>
             </div>
-            {saveMsg !== '' && <span className={css['identitySaved']}>{saveMsg}</span>}
-            {saveErr !== '' && <span className={css['identityExpired']}>{saveErr}</span>}
-          </div>
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onEdit={() => { onNavigate('memory') }} />
+          )}
+          {(statusMsg !== '' || statusErr !== '') && (
+            <div className={css['identityStatus']}>
+              {statusMsg !== '' && <span className={css['identitySaved']}>{statusMsg}</span>}
+              {statusErr !== '' && <span className={css['identityExpired']}>{statusErr}</span>}
+            </div>
+          )}
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} />
         </div>
       )}
     </div>
