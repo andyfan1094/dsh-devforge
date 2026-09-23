@@ -102,9 +102,15 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
     )
   }
 
-  const head = state.pkgExpired
+    // 头部：左「天工造梦 · 用户名」，右「💎 当前套餐剩余」（辉哥 2026-09-23 定稿：显示当前套餐的，不是总余额；
+  //  当前套餐 = FIFO 正在扣的第一张已激活行；无套餐时兜底显示总余额）。
+  const currentRow = pkgRows.length > 0 ? pkgRows[0] : null
+  const headLeft = state.pkgExpired
     ? '天工造梦 · 会话已过期，请到个人中心重新登录'
-    : '天工造梦 · ' + (state.pkgUsername !== '' ? state.pkgUsername : '未登录') + (state.pkgBalance !== null ? ' · 💎 ' + state.pkgBalance.toFixed(2) : '')
+    : '天工造梦 · ' + (state.pkgUsername !== '' ? state.pkgUsername : '未登录')
+  const headAmount = currentRow !== null
+    ? '💎 ' + currentRow.gemsLeft.toFixed(2)
+    : state.pkgBalance !== null ? '💎 ' + state.pkgBalance.toFixed(2) : ''
   const tip = state.stale
     ? '天工造梦套餐（最近一次自动刷新失败，稍后重试或点击立即刷新）'
     : '天工造梦套餐 · 点击立即刷新'
@@ -112,7 +118,10 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
   return createElement('div', { style: { width: '100%' } },
     createElement('style', null, CARD_CSS),
     createElement('button', { type: 'button', className: 'dzq-card', onClick: () => { void load() }, title: tip },
-      createElement('span', { className: 'dzq-pkg-head' }, head),
+      createElement('span', { className: 'dzq-pkg-head dzq-top' },
+        createElement('span', null, headLeft),
+        headAmount !== '' && createElement('span', { className: 'dzq-pct' }, headAmount),
+      ),
       pkgRows.map((row) => renderPackageRow(row, row.key)),
       pkgRows.length === 0 && createElement('span', { className: 'dzq-pkg-hint' }, state.pkgExpired ? '重新登录后显示套餐' : '暂无套餐，赞助后开始使用'),
     ),

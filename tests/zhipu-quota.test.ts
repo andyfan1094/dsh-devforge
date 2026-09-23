@@ -158,8 +158,11 @@ test('套餐行规整：目录名称/图标映射、剩余占比；耗尽与未�
   assert.equal(rows.length, 2, '耗尽 empty 与未激活 chicken 都不显示')
   assert.equal(rows[0].label, '🪙 初始余额', '目录缺失时名册兜底 legacy→初始余额')
   assert.ok(rows[0].percent > 70 && rows[0].percent < 71)
+  assert.equal(rows[0].gemsLeft, 9.32)
+  assert.equal(rows[0].gemsTotal, 13.29)
   assert.equal(rows[0].activated, true)
   assert.equal(rows[1].label, '🍟 薯条套餐')
+  assert.equal(rows[1].gemsLeft, 14.99)
   assert.ok(rows[1].percent > 99.9 && rows[1].percent < 100, '薯条 14.99/15')
 })
 

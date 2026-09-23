@@ -178,6 +178,9 @@ export interface PackageRow {
   label: string
   /** 剩余占总量百分比（0-100，总量 0 时 0）。 */
   percent: number
+  /** 剩余绝对值（💎，头部「当前套餐额度」显示用）。 */
+  gemsLeft: number
+  gemsTotal: number
   /** false=未激活（首次使用后才计时）。 */
   activated: boolean
   /** 激活前提示：'首次使用后 N 天内有效'（目录 days 缺失时空串）。 */
@@ -223,6 +226,8 @@ export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] 
       key: m.packKey,
       label: ico + ' ' + name,
       percent: gemsTotal > 0 ? Math.max(0, Math.min(100, (gemsLeft / gemsTotal) * 100)) : 0,
+      gemsLeft,
+      gemsTotal,
       activated,
       pendingHint: '',
       title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎',
