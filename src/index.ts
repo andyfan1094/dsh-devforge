@@ -671,6 +671,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     // 自定义 OpenAI 兼容渠道（硅基流动/智谱开放平台/百炼等）：地址与凭据引用名存 rag.settings，
     // 每次请求动态解析（面板即改即用）；凭据本体走受管凭据表，绝不落明文。
     siliconflow: new ZhipuEmbedder(ragCredential('SILICONFLOW_API_KEY', '尚未配置硅基流动 API Key（SILICONFLOW_API_KEY）。'), { baseURL: 'https://api.siliconflow.cn/v1', path: '/embeddings', model: 'BAAI/bge-m3' }),
+    // 官网向量服务（辉哥 2026-09-23 定稿：用户登录后记忆等向量服务对接官网；会话令牌即凭据免 API Key）。
+    // 上游同为方舟 Coding Plan 套餐端点，doubao-embedding-vision-251215 与 ark 渠道同名同 2048 维 →
+    // vectorKey(model,text) 一致，向量缓存全命中，切渠道零重嵌零重复计费；官网侧计费每万 token 0.01💎。
+    modagentai: new ZhipuEmbedder(ragCredential('MODAGENTAI_SESSION_TOKEN', '尚未登录官网账号（MODAGENTAI_SESSION_TOKEN），官网向量服务不可用。'), { baseURL: 'https://modagentai.com/api/gw/v1', path: '/embeddings', model: 'doubao-embedding-vision-251215', batchSize: 4 }),
     custom: new ZhipuEmbedder(
       async () => {
         const stored = (() => { try { return getSettings<RagSettingsPartial>(getDb(), 'rag.settings') } catch { return undefined } })()
@@ -692,6 +696,19 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   const nativeMemory = new NativeMemoryStore(ragStore)
   const memoryGovernance = new MemoryGovernanceService(ragStore, nativeMemory)
   const memoryRecall = new MemoryRecallService(nativeMemory, ragService, ragStore)
+  // 官网账号登录后向量服务自动对接官网（辉哥 2026-09-23 定稿）：已登录且当前渠道非官网时迁移，
+  // 幂等（已是 modagentai 跳过）；模型名与 ark 渠道一致（vectorKey 相同）→ 向量缓存全命中零重嵌。
+  // 失败静默（启动不阻塞）：面板可手动切。
+  void (async () => {
+    try {
+      const status = await modagentaiService.status()
+      if (!status.loggedIn || status.expired) return
+      const settings = ragService.getSettings()
+      if (settings.embedding.provider === 'modagentai') return
+      ragService.putSettings({ ...settings, embedding: { ...settings.embedding, provider: 'modagentai', model: 'doubao-embedding-vision-251215' } })
+      ctx.logger?.info?.('[dsh-devforge] RAG 向量渠道已自动切换官网（%s → modagentai）', settings.embedding.provider)
+    } catch { /* 迁移失败不阻塞启动 */ }
+  })()
   /** 会话 cwd 是作用域唯一可信来源；项目 id 来自 Host 项目登记表。 */
   const memoryScopeOfSession = (session: unknown) => {
     const cwd = (session as { header?: { cwd?: unknown } } | null)?.header?.cwd

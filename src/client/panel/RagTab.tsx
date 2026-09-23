@@ -271,8 +271,8 @@ export function RagTab() {
   )
 }
 /** 渠道中文标签与各渠道默认向量模型提示（ark 用实测可用的 2048 维视觉向量模型）。 */
-const PROVIDER_LABEL: Record<string, string> = { zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama', custom: '自定义(OpenAI兼容)', siliconflow: '硅基流动' }
-const PROVIDER_MODEL_HINT: Record<string, string> = { zhipu: 'embedding-3', ark: 'doubao-embedding-vision-251215', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3', custom: 'BAAI/bge-m3', siliconflow: 'BAAI/bge-m3' }
+const PROVIDER_LABEL: Record<string, string> = { modagentai: '官网（天工造梦）', zhipu: '智谱', ark: '火山方舟', 'openai-gateway': 'OpenAI 中转', ollama: '本地 Ollama', custom: '自定义(OpenAI兼容)', siliconflow: '硅基流动' }
+const PROVIDER_MODEL_HINT: Record<string, string> = { modagentai: 'doubao-embedding-vision-251215', zhipu: 'embedding-3', ark: 'doubao-embedding-vision-251215', 'openai-gateway': 'text-embedding-3-small', ollama: 'bge-m3', custom: 'BAAI/bge-m3', siliconflow: 'BAAI/bge-m3' }
 
 /** 设置行（子组件：props 类型保证非空，避免闭包窄化失效）。向量渠道/模型可配，重嵌守卫由宿主保存响应驱动。 */
 function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (next: RagSettings) => void; onSave: (next: RagSettings) => void; onReembed: () => void }): JSX.Element {
@@ -329,6 +329,10 @@ function SettingsRow(props: { settings: RagSettings; busy: boolean; onChange: (n
         {/* 方舟渠道提示：Coding Plan 套餐内调用；换渠道/模型保存后由 embeddingChanged 弹窗引导全库重嵌 */}
         {settings.embedding.provider === 'ark' && (
           <span className={css.subtleText}>方舟 Coding Plan 套餐内向量化（记忆/知识库通用）；切换渠道或模型保存后，请按提示「全库重嵌」。</span>
+        )}
+        {/* 官网渠道提示：登录免 Key；官网侧按 token 计费（每万 token 0.01💎）；模型与方舟同名同 2048 维，向量缓存互通零重嵌 */}
+        {settings.embedding.provider === 'modagentai' && (
+          <span className={css.subtleText}>官网向量服务（登录后免 Key）；官网侧计费每万 token 0.01💎；模型与方舟渠道同名同维度，向量缓存互通零重嵌。</span>
         )}
         <button type="button" className={css.ghostButton} disabled={busy || testing} onClick={testConnection}>{testing ? '测试中…' : '测试连接'}</button>
         <button type="button" className={css.ghostButton} disabled={busy} onClick={props.onReembed}>重嵌全部</button>

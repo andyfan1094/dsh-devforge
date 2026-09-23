@@ -34,7 +34,7 @@ export const RAG_API = {
  * siliconflow=硅基流动免费档；ark=火山方舟 Coding Plan 套餐向量端点（doubao-embedding-vision-251215，
  * 2026-09-21 实测可用，2048 维））。
  */
-export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom' | 'siliconflow'
+export type RagEmbeddingProvider = 'zhipu' | 'ark' | 'openai-gateway' | 'ollama' | 'custom' | 'siliconflow' | 'modagentai'
 
 /** 知识库来源类型（memory=会话记忆库，由记忆沉淀层写入）。 */
 export type RagKbSource = 'manual' | 'project' | 'mirror' | 'memory'
