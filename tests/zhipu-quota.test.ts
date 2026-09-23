@@ -153,17 +153,14 @@ const payload = {
   },
 }
 
-test('套餐行规整：目录名称/图标映射、剩余占比、未激活提示；耗尽实例剔除（辉哥 2026-09-23 定稿）', () => {
+test('套餐行规整：目录名称/图标映射、剩余占比；耗尽与未激活实例剔除（辉哥 2026-09-23 定稿：还没用的不显示）', () => {
   const rows = extractPackageRows(payload)
-  assert.equal(rows.length, 3, '耗尽的 empty 实例不显示')
-  assert.equal(rows[0].label, '🪙 初始余额')
+  assert.equal(rows.length, 2, '耗尽 empty 与未激活 chicken 都不显示')
+  assert.equal(rows[0].label, '🪙 初始余额', '目录缺失时名册兜底 legacy→初始余额')
   assert.ok(rows[0].percent > 70 && rows[0].percent < 71)
-  assert.equal(rows[2].label, '🍗 鸡腿套餐')
-  assert.equal(rows[2].percent, 100)
-  assert.equal(rows[2].activated, false)
-  assert.equal(rows[2].pendingHint, '首次使用后 2 天内有效')
-  assert.equal(rows[1].activated, true)
-  assert.equal(rows[1].pendingHint, '')
+  assert.equal(rows[0].activated, true)
+  assert.equal(rows[1].label, '🍟 薯条套餐')
+  assert.ok(rows[1].percent > 99.9 && rows[1].percent < 100, '薯条 14.99/15')
 })
 
 test('套餐行规整：未登录 / 异常载荷返回空数组不炸', () => {

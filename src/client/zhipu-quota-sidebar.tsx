@@ -47,7 +47,6 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
   const [state, setState] = useState({
     pkgRows: null as ReturnType<typeof extractPackageRows> | null,
     pkgBalance: null as number | null,
-    pkgSearchesLeft: null as number | null,
     pkgUsername: '',
     pkgExpired: false,
     stale: false,
@@ -61,7 +60,6 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
       setState({
         pkgRows: extractPackageRows(pkgPayload),
         pkgBalance: view !== undefined && typeof view.balance === 'number' ? view.balance : null,
-        pkgSearchesLeft: view !== undefined && typeof view.searchesLeft === 'number' ? view.searchesLeft : null,
         pkgUsername: view !== undefined && typeof view.username === 'string' ? view.username : '',
         pkgExpired: view !== undefined && view.expired === true,
         stale: false,
@@ -106,7 +104,7 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
 
   const head = state.pkgExpired
     ? '天工造梦 · 会话已过期，请到个人中心重新登录'
-    : '天工造梦 · ' + (state.pkgUsername !== '' ? state.pkgUsername : '未登录') + (state.pkgBalance !== null ? ' · 💎 ' + state.pkgBalance.toFixed(2) : '') + (state.pkgSearchesLeft !== null ? ' · 可搜 ' + state.pkgSearchesLeft + ' 次' : '')
+    : '天工造梦 · ' + (state.pkgUsername !== '' ? state.pkgUsername : '未登录') + (state.pkgBalance !== null ? ' · 💎 ' + state.pkgBalance.toFixed(2) : '')
   const tip = state.stale
     ? '天工造梦套餐（最近一次自动刷新失败，稍后重试或点击立即刷新）'
     : '天工造梦套餐 · 点击立即刷新'

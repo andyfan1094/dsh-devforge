@@ -193,7 +193,11 @@ export interface PackageCatalogEntry {
   days: number
 }
 
-/** 从 /api/dsh-devforge/modagentai/packages 载荷规整套餐行：只保留 gemsLeft > 0 的实例（active 与未激活都要——未激活也能用）。 */
+/** 目录缺失时的名册兜底（legacy 是初始余额，官网赞助目录不登记；辉哥 2026-09-23 定稿）。 */
+const FALLBACK_NAMES: Record<string, string> = { legacy: '初始余额', chicken: '鸡腿套餐', fries: '薯条套餐' }
+const FALLBACK_ICONS: Record<string, string> = { legacy: '🪙', chicken: '🍗', fries: '🍟' }
+
+/** 从 /api/dsh-devforge/modagentai/packages 载荷规整套餐行：只保留已激活且 gemsLeft > 0 的实例（辉哥定稿：还没用的不显示）。 */
 export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] {
   const data = payload !== null && typeof payload === 'object' ? (payload as { packages?: unknown }).packages : undefined
   if (data === null || typeof data !== 'object') return []
@@ -209,19 +213,19 @@ export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] 
     const gemsTotal = typeof m.gemsTotal === 'number' && Number.isFinite(m.gemsTotal) ? m.gemsTotal : 0
     const gemsLeft = typeof m.gemsLeft === 'number' && Number.isFinite(m.gemsLeft) ? m.gemsLeft : 0
     if (gemsLeft <= 0) continue
-    const entry = catalog.find((c) => c !== null && typeof c === 'object' && (c as PackageCatalogEntry).key === m.packKey) as PackageCatalogEntry | undefined
-    const name = entry?.name ?? m.packKey
-    const ico = entry?.ico ?? '🪙'
     const activated = typeof m.activatedAt === 'string' && m.activatedAt !== ''
-    const days = entry && typeof entry.days === 'number' ? entry.days : undefined
-    const noExp = m.expiresAt === undefined || m.expiresAt === null || m.expiresAt === 'infinity'
+    // 辉哥定稿：还没用的（未激活）不显示，只显示用着的。
+    if (!activated) continue
+    const entry = catalog.find((c) => c !== null && typeof c === 'object' && (c as PackageCatalogEntry).key === m.packKey) as PackageCatalogEntry | undefined
+    const name = entry?.name ?? FALLBACK_NAMES[m.packKey] ?? m.packKey
+    const ico = entry?.ico ?? FALLBACK_ICONS[m.packKey] ?? '🪙'
     rows.push({
       key: m.packKey,
       label: ico + ' ' + name,
       percent: gemsTotal > 0 ? Math.max(0, Math.min(100, (gemsLeft / gemsTotal) * 100)) : 0,
       activated,
-      pendingHint: !activated && noExp && days !== undefined && days > 0 ? '首次使用后 ' + days + ' 天内有效' : '',
-      title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎' + (!activated && noExp ? '（未激活：首次消费后计时' + (days ? '，' + days + ' 天有效期' : '') + '）' : ''),
+      pendingHint: '',
+      title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎',
     })
   }
   return rows
