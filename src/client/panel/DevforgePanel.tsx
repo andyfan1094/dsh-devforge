@@ -138,6 +138,12 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
     if (tab === 'codeplan' && siteRole !== 'admin') setTab('profile')
   }, [tab, siteRole])
 
+  /** 身份卡「编辑身份」等入口只切换现有页签，不重复实现业务逻辑；CodePlan 仅管理员可达。 */
+  const navigateFromProfile = (target: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate'): void => {
+    if (target === 'codeplan' && siteRole !== 'admin') return
+    setTab(target)
+  }
+
   return (
     <div className={css['panel']} data-dsh-plugin="devforge" data-density={density}>
       <div className={css['panelHeader']}>
@@ -185,7 +191,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
       <div className={css['panelContent']}>
         {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
 
-        {tab === 'profile' && <ProfileTab api={api} />}
+        {tab === 'profile' && <ProfileTab api={api} onNavigate={navigateFromProfile} />}
 
         {tab === 'standards' && (
           <section className={css['tabBody']}>

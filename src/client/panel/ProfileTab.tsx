@@ -1,17 +1,20 @@
 /**
- * 个人中心 —— 只留一张「官网身份卡」大卡片（辉哥 2026-09-23 定稿）。
- * 头像/性别/生日存官网 modagentai.com 关联账号（GET/POST /api/auth/profile，Bearer 令牌鉴权）；
- * 未登录（或会话失效）时卡片内嵌极简登录表单（登录即自动配置中转），
- * 已登录进入资料态：头像上传即存，性别/生日行内编辑、点保存才提交。
+ * 个人中心 —— 页面只有一张「身份卡」（辉哥 2026-09-23 定稿 + 同日补充：一张卡两层身份）。
+ * ① 官网账号身份：头像/性别/生日存官网 modagentai.com 关联账号（GET/POST /api/auth/profile，
+ *    Bearer 令牌鉴权）；未登录（或会话失效）时卡内嵌极简登录表单（登录即自动配置中转）；
+ * ② 插件内身份：称呼/身份简介/习惯与硬偏好（store.db memory.profile 单例，每轮常驻注入），
+ *    编辑跳记忆工作台。两层身份同卡展示，官网层不依赖登录也照常显示插件身份段。
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
+import type { MemoryUserProfile } from '../../memory/profile.ts'
 import type { ModagentaiProfile } from '../../modagentai/protocol.ts'
 import css from './panel.module.css'
 
-/** 个人中心属性：只保留 API 客户端（辉哥 2026-09-23 定稿：页面只有一张身份卡）。 */
+/** 个人中心属性：onNavigate 供「编辑身份」跳记忆工作台等页签（CodePlan 仅管理员可达，判断在面板侧）。 */
 export interface ProfileTabProps {
   api: DevforgeApi
+  onNavigate: (tab: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate') => void
 }
 
 /** 性别下拉选项：控件值 ↔ 官网枚举（'' = 未设置）。 */
@@ -22,7 +25,7 @@ const GENDER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'secret', label: '保密' },
 ]
 
-/** 头像缩放目标边长（官网存 dataURL，128×128 已够身份卡展示）。 */
+/** 头像上传压缩目标边长（官网存 dataURL，128×128 在缩小显示下依然清晰）。 */
 const AVATAR_SIZE = 128
 
 /** 把图片文件 cover 居中裁剪缩放成 128×128 JPEG dataURL（官网限 150KB，质量 0.85）。 */
@@ -57,12 +60,63 @@ function initialOf(username: string): string {
   return first === '' ? '?' : first.toUpperCase()
 }
 
-/** 个人中心页签（官网身份卡）。 */
-export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
+/** 插件内身份段属性（官网身份卡与登录表单卡共用，避免两处重复 JSX）。 */
+interface LocalIdentityProps {
+  userProfile: MemoryUserProfile | null
+  loaded: boolean
+  onEdit: () => void
+}
+
+/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入状态 + 编辑入口（memory.profile 单例，本地存储不依赖官网）。 */
+function LocalIdentity({ userProfile, loaded, onEdit }: LocalIdentityProps): JSX.Element {
+  const alias = userProfile?.alias ?? ''
+  const identity = userProfile?.identity ?? ''
+  const habitCount = userProfile?.habits.length ?? 0
+  const enabled = userProfile?.enabled ?? false
+  return (
+    <div className={css['identitySection']}>
+      <div className={css['identitySectionHead']}>
+        <span className={css['identitySectionTitle']}>插件身份</span>
+        <button type="button" className={css['ghostButton']} onClick={onEdit}>编辑身份</button>
+      </div>
+      {!loaded && <span className={css['identityHint']}>正在读取插件身份…</span>}
+      {loaded && (
+        <>
+          <div className={css['identityKv']}>
+            <span className={css['identityKvLabel']}>称呼</span>
+            <strong>{alias !== '' ? alias : '未设置'}</strong>
+          </div>
+          {identity !== '' && (
+            <div className={css['identityKv']}>
+              <span className={css['identityKvLabel']}>简介</span>
+              <span className={css['identityKvText']}>{identity}</span>
+            </div>
+          )}
+          <div className={css['identityKv']}>
+            <span className={css['identityKvLabel']}>习惯</span>
+            <span className={css['identityKvText']}>
+              习惯与硬偏好 {habitCount} 条 ·{' '}
+              <span className={css['identityInject']} data-on={enabled ? 'true' : undefined}>
+                {enabled ? '● 每轮常驻注入中' : '○ 注入已关闭'}
+              </span>
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** 个人中心页签（一张身份卡：官网账号身份 + 插件内身份）。 */
+export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
   const [profile, setProfile] = useState<ModagentaiProfile | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // 插件内身份（memory.profile 单例，与官网登录态无关）
+  const [userProfile, setUserProfile] = useState<MemoryUserProfile | null>(null)
+  const [localLoaded, setLocalLoaded] = useState(false)
 
   // 登录表单（未登录/会话失效态）
   const [loginUser, setLoginUser] = useState('')
@@ -91,7 +145,19 @@ export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
     }
   }, [api])
 
+  /** 拉取插件内身份（memory.profile；读失败不影响官网身份层）。 */
+  const refreshLocal = useCallback(async () => {
+    try {
+      setUserProfile(await api.getUserProfile())
+    } catch {
+      setUserProfile(null)
+    } finally {
+      setLocalLoaded(true)
+    }
+  }, [api])
+
   useEffect(() => { void refreshProfile() }, [refreshProfile])
+  useEffect(() => { void refreshLocal() }, [refreshLocal])
 
   /** 登录官网账号（登录即自动配置中转），成功后拉资料进入资料态。 */
   async function doLogin(): Promise<void> {
@@ -161,7 +227,7 @@ export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
         </div>
       )}
 
-      {/* 未登录 / 会话失效：卡片内嵌极简登录表单 */}
+      {/* 未登录 / 会话失效：登录表单 + 插件身份段（插件身份不依赖官网登录，照常显示） */}
       {loaded && loadErr === '' && !loggedIn && (
         <div className={css['identityCard']}>
           <div className={css['identityHead']}>
@@ -192,10 +258,11 @@ export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
             <span className={css['identityHint']}>登录后自动配置中转，可用管理员开放的模型</span>
             {loginErr !== '' && <span className={css['identityExpired']}>{loginErr}</span>}
           </div>
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onEdit={() => { onNavigate('memory') }} />
         </div>
       )}
 
-      {/* 已登录资料态：头像 + 用户名 + 角色徽章 + 行内编辑（性别/生日） */}
+      {/* 已登录资料态：头像 + 用户名 + 角色徽章 + 行内编辑（性别/生日）+ 插件身份段 */}
       {loaded && loadErr === '' && loggedIn && profile !== null && (
         <div className={css['identityCard']}>
           <div className={css['identityHead']}>
@@ -249,6 +316,7 @@ export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
             {saveMsg !== '' && <span className={css['identitySaved']}>{saveMsg}</span>}
             {saveErr !== '' && <span className={css['identityExpired']}>{saveErr}</span>}
           </div>
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onEdit={() => { onNavigate('memory') }} />
         </div>
       )}
     </div>
