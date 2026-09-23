@@ -1,4 +1,4 @@
-/** 官网账号（modagentai.com）接入：API 路径与类型（辉哥 2026-09-22 定稿：个人中心登录 + 自动配置中转）。 */
+/** 官网账号（modagentai.com）接入：API 路径与类型（辉哥 2026-09-22 定稿：个人中心登录 + 自动配置中转；2026-09-23 加个人资料接口）。 */
 
 /** 面板 API 路径（loopback + 同源写围栏，与其它模块同规矩）。 */
 export const MODAGENTAI_API = {
@@ -7,6 +7,7 @@ export const MODAGENTAI_API = {
   login: '/api/dsh-devforge/modagentai/login',
   logout: '/api/dsh-devforge/modagentai/logout',
   applyGateway: '/api/dsh-devforge/modagentai/apply-gateway',
+  profile: '/api/dsh-devforge/modagentai/profile',
 } as const
 
 /** 官网站点与用户级网关（OpenAI 兼容）地址。 */
@@ -64,4 +65,16 @@ export interface ModagentaiLoginResult {
   gatewayApplied: boolean
   gatewayModels: number
   message: string
+}
+
+/** 官网用户资料（辉哥 2026-09-23 定稿：个人中心身份卡数据源）。 */
+export interface ModagentaiProfile {
+  loggedIn: boolean
+  /** 会话失效（曾登录但官网 401）。 */
+  expired?: boolean
+  username: string
+  role: string
+  avatar?: string
+  gender?: string
+  birthday?: string
 }

@@ -11,7 +11,7 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
-import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiStatus } from './protocol.ts'
+import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiStatus } from './protocol.ts'
 import { TIANGONG_REASONING_EFFORTS, tiangongEffortsOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
@@ -169,6 +169,86 @@ export class ModagentaiService {
       // 静默：搜索次数行不渲染
     }
     return out
+  }
+
+  /**
+   * 官网用户资料（辉哥 2026-09-23 定稿）：个人中心身份卡数据源。
+   * 未登录短路径返回；401 标记会话失效；网络异常返回基础形态不标 expired（对齐 packages() 容错语义）。
+   */
+  async profile(): Promise<ModagentaiProfile> {
+    const settings = this.readSettings()
+    const token = await this.readToken()
+    if (settings.username === '' || token === '') return { loggedIn: false, username: '', role: '' }
+    try {
+      const res = await fetch(SITE + '/api/auth/profile', {
+        headers: { authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' },
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+      if (res.status === 401) return { loggedIn: true, expired: true, username: settings.username, role: settings.role }
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { ok?: boolean; profile?: Record<string, unknown> } | null
+        if (data?.ok === true && data.profile !== null && typeof data.profile === 'object') {
+          const raw = data.profile
+          return {
+            loggedIn: true,
+            username: settings.username,
+            role: settings.role,
+            avatar: typeof raw.avatar === 'string' ? raw.avatar : undefined,
+            gender: typeof raw.gender === 'string' ? raw.gender : undefined,
+            birthday: typeof raw.birthday === 'string' ? raw.birthday : undefined,
+          }
+        }
+      }
+    } catch {
+      // 网络失败：返回基础形态，不标记会话失效（与 packages()/status() 同语义）
+    }
+    return { loggedIn: true, username: settings.username, role: settings.role }
+  }
+
+  /**
+   * 保存官网用户资料（头像/性别/生日，辉哥 2026-09-23 定稿）。
+   * patch 只收 string 字段（avatar 为 dataURL，官网限 150KB，客户端预检 base64 长度上限；
+   * 空串表示清空对应字段）。401 抛会话失效，其余失败按 HTTP 语义抛 ModagentaiServiceError。
+   */
+  async updateProfile(patch: { avatar?: unknown; gender?: unknown; birthday?: unknown }): Promise<ModagentaiProfile> {
+    const token = await this.readToken()
+    if (token === '') throw new ModagentaiServiceError('尚未登录官网账号。', 401)
+    const body: Record<string, string> = {}
+    for (const key of ['avatar', 'gender', 'birthday'] as const) {
+      const value = patch[key]
+      if (typeof value === 'string') body[key] = value
+    }
+    // 150KB base64 ≈ 210000 字符，超限直接拒绝，不打官网
+    if (typeof body.avatar === 'string' && body.avatar.length > 210_000) {
+      throw new ModagentaiServiceError('头像过大，请更换图片后重试。', 400)
+    }
+    const settings = this.readSettings()
+    let res: Response
+    try {
+      res = await fetch(SITE + '/api/auth/profile', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'user-agent': 'DeepSeek-Harness/1.0' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+    } catch (error) {
+      throw new ModagentaiServiceError('官网连接失败：' + (error instanceof Error ? error.message : String(error)), 502)
+    }
+    if (res.status === 401) throw new ModagentaiServiceError('官网会话已失效，请重新登录。', 401)
+    const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: unknown; profile?: Record<string, unknown> } | null
+    if (!res.ok || payload?.ok !== true) {
+      const status = res.ok ? 502 : (res.status >= 400 ? res.status : 400)
+      throw new ModagentaiServiceError(typeof payload?.error === 'string' && payload.error !== '' ? payload.error : '资料保存失败，请稍后重试。', status)
+    }
+    const raw = payload.profile !== null && typeof payload.profile === 'object' ? payload.profile : {}
+    return {
+      loggedIn: true,
+      username: settings.username,
+      role: settings.role,
+      avatar: typeof raw.avatar === 'string' ? raw.avatar : undefined,
+      gender: typeof raw.gender === 'string' ? raw.gender : undefined,
+      birthday: typeof raw.birthday === 'string' ? raw.birthday : undefined,
+    }
   }
 
   /** 组合状态视图（实时到官网校验令牌有效性）。 */

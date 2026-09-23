@@ -8,9 +8,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { ModagentaiService } from '../src/modagentai/service.ts'
+import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
 import { tiangongEffortsOutdated, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
-import { closeAllDb } from '../src/store/db.ts'
+import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
 function makeCtx(providers: Record<string, unknown>, opts: { token?: string } = {}) {
@@ -120,6 +120,238 @@ test('启动自愈：未登录时不做任何写入', async () => {
     await service.migrateLegacyGateway()
     assert.equal(state.mutations.length, 0)
   } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// —— profile / updateProfile（辉哥 2026-09-23 定稿：个人中心身份卡数据源）——
+
+/** 写入已登录账号信息（profile 接口从 store.db settings 读用户名/角色）。 */
+function writeAccount(username: string, role = 'admin'): void {
+  putSettings(getDb(), 'modagentai.settings', { username, role, autoApplied: false, appliedModels: 0, appliedAt: 1 })
+}
+
+/** fetch 打桩：记录调用并按脚本返回；返回调用列表与恢复函数的容器由调用方 try/finally 恢复。 */
+function stubFetch(handler: (url: string, init?: RequestInit) => Response): { calls: Array<{ url: string; init?: RequestInit }>; install: () => void; restore: () => void } {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const original = globalThis.fetch
+  return {
+    calls,
+    install: () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        calls.push({ url, init })
+        return handler(url, init)
+      }) as typeof fetch
+    },
+    restore: () => {
+      globalThis.fetch = original
+    },
+  }
+}
+
+test('profile：未登录短路径不发请求', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response('{}', { status: 200 }))
+  try {
+    const { service } = makeCtx({})
+    stub.install()
+    const result = await service.profile()
+    assert.deepEqual(result, { loggedIn: false, username: '', role: '' })
+    assert.equal(stub.calls.length, 0, '未登录不应发起任何请求')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('profile：401 返回 expired 基础形态', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response('unauthorized', { status: 401 }))
+  try {
+    writeAccount('辉哥', 'admin')
+    const { service } = makeCtx({})
+    stub.install()
+    const result = await service.profile()
+    assert.deepEqual(result, { loggedIn: true, expired: true, username: '辉哥', role: 'admin' })
+    assert.equal(stub.calls.length, 1)
+    assert.equal(stub.calls[0]?.url, 'https://modagentai.com/api/auth/profile')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('profile：正常组装且只收 string 字段', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response(JSON.stringify({
+    ok: true,
+    profile: { username: '官网侧不应采用', role: 'user', avatar: 'data:image/jpeg;base64,AAA', gender: 'male', birthday: '1990-01-01', extra: 1 },
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
+  try {
+    writeAccount('辉哥', 'user')
+    const { service } = makeCtx({})
+    stub.install()
+    const result = await service.profile()
+    assert.equal(result.loggedIn, true)
+    assert.equal(result.expired, undefined)
+    assert.equal(result.username, '辉哥', '用户名/角色用本地 settings')
+    assert.equal(result.role, 'user')
+    assert.equal(result.avatar, 'data:image/jpeg;base64,AAA')
+    assert.equal(result.gender, 'male')
+    assert.equal(result.birthday, '1990-01-01')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('profile：网络异常返回基础形态不标 expired', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const original = globalThis.fetch
+  try {
+    writeAccount('辉哥', 'user')
+    const { service } = makeCtx({})
+    globalThis.fetch = (async () => { throw new Error('network down') }) as typeof fetch
+    const result = await service.profile()
+    assert.deepEqual(result, { loggedIn: true, username: '辉哥', role: 'user' })
+    assert.equal(result.expired, undefined)
+  } finally {
+    globalThis.fetch = original
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('updateProfile：令牌为空抛 401', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response('{}', { status: 200 }))
+  try {
+    const { service } = makeCtx({}, { token: '' })
+    stub.install()
+    await assert.rejects(service.updateProfile({ gender: 'male' }), (error: unknown) => {
+      assert.ok(error instanceof ModagentaiServiceError)
+      assert.equal(error.status, 401)
+      assert.match(error.message, /尚未登录/)
+      return true
+    })
+    assert.equal(stub.calls.length, 0, '未登录不应发起请求')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('updateProfile：avatar 超长预检抛 400 且不打官网', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response('{}', { status: 200 }))
+  try {
+    writeAccount('辉哥', 'admin')
+    const { service } = makeCtx({})
+    stub.install()
+    await assert.rejects(service.updateProfile({ avatar: 'data:image/jpeg;base64,' + 'A'.repeat(210_001) }), (error: unknown) => {
+      assert.ok(error instanceof ModagentaiServiceError)
+      assert.equal(error.status, 400)
+      assert.match(error.message, /头像过大/)
+      return true
+    })
+    assert.equal(stub.calls.length, 0, '预检失败不应发起请求')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('updateProfile：401 抛会话失效', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response('unauthorized', { status: 401 }))
+  try {
+    writeAccount('辉哥', 'admin')
+    const { service } = makeCtx({})
+    stub.install()
+    await assert.rejects(service.updateProfile({ gender: 'male' }), (error: unknown) => {
+      assert.ok(error instanceof ModagentaiServiceError)
+      assert.equal(error.status, 401)
+      assert.match(error.message, /会话已失效/)
+      return true
+    })
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('updateProfile：成功保存并回读（body 只含 string 字段）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response(JSON.stringify({
+    ok: true,
+    profile: { username: 'x', role: 'user', avatar: 'data:image/jpeg;base64,BBB', gender: 'female', birthday: '2000-02-29' },
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
+  try {
+    writeAccount('辉哥', 'admin')
+    const { service } = makeCtx({})
+    stub.install()
+    const result = await service.updateProfile({ avatar: 'data:image/jpeg;base64,BBB', gender: 'female', birthday: '2000-02-29', junk: 123 } as Record<string, unknown>)
+    assert.equal(result.loggedIn, true)
+    assert.equal(result.username, '辉哥')
+    assert.equal(result.role, 'admin')
+    assert.equal(result.avatar, 'data:image/jpeg;base64,BBB')
+    assert.equal(result.gender, 'female')
+    assert.equal(result.birthday, '2000-02-29')
+    assert.equal(stub.calls.length, 1)
+    assert.equal(stub.calls[0]?.init?.method, 'POST')
+    const body = JSON.parse(String(stub.calls[0]?.init?.body)) as Record<string, unknown>
+    assert.deepEqual(body, { avatar: 'data:image/jpeg;base64,BBB', gender: 'female', birthday: '2000-02-29' }, '非 string 字段不进 body')
+    const headers = stub.calls[0]?.init?.headers as Record<string, string>
+    assert.equal(headers.authorization, 'Bearer session-token')
+    assert.equal(headers['content-type'], 'application/json')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('updateProfile：官网业务错误透传 error 文案与状态码', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response(JSON.stringify({ ok: false, error: '生日格式不正确。' }), { status: 400, headers: { 'content-type': 'application/json' } }))
+  try {
+    writeAccount('辉哥', 'admin')
+    const { service } = makeCtx({})
+    stub.install()
+    await assert.rejects(service.updateProfile({ birthday: 'bad-date' }), (error: unknown) => {
+      assert.ok(error instanceof ModagentaiServiceError)
+      assert.equal(error.status, 400)
+      assert.equal(error.message, '生日格式不正确。')
+      return true
+    })
+  } finally {
+    stub.restore()
     closeAllDb()
     delete process.env.DSH_HOME
     rmSync(home, { recursive: true, force: true })

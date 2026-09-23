@@ -1,353 +1,256 @@
 /**
- * 个人中心 —— 天工造梦面板首页（辉哥 2026-09-21 定稿：替换教程页）。
- * 聚合只读状态：身份卡（称呼/简介/习惯）、插件与 DSH 本体版本、各模型服务接入状态、
- * 官网账号登录（登录即自动配置中转，辉哥 2026-09-22 加）；
- * 全部并发拉取、逐项容错，任何一路失败不影响其余展示。
+ * 个人中心 —— 只留一张「官网身份卡」大卡片（辉哥 2026-09-23 定稿）。
+ * 头像/性别/生日存官网 modagentai.com 关联账号（GET/POST /api/auth/profile，Bearer 令牌鉴权）；
+ * 未登录（或会话失效）时卡片内嵌极简登录表单（登录即自动配置中转），
+ * 已登录进入资料态：头像上传即存，性别/生日行内编辑、点保存才提交。
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { ModagentaiStatus } from '../../modagentai/protocol.ts'
+import type { ModagentaiProfile } from '../../modagentai/protocol.ts'
 import css from './panel.module.css'
 
-/** 单条服务接入状态行。 */
-interface ServiceRow {
-  key: string
-  label: string
-  detail: string
-  ok: boolean
-}
-
-/** 个人中心属性：onNavigate 跳转到对应页签（编辑身份/查用量/飞书配置）。 */
+/** 个人中心属性：只保留 API 客户端（辉哥 2026-09-23 定稿：页面只有一张身份卡）。 */
 export interface ProfileTabProps {
   api: DevforgeApi
-  onNavigate: (tab: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate') => void
 }
 
-/** 个人中心页签。 */
-export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
-  const [alias, setAlias] = useState('')
-  const [identity, setIdentity] = useState('')
-  const [habitCount, setHabitCount] = useState(0)
-  const [profileEnabled, setProfileEnabled] = useState(false)
-  const [pluginVersion, setPluginVersion] = useState('')
-  const [harnessVersion, setHarnessVersion] = useState('')
-  const [services, setServices] = useState<ServiceRow[]>([])
+/** 性别下拉选项：控件值 ↔ 官网枚举（'' = 未设置）。 */
+const GENDER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '未设置' },
+  { value: 'male', label: '男' },
+  { value: 'female', label: '女' },
+  { value: 'secret', label: '保密' },
+]
+
+/** 头像缩放目标边长（官网存 dataURL，128×128 已够身份卡展示）。 */
+const AVATAR_SIZE = 128
+
+/** 把图片文件 cover 居中裁剪缩放成 128×128 JPEG dataURL（官网限 150KB，质量 0.85）。 */
+async function fileToAvatarDataUrl(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('图片读取失败'))
+      img.src = objectUrl
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = AVATAR_SIZE
+    canvas.height = AVATAR_SIZE
+    const ctx = canvas.getContext('2d')
+    if (ctx === null) throw new Error('画布初始化失败')
+    // cover 裁剪：短边贴满画布，长边居中裁掉
+    const scale = Math.max(AVATAR_SIZE / image.naturalWidth, AVATAR_SIZE / image.naturalHeight)
+    const drawWidth = image.naturalWidth * scale
+    const drawHeight = image.naturalHeight * scale
+    ctx.drawImage(image, (AVATAR_SIZE - drawWidth) / 2, (AVATAR_SIZE - drawHeight) / 2, drawWidth, drawHeight)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+/** 用户名首字母圆徽字：空用户名显示「?」。 */
+function initialOf(username: string): string {
+  const first = username.trim().charAt(0)
+  return first === '' ? '?' : first.toUpperCase()
+}
+
+/** 个人中心页签（官网身份卡）。 */
+export function ProfileTab({ api }: ProfileTabProps): JSX.Element {
+  const [profile, setProfile] = useState<ModagentaiProfile | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  // —— 官网账号（登录即自动配置中转）——
-  const [site, setSite] = useState<ModagentaiStatus | null>(null)
-  const [siteLoaded, setSiteLoaded] = useState(false)
-  const [siteUser, setSiteUser] = useState('')
-  const [sitePass, setSitePass] = useState('')
-  const [siteBusy, setSiteBusy] = useState(false)
-  const [siteErr, setSiteErr] = useState('')
-  const [siteMsg, setSiteMsg] = useState('')
+  // 登录表单（未登录/会话失效态）
+  const [loginUser, setLoginUser] = useState('')
+  const [loginPass, setLoginPass] = useState('')
+  const [loginErr, setLoginErr] = useState('')
 
-  const refreshSite = useCallback(async () => {
+  // 资料态：性别/生日行内编辑暂存，点保存才提交；提示信息行
+  const [gender, setGender] = useState('')
+  const [birthday, setBirthday] = useState('')
+  const [saveMsg, setSaveMsg] = useState('')
+  const [saveErr, setSaveErr] = useState('')
+
+  /** 拉取官网资料；把 gender/birthday 灌进编辑暂存。失败只落提示不崩页面。 */
+  const refreshProfile = useCallback(async () => {
+    setLoadErr(''); setSaveMsg(''); setSaveErr(''); setLoginErr('')
     try {
-      setSite(await api.getModagentaiStatus())
-    } catch {
-      setSite(null)
-    } finally {
-      setSiteLoaded(true)
-    }
-  }, [api])
-
-  useEffect(() => { void refreshSite() }, [refreshSite])
-
-  /** 服务接入列表重拉：登录/配置中转成功后刷新「天工造梦中转」等行。 */
-  const refreshServices = useCallback(async () => {
-    const results = await Promise.allSettled([
-      api.getZhipuStatus(),
-      api.getArkStatus(),
-      api.getMiniMaxStatus(),
-      api.getSiliconFlowStatus(),
-      api.getFeishuStatus(),
-    ])
-    const [zhipu, ark, minimax, siliconflow, feishu] = results
-    const rows: ServiceRow[] = []
-    rows.push({
-      key: 'zhipu',
-      label: '智谱 GLM',
-      ok: zhipu.status === 'fulfilled' && zhipu.value.credentialConfigured,
-      detail: zhipu.status === 'fulfilled'
-        ? (zhipu.value.credentialConfigured
-          ? `已配置 · Key 池 ${zhipu.value.keys.length} 把${zhipu.value.mcpTools ? ' · 官方工具已启用' : ''}`
-          : '未配置 API Key')
-        : '状态读取失败',
-    })
-    rows.push({
-      key: 'ark',
-      label: '火山方舟',
-      ok: ark.status === 'fulfilled' && ark.value.credentialConfigured,
-      detail: ark.status === 'fulfilled'
-        ? (ark.value.credentialConfigured
-          ? `数据面已配置 · 控制面 ${ark.value.usageAccessKeyConfigured && ark.value.usageSecretKeyConfigured ? 'AK/SK 已配置' : '待配置 AK/SK'}`
-          : '未配置 API Key')
-        : '状态读取失败',
-    })
-    rows.push({
-      key: 'minimax',
-      label: 'MiniMax',
-      ok: minimax.status === 'fulfilled' && minimax.value.credentialConfigured,
-      detail: minimax.status === 'fulfilled'
-        ? (minimax.value.credentialConfigured ? `已配置${minimax.value.tools ? ' · 官方工具已启用' : ''}` : '未配置 API Key')
-        : '状态读取失败',
-    })
-    rows.push({
-      key: 'siliconflow',
-      label: '硅基流动',
-      ok: siliconflow.status === 'fulfilled' && siliconflow.value.credentialConfigured,
-      detail: siliconflow.status === 'fulfilled'
-        ? (siliconflow.value.credentialConfigured ? `已配置 · ${siliconflow.value.syncChatModels ? '同步对话模型目录' : '仅向量嵌入模式'}` : '未配置 API Key')
-        : '状态读取失败',
-    })
-
-    rows.push({
-      key: 'feishu',
-      label: '飞书',
-      ok: feishu.status === 'fulfilled' && feishu.value.connected,
-      detail: feishu.status === 'fulfilled' ? (feishu.value.connected ? '已连接' : '未连接') : '状态读取失败',
-    })
-    setServices(rows)
-    setLoaded(true)
-  }, [api])
-
-  async function doSiteLogin(): Promise<void> {
-    setSiteErr(''); setSiteMsg('')
-    if (siteUser.trim() === '' || sitePass === '') { setSiteErr('请输入官网用户名和密码'); return }
-    setSiteBusy(true)
-    try {
-      const result = await api.loginModagentai({ username: siteUser.trim(), password: sitePass })
-      setSite(result.status)
-      setSitePass('')
-      if (result.gatewayApplied) {
-        setSiteMsg('登录成功，' + result.message + '，模型 ' + result.gatewayModels + ' 个已进入聊天路由')
-        void refreshServices()
-        if (result.status.role === 'admin') onNavigate('codeplan') // 管理员顺手跳 Coding Plan 看用量
-      } else {
-        setSiteErr(result.message)
-      }
+      const next = await api.getSiteProfile()
+      setProfile(next)
+      setGender(typeof next.gender === 'string' ? next.gender : '')
+      setBirthday(typeof next.birthday === 'string' ? next.birthday : '')
     } catch (error) {
-      setSiteErr(error instanceof Error ? error.message : String(error))
+      setProfile(null)
+      setLoadErr(error instanceof Error ? error.message : String(error))
     } finally {
-      setSiteBusy(false)
-    }
-  }
-
-  async function doSiteLogout(): Promise<void> {
-    setSiteErr(''); setSiteMsg('')
-    setSiteBusy(true)
-    try {
-      setSite(await api.logoutModagentai())
-      setSiteMsg('已退出官网账号（天工造梦模型路由已停用，重新登录即恢复）')
-    } catch (error) {
-      setSiteErr(error instanceof Error ? error.message : String(error))
-    } finally {
-      setSiteBusy(false)
-    }
-  }
-
-  async function doApplyGateway(): Promise<void> {
-    setSiteErr(''); setSiteMsg('')
-    setSiteBusy(true)
-    try {
-      setSite(await api.applyModagentaiGateway())
-      setSiteMsg('中转已重新配置完成')
-      void refreshServices()
-    } catch (error) {
-      setSiteErr(error instanceof Error ? error.message : String(error))
-    } finally {
-      setSiteBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const results = await Promise.allSettled([
-        api.getUserProfile(),
-        api.getDevforgeMeta(),
-        api.checkHarnessUpdate(),
-        api.getZhipuStatus(),
-        api.getArkStatus(),
-        api.getMiniMaxStatus(),
-        api.getSiliconFlowStatus(),
-        api.getFeishuStatus(),
-      ])
-      if (cancelled) return
-      const [profile, meta, harness, zhipu, ark, minimax, siliconflow, feishu] = results
-      if (profile.status === 'fulfilled') {
-        setAlias(profile.value.alias)
-        setIdentity(profile.value.identity)
-        setHabitCount(profile.value.habits.length)
-        setProfileEnabled(profile.value.enabled)
-      }
-      if (meta.status === 'fulfilled') setPluginVersion(meta.value.version)
-      if (harness.status === 'fulfilled') setHarnessVersion(harness.value.installed)
-      const rows: ServiceRow[] = []
-      rows.push({
-        key: 'zhipu',
-        label: '智谱 GLM',
-        ok: zhipu.status === 'fulfilled' && zhipu.value.credentialConfigured,
-        detail: zhipu.status === 'fulfilled'
-          ? (zhipu.value.credentialConfigured
-            ? `已配置 · Key 池 ${zhipu.value.keys.length} 把${zhipu.value.mcpTools ? ' · 官方工具已启用' : ''}`
-            : '未配置 API Key')
-          : '状态读取失败',
-      })
-      rows.push({
-        key: 'ark',
-        label: '火山方舟',
-        ok: ark.status === 'fulfilled' && ark.value.credentialConfigured,
-        detail: ark.status === 'fulfilled'
-          ? (ark.value.credentialConfigured
-            ? `数据面已配置 · 控制面 ${ark.value.usageAccessKeyConfigured && ark.value.usageSecretKeyConfigured ? 'AK/SK 已配置' : '待配置 AK/SK'}`
-            : '未配置 API Key')
-          : '状态读取失败',
-      })
-      rows.push({
-        key: 'minimax',
-        label: 'MiniMax',
-        ok: minimax.status === 'fulfilled' && minimax.value.credentialConfigured,
-        detail: minimax.status === 'fulfilled'
-          ? (minimax.value.credentialConfigured ? `已配置${minimax.value.tools ? ' · 官方工具已启用' : ''}` : '未配置 API Key')
-          : '状态读取失败',
-      })
-      rows.push({
-        key: 'siliconflow',
-        label: '硅基流动',
-        ok: siliconflow.status === 'fulfilled' && siliconflow.value.credentialConfigured,
-        detail: siliconflow.status === 'fulfilled'
-          ? (siliconflow.value.credentialConfigured ? `已配置 · ${siliconflow.value.syncChatModels ? '同步对话模型目录' : '仅向量嵌入模式'}` : '未配置 API Key')
-          : '状态读取失败',
-      })
-      rows.push({
-        key: 'feishu',
-        label: '飞书',
-        ok: feishu.status === 'fulfilled' && feishu.value.connected,
-        detail: feishu.status === 'fulfilled' ? (feishu.value.connected ? '已连接' : '未连接') : '状态读取失败',
-      })
-      setServices(rows)
       setLoaded(true)
-    })()
-    return () => { cancelled = true }
+    }
   }, [api])
+
+  useEffect(() => { void refreshProfile() }, [refreshProfile])
+
+  /** 登录官网账号（登录即自动配置中转），成功后拉资料进入资料态。 */
+  async function doLogin(): Promise<void> {
+    setLoginErr('')
+    if (loginUser.trim() === '' || loginPass === '') { setLoginErr('请输入官网用户名和密码'); return }
+    setBusy(true)
+    try {
+      const result = await api.loginModagentai({ username: loginUser.trim(), password: loginPass })
+      setLoginPass('')
+      if (result.status.role === '') {
+        setLoginErr(result.message)
+        return
+      }
+      await refreshProfile()
+      if (!result.gatewayApplied) setSaveErr(result.message) // 登录成功但中转自动配置失败：进资料态并保留原因
+    } catch (error) {
+      setLoginErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 保存性别/生日（头像上传即时保存，不走这里）。 */
+  async function doSave(): Promise<void> {
+    setSaveErr(''); setSaveMsg('')
+    setBusy(true)
+    try {
+      const next = await api.updateSiteProfile({ gender, birthday })
+      setProfile(next)
+      setSaveMsg('资料已保存')
+    } catch (error) {
+      setSaveErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 选择头像 → 压缩成 dataURL → 立即保存（成功后刷新资料）。 */
+  async function doUploadAvatar(file: File): Promise<void> {
+    setSaveErr(''); setSaveMsg('')
+    setBusy(true)
+    try {
+      const avatar = await fileToAvatarDataUrl(file)
+      const next = await api.updateSiteProfile({ avatar })
+      setProfile(next)
+      setSaveMsg('头像已更新')
+    } catch (error) {
+      setSaveErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const expired = profile !== null && profile.loggedIn && profile.expired === true
+  const loggedIn = profile !== null && profile.loggedIn && !expired
 
   return (
     <div>
       <h2 className={css['sectionTitle']}>个人中心</h2>
 
-      {/* 身份卡：记忆工作台的常驻身份卡摘要；编辑去记忆工作台。 */}
-      <div className={css['metricList']}>
-        <div className={css['metricRow']}>
-          <span>
-            <strong>{alias !== '' ? alias : '未设置称呼'}</strong>
-            <span className={css['sectionHint']}> {profileEnabled ? '身份卡常驻注入中' : '身份卡注入已关闭'}</span>
-          </span>
-          <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('memory') }}>编辑身份</button>
-        </div>
-        {identity !== '' && <div className={css['metricRow']}><span className={css['sectionHint']}>{identity}</span></div>}
-        <div className={css['metricRow']}>
-          <span className={css['sectionHint']}>习惯与硬偏好 {habitCount} 条 · 每轮固定注入，让每个模型都按你的习惯干活</span>
-        </div>
-      </div>
+      {!loaded && <div className={css['empty']} data-loading="">正在读取官网身份…</div>}
 
-      <h3 className={css['sectionTitle']}>官网账号（modagentai.com）</h3>
-      <div className={css['metricList']}>
-        {!siteLoaded && <div className={css['empty']}>正在读取官网账号状态…</div>}
-        {siteLoaded && site !== null && site.loggedIn && (
-          <div className={css['metricRow']}>
-            <span>
-              <strong>👤 {site.username}</strong>
-              <span className={css['sectionHint']}> {site.role === 'admin' ? '管理员' : '普通用户'} · 中转{site.autoApplied ? `已自动配置（模型 ${site.appliedModels} 个）` : '未配置'}</span>
-              {site.expired && <span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-danger-primary, #dc2626)' }}> · 会话已失效，请重新登录</span>}
-            </span>
-            <span style={{ display: 'flex', gap: 8 }}>
-              {site.role === 'admin' && <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('codeplan') }}>Coding Plan</button>}
-              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doApplyGateway() }}>重新配置中转</button>
-              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doSiteLogout() }}>退出登录</button>
-            </span>
-          </div>
-        )}
-        {siteLoaded && (site === null || !site.loggedIn) && (
-          <div className={css['metricRow']}>
-            <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input
-                value={siteUser}
-                placeholder="官网用户名"
-                onChange={(event) => { setSiteUser(event.target.value) }}
-                onKeyDown={(event) => { if (event.key === 'Enter' && !siteBusy) void doSiteLogin() }}
-                style={{ width: 160 }}
-              />
-              <input
-                value={sitePass}
-                type="password"
-                placeholder="官网密码"
-                onChange={(event) => { setSitePass(event.target.value) }}
-                onKeyDown={(event) => { if (event.key === 'Enter' && !siteBusy) void doSiteLogin() }}
-                style={{ width: 160 }}
-              />
-              <button type="button" className={css['ghostButton']} disabled={siteBusy} onClick={() => { void doSiteLogin() }}>{siteBusy ? '登录中…' : '登录'}</button>
-              <span className={css['sectionHint']}>登录后自动配置中转，可用管理员开放的模型</span>
-            </span>
-          </div>
-        )}
-        {siteErr !== '' && <div className={css['metricRow']}><span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-danger-primary, #dc2626)' }}>{siteErr}</span></div>}
-        {siteMsg !== '' && <div className={css['metricRow']}><span className={css['sectionHint']} style={{ color: 'var(--dsw-alias-state-success-primary, #16a34a)' }}>{siteMsg}</span></div>}
-      </div>
-
-      <h3 className={css['sectionTitle']}>版本</h3>
-      <div className={css['metricList']}>
-        <div className={css['metricRow']}>
-          <span><strong>天工造梦（dsh-devforge）</strong></span>
-          <span className={css['sectionHint']}>{pluginVersion !== '' ? 'v' + pluginVersion : '读取中…'}</span>
-        </div>
-        <div className={css['metricRow']}>
-          <span><strong>DSH 本体</strong></span>
-          <span className={css['sectionHint']}>{harnessVersion !== '' ? 'v' + harnessVersion : '读取中…'}</span>
-        </div>
-        <div className={css['metricRow']}>
-          <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('pluginupdate') }}>检查更新</button>
-        </div>
-      </div>
-
-      <h3 className={css['sectionTitle']}>服务接入</h3>
-      {!loaded && <div className={css['empty']}>正在读取各服务接入状态…</div>}
-      {loaded && (
-        <div className={css['metricList']}>
-          {services.map((row) => (
-            <div key={row.key} className={css['metricRow']}>
-              <span>
-                <strong>{row.label}</strong>
-                <span className={css['sectionHint']}> {row.detail}</span>
-              </span>
-              <span className={css['sectionHint']} style={{ color: row.ok ? 'var(--dsw-alias-state-success-primary, #16a34a)' : 'var(--dsw-alias-label-tertiary)' }}>
-                {row.ok ? '● 已接入' : '○ 未接入'}
-              </span>
-            </div>
-          ))}
-          {siteLoaded && (
-            <div className={css['metricRow']}>
-              <span>
-                <strong>天工造梦</strong>
-                <span className={css['sectionHint']}> {site?.loggedIn ? (site.autoApplied ? 'GLM-Flash 已进入模型路由' : '尚未配置，登录后点击「重新配置中转」') : '登录官网账号后自动配置'}</span>
-              </span>
-              <span className={css['sectionHint']} style={{ color: site?.loggedIn && site.autoApplied ? 'var(--dsw-alias-state-success-primary, #16a34a)' : 'var(--dsw-alias-label-tertiary)' }}>
-                {site?.loggedIn && site.autoApplied ? '● 已接入' : '○ 未接入'}
-              </span>
-            </div>
-          )}
+      {loaded && loadErr !== '' && (
+        <div className={css['identityCard']} data-state="error">
+          <span className={css['identityExpired']}>{loadErr}</span>
+          <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void refreshProfile() }}>重试</button>
         </div>
       )}
 
-      <h3 className={css['sectionTitle']}>快捷入口</h3>
-      <div className={css['metricList']}>
-        <div className={css['metricRow']}>
-          {(site?.role === 'admin') && <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('codeplan') }}>Coding Plan · 用量与接入</button>}
-          <button type="button" className={css['ghostButton']} onClick={() => { onNavigate('feishu') }}>飞书配置</button>
+      {/* 未登录 / 会话失效：卡片内嵌极简登录表单 */}
+      {loaded && loadErr === '' && !loggedIn && (
+        <div className={css['identityCard']}>
+          <div className={css['identityHead']}>
+            <div className={css['identityAvatar']}><span>{initialOf(expired ? profile?.username ?? '' : loginUser)}</span></div>
+            <div className={css['identityMeta']}>
+              <div className={css['identityNameRow']}><strong>{expired ? profile?.username ?? '' : '未登录'}</strong></div>
+              <span className={css['identityHint']}>登录 modagentai.com 后，头像、性别与生日保存在官网账号里</span>
+              {expired && <span className={css['identityExpired']}>会话已失效，请重新登录</span>}
+            </div>
+          </div>
+          <div className={css['identityLogin']}>
+            <div className={css['identityLoginRow']}>
+              <input
+                value={loginUser}
+                placeholder="官网用户名"
+                onChange={(event) => { setLoginUser(event.target.value) }}
+                onKeyDown={(event) => { if (event.key === 'Enter' && !busy) void doLogin() }}
+              />
+              <input
+                value={loginPass}
+                type="password"
+                placeholder="官网密码"
+                onChange={(event) => { setLoginPass(event.target.value) }}
+                onKeyDown={(event) => { if (event.key === 'Enter' && !busy) void doLogin() }}
+              />
+              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doLogin() }}>{busy ? '登录中…' : '登录'}</button>
+            </div>
+            <span className={css['identityHint']}>登录后自动配置中转，可用管理员开放的模型</span>
+            {loginErr !== '' && <span className={css['identityExpired']}>{loginErr}</span>}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 已登录资料态：头像 + 用户名 + 角色徽章 + 行内编辑（性别/生日） */}
+      {loaded && loadErr === '' && loggedIn && profile !== null && (
+        <div className={css['identityCard']}>
+          <div className={css['identityHead']}>
+            <div className={css['identityAvatar']}>
+              {profile.avatar !== undefined && profile.avatar !== ''
+                ? <img src={profile.avatar} alt="头像" />
+                : <span>{initialOf(profile.username)}</span>}
+            </div>
+            <div className={css['identityMeta']}>
+              <div className={css['identityNameRow']}>
+                <strong>{profile.username !== '' ? profile.username : '?'}</strong>
+                <span className={css['identityBadge']} data-role={profile.role === 'admin' ? 'admin' : 'user'}>{profile.role === 'admin' ? '管理员' : '普通用户'}</span>
+              </div>
+              <span className={css['identityHint']}>头像、性别与生日保存在官网 modagentai.com 账号</span>
+            </div>
+            <label
+              className={css['identityAvatarPick']}
+              data-busy={busy ? 'true' : undefined}
+              aria-disabled={busy}
+            >
+              更换头像
+              <input
+                className={css['identityFileInput']}
+                type="file"
+                accept="image/*"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file !== undefined && !busy) void doUploadAvatar(file)
+                }}
+              />
+            </label>
+          </div>
+          <div className={css['identityForm']}>
+            <label className={css['identityField']}>
+              <span>性别</span>
+              <select value={gender} onChange={(event) => { setGender(event.target.value) }}>
+                {GENDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className={css['identityField']}>
+              <span>生日</span>
+              <input type="date" value={birthday} onChange={(event) => { setBirthday(event.target.value) }} />
+            </label>
+            <div className={css['identityFormActions']}>
+              <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSave() }}>{busy ? '保存中…' : '保存资料'}</button>
+            </div>
+            {saveMsg !== '' && <span className={css['identitySaved']}>{saveMsg}</span>}
+            {saveErr !== '' && <span className={css['identityExpired']}>{saveErr}</span>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

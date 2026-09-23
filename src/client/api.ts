@@ -17,7 +17,7 @@ import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEn
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEpisode, type MemoryGraph, type MemoryQualityStats, type MemoryRecallFeedback, type MemoryRecallTrace, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
-import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiStatus } from '../modagentai/protocol.ts'
+import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiProfile, type ModagentaiStatus } from '../modagentai/protocol.ts'
 import { BRAIN_ROUTER_API, type BrainRouterCatalogProvider, type BrainRouterSettings, type BrainRouterStatus } from '../brain-router/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
@@ -562,6 +562,23 @@ export class DevforgeApi {
   async applyModagentaiGateway(signal?: AbortSignal): Promise<ModagentaiStatus> {
     const data = await readJson<{ status: ModagentaiStatus }>(await fetch(MODAGENTAI_API.applyGateway, { method: 'POST', signal }))
     return data.status
+  }
+
+  /** 读取官网用户资料（头像/性别/生日，个人中心身份卡数据源）。 */
+  async getSiteProfile(signal?: AbortSignal): Promise<ModagentaiProfile> {
+    const data = await readJson<{ ok: boolean; profile: ModagentaiProfile }>(await fetch(MODAGENTAI_API.profile, { signal }))
+    return data.profile
+  }
+
+  /** 保存官网用户资料（avatar 为 dataURL，空串表示清空对应字段）。 */
+  async updateSiteProfile(patch: { avatar?: string; gender?: string; birthday?: string }, signal?: AbortSignal): Promise<ModagentaiProfile> {
+    const data = await readJson<{ ok: boolean; profile: ModagentaiProfile }>(await fetch(MODAGENTAI_API.profile, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal,
+    }))
+    return data.profile
   }
 
   /** 读取 OpenAI 中转站、凭据、聊天路由与生图模型的脱敏状态。 */

@@ -90,6 +90,32 @@ export function makeModagentaiRoutes(service: ModagentaiService): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: MODAGENTAI_API.profile,
+      async handler(req, res) {
+        if (!guard(req, res)) return
+        try {
+          writeJson(res, 200, { ok: true, profile: await service.profile() })
+        } catch (error) {
+          writeError(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: MODAGENTAI_API.profile,
+      async handler(req, res) {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readBody(req)
+          writeJson(res, 200, { ok: true, profile: await service.updateProfile({ avatar: body.avatar, gender: body.gender, birthday: body.birthday }) })
+        } catch (error) {
+          writeError(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
       path: MODAGENTAI_API.login,
       async handler(req, res) {
         if (!guardWrite(req, res)) return
