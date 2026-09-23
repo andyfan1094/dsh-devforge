@@ -10,7 +10,9 @@
  * 定时自动同步必需无人值守），CNB 侧只有密文（密码密钥分离）；恢复端输入密码解密。
  *
  * 恢复流程（本进程内闭环）：closeDb 释放连接 → 替换 store.db（原文件先备份）→
- * 重开连接 → dsh-feishu.json 回写（原文件先备份）→ coding plan 凭据镜像回写 yaml。
+ * 重开连接 → dsh-feishu.json 回写（原文件先备份）→ 凭据镜像回写 yaml
+ * （restoreMirrorsToYaml 覆盖式回写；经 new DatabaseSync 临时连接读刚落盘的新库，
+ * 绝不用 getDb() 单例——其连接可能仍持有被覆盖前旧库文件的页缓存）。
  * 恢复完成后必须重启 Host（UI 明确提示），其他进程打开的旧库连接才会收敛。
  */
 
@@ -19,12 +21,13 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, statSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { dshHome } from '../remote/shared/dsh-home.ts'
 import { GitRunner } from '../cnb/git.ts'
 import { CnbStore, type StoredAccount } from '../cnb/store.ts'
 import { CnbApi } from '../cnb/cnb-api.ts'
-import { setCredential } from '../credentials-writer.ts'
 import { closeDb, getDb, getSettings, putSettings } from '../store/db.ts'
+import { restoreMirrorsToYaml, type CredentialRestoreResult } from '../store/credential-sync.ts'
 import { buildBackupContainer, parseBackupContainer, feishuStorePath } from './snapshot.ts'
 import { decryptBackupContainer, encryptBackupContainer } from './crypto.ts'
 import type { BackupSyncResult } from '../protocol.ts'
@@ -436,7 +439,9 @@ export async function syncFromRemote(
   }
 }
 /** 用解密后的容器恢复本机数据（本进程内闭环；完成后必须重启 Host）。 */
-export async function restoreFromContainer(container: ReturnType<typeof parseBackupContainer>): Promise<{ restoredFiles: string[]; restarted: false }> {
+export async function restoreFromContainer(
+  container: ReturnType<typeof parseBackupContainer>,
+): Promise<{ restoredFiles: string[]; restarted: false; credentialSync?: CredentialRestoreResult }> {
   const restoredFiles: string[] = []
   // 备份仓库、账号、密码与调度开关属于本机同步通道配置，不能被另一台机器的 store.db 覆盖。
   const localBackupSettings = readBackupSettings()
@@ -463,24 +468,24 @@ export async function restoreFromContainer(container: ReturnType<typeof parseBac
     writeFileSync(feishuPath, Buffer.from(container.files['dsh-feishu.json'], 'base64'), { mode: 0o600 })
     restoredFiles.push('dsh-feishu.json')
   }
-  // 3) coding plan 凭据镜像 → 回写 yaml 主存（恢复端 yaml 可能还没有这些 ref）
-  const refs = readCredentialMirrors(getDb())
-  if (refs.length > 0) {
-    // setCredential 逐条 upsert；yaml 其他 ref 原样保留
-    for (const { ref, value } of refs) {
-      await setCredential(ref, value)
-      restoredFiles.push('credentials:' + ref)
+  // 3) 凭据镜像 → 回写 yaml 主存（恢复场景：overwrite=true，以刚恢复的库为准覆盖式回写，
+  //    换电脑装插件 → 恢复备份 → 凭据自动回写官方主存无缝衔接）。
+  //    关键坑：进程内 getDb() 单例此刻可能仍持有被覆盖前旧库文件的连接与页缓存，
+  //    绝不能用 getDb() 读恢复后的库；必须 new DatabaseSync 临时打开刚落盘的新库，
+  //    读完立即 close。yaml 写入只走 credentials-writer（原子 + 0600）。
+  let credentialSync: CredentialRestoreResult | undefined
+  if (container.files['store.db'] !== undefined) {
+    const freshDb = new DatabaseSync(storeDbPath)
+    try {
+      credentialSync = await restoreMirrorsToYaml({ db: freshDb, overwrite: true })
+      for (const ref of credentialSync.restored) restoredFiles.push('credentials:' + ref)
+    } finally {
+      freshDb.close()
     }
   }
-  return { restoredFiles, restarted: false }
+  return { restoredFiles, restarted: false, credentialSync }
 }
 
 function defaultStoreDbPath(): string {
   return join(dshHome(), 'devforge', 'store.db')
-}
-
-/** 读取 credential 镜像表（ref + value；供恢复回写 yaml）。 */
-function readCredentialMirrors(db: ReturnType<typeof getDb>): Array<{ ref: string; value: string }> {
-  const rows = db.prepare('SELECT ref, value FROM credential ORDER BY ref').all()
-  return rows.map(row => ({ ref: String(row['ref']), value: String(row['value']) }))
 }

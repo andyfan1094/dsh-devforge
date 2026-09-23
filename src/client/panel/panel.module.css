@@ -1032,3 +1032,29 @@
   .identityLoginRow { flex-wrap: wrap; }
 }
 
+
+/* ===================== 数据管理（dbAdmin，2026-09-23） ===================== */
+/* 双栏布局：左侧表清单，右侧数据网格；窄屏纵向堆叠。 */
+.dbAdminLayout { display: flex; gap: 12px; min-height: 0; flex: 1; }
+.dbAdminSidebar { flex: none; width: 218px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 100%; padding-right: 2px; }
+.dbAdminTableItem { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; font-size: 12.5px; color: var(--dsw-alias-label-secondary, #667085); }
+.dbAdminTableItem:hover { background: var(--dsw-alias-fill-secondary, #f5f6f7); }
+.dbAdminTableItem[data-active] { background: var(--dsw-alias-fill-brandSecondary, #eef4ff); border-color: var(--dsw-alias-border-brandSecondary, #c7dbff); color: var(--dsw-alias-label-brandPrimary, #1f6bff); }
+.dbAdminTableName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dbAdminTableCount { flex: none; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.dbAdminMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.dbAdminSearch { width: 240px; padding: 6px 10px; border: 1px solid var(--dsw-alias-border-primary, #e4e7ec); border-radius: 8px; font-size: 12.5px; background: var(--dsw-alias-fill-primary, #fff); color: var(--dsw-alias-label-primary, #1f2329); }
+.dbAdminToggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary, #667085); user-select: none; }
+/* 数据网格：紧凑表格；单元格单行省略，悬停 title 看全文（截断语义在服务端）。 */
+.dbAdminGrid { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+.dbAdminGrid th { position: sticky; top: 0; background: var(--dsw-alias-fill-secondary, #f5f6f7); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--dsw-alias-border-primary, #e4e7ec); font-weight: 600; color: var(--dsw-alias-label-secondary, #667085); white-space: nowrap; }
+.dbAdminGrid td { padding: 5px 8px; border-bottom: 1px solid var(--dsw-alias-separator-secondary, #f2f4f5); vertical-align: top; }
+.dbAdminCell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; color: var(--dsw-alias-label-primary, #1f2329); }
+.dbAdminEmpty { text-align: center; color: var(--dsw-alias-label-tertiary, #98a2b3); padding: 18px 0; }
+.dbAdminPager { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, #98a2b3); padding: 4px 0 8px; }
+/* 掩码值：等宽字体 + 弱色，明示「此处有意打码」。 */
+.dbAdminMasked { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; color: var(--dsw-alias-label-tertiary, #98a2b3); letter-spacing: .06em; }
+@media (max-width: 760px) {
+  .dbAdminLayout { flex-direction: column; }
+  .dbAdminSidebar { width: 100%; flex-direction: row; flex-wrap: wrap; max-height: none; }
+}

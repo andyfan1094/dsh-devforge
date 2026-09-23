@@ -17,6 +17,7 @@ import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEn
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEpisode, type MemoryGraph, type MemoryQualityStats, type MemoryRecallFeedback, type MemoryRecallTrace, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
+import { DB_ADMIN_API, type DbAdminConfigFilesResult, type DbAdminConfigName, type DbAdminCredentialRefsResult, type DbAdminRowsResult, type DbAdminTablesResult } from '../store/dbadmin-protocol.ts'
 import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiProfile, type ModagentaiStatus } from '../modagentai/protocol.ts'
 import { BRAIN_ROUTER_API, type BrainRouterCatalogProvider, type BrainRouterSettings, type BrainRouterStatus } from '../brain-router/protocol.ts'
 import type { RagDocument } from '../rag/protocol.ts'
@@ -1152,5 +1153,63 @@ export class DevforgeApi {
   async getBrainRouterCatalog(signal?: AbortSignal): Promise<BrainRouterCatalogProvider[]> {
     const data = await readJson<{ ok: true; providers: BrainRouterCatalogProvider[] }>(await fetch(BRAIN_ROUTER_API.catalog, { signal, cache: 'no-store' }))
     return data.providers
+  }
+
+  // ---------------- 数据管理（0.39.0：数据透明化 + 密钥掩码） ----------------
+
+  /** 数据管理：表清单 + 行数 + 域统计。 */
+  async getDbTables(signal?: AbortSignal): Promise<DbAdminTablesResult> {
+    const data = await readJson<DbAdminTablesResult>(await fetch(DB_ADMIN_API.tables, { signal, cache: 'no-store' }))
+    return data
+  }
+
+  /** 数据管理：表数据分页（search 走服务端 LIKE；full=1 放宽单元格截断）。 */
+  async getDbRows(params: { table: string; page?: number; pageSize?: number; search?: string; full?: boolean }, signal?: AbortSignal): Promise<DbAdminRowsResult> {
+    const query = buildQuery({
+      table: params.table,
+      page: params.page === undefined ? undefined : String(params.page),
+      pageSize: params.pageSize === undefined ? undefined : String(params.pageSize),
+      search: params.search,
+      full: params.full === true ? '1' : undefined,
+    })
+    const data = await readJson<DbAdminRowsResult>(await fetch(DB_ADMIN_API.rows + query, { signal, cache: 'no-store' }))
+    return data
+  }
+
+  /** 数据管理：凭据镜像清单（值只回掩码）。 */
+  async getDbCredentialRefs(signal?: AbortSignal): Promise<DbAdminCredentialRefsResult> {
+    const data = await readJson<DbAdminCredentialRefsResult>(await fetch(DB_ADMIN_API.credentialRefs, { signal, cache: 'no-store' }))
+    return data
+  }
+
+  /**
+   * 数据管理：取凭据明文。返回值只允许进剪贴板（reveal 安全契约）：
+   * 面板绝不能把返回值写入 DOM 或状态里长期持有。
+   */
+  async revealDbCredential(ref: string, signal?: AbortSignal): Promise<string> {
+    const data = await readJson<{ value: string }>(await fetch(DB_ADMIN_API.credentialReveal, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref }),
+      signal,
+    }))
+    return data.value
+  }
+
+  /** 数据管理：库外配置文件清单（掩码预览）。 */
+  async getDbConfigFiles(signal?: AbortSignal): Promise<DbAdminConfigFilesResult> {
+    const data = await readJson<DbAdminConfigFilesResult>(await fetch(DB_ADMIN_API.configFiles, { signal, cache: 'no-store' }))
+    return data
+  }
+
+  /** 数据管理：取配置明文（同 reveal 安全契约：只进剪贴板）。 */
+  async revealDbConfig(name: DbAdminConfigName, signal?: AbortSignal): Promise<string> {
+    const data = await readJson<{ value: string }>(await fetch(DB_ADMIN_API.configReveal, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+      signal,
+    }))
+    return data.value
   }
 }

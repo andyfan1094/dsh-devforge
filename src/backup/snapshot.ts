@@ -4,7 +4,8 @@
  *   一致性（含 WAL 内容合并进快照文件），绝不能直接拷贝 db 文件（WAL 下会拿到旧数据）。
  * - 附带 dsh-feishu.json（vendored 飞书桥刻意零迁移设计，仍以 JSON 文件为主存）。
  * - 容器为明文 JSON（各文件 base64）→ 由 backup/crypto.ts 整体加密。
- * - 组装时顺带把 coding plan 凭据镜像刷新进库（yaml 主存的当前值入镜像），保证备份最新。
+ * - 组装时顺带把凭据镜像刷新进库（yaml 主存 refs 段【全量】入镜像，见
+ *   store/credential-sync.ts），保证备份携带完整凭据集。
  */
 
 import { existsSync, readFileSync, rmSync } from 'node:fs'
@@ -13,8 +14,7 @@ import { hostname } from 'node:os'
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { defaultDbPath, getDb } from '../store/db.ts'
-import { DEVFORGE_CREDENTIAL_REFS } from '../store/migrate.ts'
-import { putCredentialMirror } from '../store/db.ts'
+import { mirrorYamlToDb } from '../store/credential-sync.ts'
 import { dshHome } from '../remote/shared/dsh-home.ts'
 
 /** 备份容器内的文件清单键。 */
@@ -30,27 +30,12 @@ export function feishuStorePath(): string {
   return join(dshHome(), 'dsh-feishu.json')
 }
 
-/** 刷新 coding plan 凭据镜像（yaml 主存当前值 → 库 credential 表）。 */
+/** 备份前刷新凭据镜像（yaml 主存 refs 段【全量】→ 库 credential 表，见 store/credential-sync.ts）。 */
 export function refreshCredentialMirrors(db: DatabaseSync): void {
-  const yamlPath = join(dshHome(), '.credentials.yaml')
-  if (!existsSync(yamlPath)) return
-  let raw = ''
-  try { raw = readFileSync(yamlPath, 'utf8') } catch { return }
-  const lines = raw.split('\n')
-  const refsLine = lines.findIndex(line => /^\s*refs:\s*$/.test(line))
-  if (refsLine === -1) return
-  const values = new Map<string, string>()
-  for (let i = refsLine + 1; i < lines.length; i += 1) {
-    const line = lines[i]
-    if (/^\s*\w[^:]*:\s*$/.test(line)) break
-    const match = /^\s+([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/.exec(line)
-    if (match === null) continue
-    values.set(match[1], match[2].trim())
-  }
-  for (const ref of DEVFORGE_CREDENTIAL_REFS) {
-    const value = values.get(ref)
-    if (value !== undefined && value !== '') putCredentialMirror(db, ref, value)
-  }
+  // 全量镜像（原 DEVFORGE_CREDENTIAL_REFS 白名单限制移除，白名单常量保留给 migrate.ts）：
+  // yaml refs 段所有 ref 都进镜像，备份容器才能携带完整凭据集；
+  // 同值跳过不写库，updated_at 稳定 → 备份内容 hash 不被无谓扰动。
+  mirrorYamlToDb({ db })
 }
 
 /** 生成 store.db 一致性快照，返回快照文件字节（临时文件即用即删）。 */

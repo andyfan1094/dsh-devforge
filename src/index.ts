@@ -64,6 +64,9 @@ import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { ragRunTool } from './workflow/tools.ts'
 import { McpService } from './mcp/service.ts'
 import { makeMcpRoutes } from './mcp/routes.ts'
+import { makeDbAdminRoutes } from './store/dbadmin-routes.ts'
+import { devforgeDbTools } from './store/agent-tools.ts'
+import { CredentialSyncService } from './store/credential-sync.ts'
 import { DouyinLiveService } from './douyin-live/service.ts'
 import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
 import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
@@ -926,6 +929,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
+    // 数据管理（0.39.0）：库表透明浏览 + 密钥掩码/明文复制（reveal 走审计日志，值不入日志）。
+    ...makeDbAdminRoutes({ info: (message, ...args) => { try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响路由 */ } } }),
     // 主脑路由（0.26.0）：面板读写设置 + 模型目录；委派拦截在 apply 阶段一次性挂载。
     ...makeBrainRouterRoutes({
       read: () => brainRouterRead(),
@@ -934,7 +939,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       wrapperInstalled: () => brainRouterWrapperInstalled,
     }),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool()]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
@@ -950,6 +955,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   let disposeConstraints: (() => void) | undefined
   let disposeSandboxDiscipline: (() => void) | undefined
   let disposeUserProfile: (() => void) | undefined
+  /** 凭据双向同步服务（yaml 主存 ↔ store.db credential 镜像；0.39.0）。 */
+  let credentialSyncService: CredentialSyncService | undefined
+  let disposeCredentialSync: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
@@ -971,6 +979,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     disposeConstraints?.(); disposeConstraints = undefined
     disposeSandboxDiscipline?.(); disposeSandboxDiscipline = undefined
     disposeUserProfile?.(); disposeUserProfile = undefined
+    disposeCredentialSync?.(); disposeCredentialSync = undefined; credentialSyncService = undefined
     pluginBriefSurface.dispose()
     pluginBriefSurface = {
       dispose: () => {},
@@ -1164,6 +1173,22 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     safeActivate(ctx, '飞书桥', () => { disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose })
     // MCP 服务器接入：按 store.db 配置对齐官方桥 fiber（关闭即全部卸载；reconcile 幂等，热更新不打断在用连接）。
     safeActivate(ctx, 'MCP 服务器接入', () => { mcpService.activateHandle() })
+    // 凭据双向同步（0.39.0）：启动对账（反向补缺 + 正向镜像）+ 15 分钟定时巡检（正向）；
+    // 恢复备份后的覆盖式回写在 restoreFromContainer 内联完成。日志只记 ref 名，绝不记值。
+    safeActivate(ctx, '凭据双向同步', () => {
+      const service = new CredentialSyncService({
+        log: {
+          info: (message, ...args) => { try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响业务 */ } },
+          warn: (message, ...args) => { try { ctx.logger.warn(message, ...args) } catch { /* 日志失败不影响业务 */ } },
+        },
+      })
+      credentialSyncService = service
+      void service.reconcileOnStartup().catch((error: unknown) => {
+        ctx.logger.warn('[dsh-devforge] 凭据启动对账失败（不影响插件启动）：%s', error instanceof Error ? error.message : String(error))
+      })
+      service.start()
+      disposeCredentialSync = () => { service.dispose() }
+    })
   }
 
   // ---- 设置面板接线（改配置即热更新）----
