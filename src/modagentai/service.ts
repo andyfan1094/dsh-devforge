@@ -11,7 +11,7 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
-import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiStatus } from './protocol.ts'
+import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiStatus } from './protocol.ts'
 import { TIANGONG_REASONING_EFFORTS, tiangongEffortsOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
@@ -113,6 +113,62 @@ export class ModagentaiService {
     } catch {
       return ''
     }
+  }
+
+  /**
+   * 套餐用量视图（辉哥 2026-09-23 定稿）：插件采用用户登录后，侧栏看板显示「什么套餐/总量/剩余」。
+   * 聚合官网 /api/gems/packs（套餐目录 + 我的实例 + 余额）与 /api/search/quota（搜索折算）；
+   * 未登录直接短路径返回；401 标记会话失效。任一接口失败不让整体崩：字段尽量填充。
+   */
+  async packages(): Promise<ModagentaiPackages> {
+    const settings = this.readSettings()
+    const token = await this.readToken()
+    if (settings.username === '' || token === '') return { loggedIn: false }
+    const headers = { authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' }
+    const out: ModagentaiPackages = { loggedIn: true, username: settings.username }
+    // 套餐目录 + 我的实例 + 余额
+    try {
+      const res = await fetch(SITE + '/api/gems/packs', { headers, signal: AbortSignal.timeout(HTTP_TIMEOUT) })
+      if (res.status === 401) return { loggedIn: true, expired: true, username: settings.username }
+      if (res.ok) {
+        const data = await res.json() as { ok?: boolean; packs?: unknown; mine?: unknown; balance?: unknown }
+        if (data.ok === true) {
+          out.balance = typeof data.balance === 'number' ? data.balance : undefined
+          out.catalog = Array.isArray(data.packs)
+            ? data.packs.map((raw) => raw as { key: string; name: string; ico: string; days: number }).filter((p) => p && typeof p.key === 'string')
+            : []
+          out.mine = Array.isArray(data.mine)
+            ? data.mine.map((raw) => {
+                const m = raw as Record<string, unknown>
+                return {
+                  packKey: typeof m.packKey === 'string' ? m.packKey : '',
+                  gemsTotal: typeof m.gemsTotal === 'number' ? m.gemsTotal : 0,
+                  gemsLeft: typeof m.gemsLeft === 'number' ? m.gemsLeft : 0,
+                  active: m.active === true,
+                  activatedAt: typeof m.activatedAt === 'string' ? m.activatedAt : undefined,
+                  expiresAt: typeof m.expiresAt === 'string' ? m.expiresAt : undefined,
+                }
+              }).filter((m) => m.packKey !== '')
+            : []
+        }
+      }
+    } catch {
+      // 网络失败：套餐字段留空，不标记会话失效（与 status 同语义）
+    }
+    // 搜索折算（独立容错：失败不影响套餐行）
+    try {
+      const res = await fetch(SITE + '/api/search/quota', { headers, signal: AbortSignal.timeout(HTTP_TIMEOUT) })
+      if (res.ok) {
+        const data = await res.json() as { ok?: boolean; costPerSearch?: unknown; searchesLeft?: unknown }
+        if (data.ok === true) {
+          out.costPerSearch = typeof data.costPerSearch === 'number' ? data.costPerSearch : undefined
+          out.searchesLeft = typeof data.searchesLeft === 'number' ? data.searchesLeft : undefined
+        }
+      }
+    } catch {
+      // 静默：搜索次数行不渲染
+    }
+    return out
   }
 
   /** 组合状态视图（实时到官网校验令牌有效性）。 */

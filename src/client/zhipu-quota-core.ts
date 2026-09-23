@@ -171,3 +171,58 @@ export function extractArkRows(dashboard: unknown): ArkQuotaRow[] {
   }
   return rows
 }
+
+/** 套餐行展示模型（辉哥 2026-09-23 定稿：侧栏看板显示「什么套餐/总量/剩余」）。 */
+export interface PackageRow {
+  key: string
+  label: string
+  /** 剩余占总量百分比（0-100，总量 0 时 0）。 */
+  percent: number
+  /** false=未激活（首次使用后才计时）。 */
+  activated: boolean
+  /** 激活前提示：'首次使用后 N 天内有效'（目录 days 缺失时空串）。 */
+  pendingHint: string
+  title: string
+}
+
+/** 套餐目录条目（官网 GEM_PACKS 子集）。 */
+export interface PackageCatalogEntry {
+  key: string
+  name: string
+  ico: string
+  days: number
+}
+
+/** 从 /api/dsh-devforge/modagentai/packages 载荷规整套餐行：只保留 gemsLeft > 0 的实例（active 与未激活都要——未激活也能用）。 */
+export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] {
+  const data = payload !== null && typeof payload === 'object' ? (payload as { packages?: unknown }).packages : undefined
+  if (data === null || typeof data !== 'object') return []
+  const view = data as { loggedIn?: unknown; mine?: unknown; catalog?: unknown }
+  if (view.loggedIn !== true || !Array.isArray(view.mine)) return []
+  const catalog = Array.isArray(view.catalog) ? view.catalog : []
+  const rows: PackageRow[] = []
+  for (const raw of view.mine) {
+    if (rows.length >= maxRows) break
+    if (raw === null || typeof raw !== 'object') continue
+    const m = raw as { packKey?: unknown; gemsTotal?: unknown; gemsLeft?: unknown; activatedAt?: unknown; expiresAt?: unknown }
+    if (typeof m.packKey !== 'string' || m.packKey === '') continue
+    const gemsTotal = typeof m.gemsTotal === 'number' && Number.isFinite(m.gemsTotal) ? m.gemsTotal : 0
+    const gemsLeft = typeof m.gemsLeft === 'number' && Number.isFinite(m.gemsLeft) ? m.gemsLeft : 0
+    if (gemsLeft <= 0) continue
+    const entry = catalog.find((c) => c !== null && typeof c === 'object' && (c as PackageCatalogEntry).key === m.packKey) as PackageCatalogEntry | undefined
+    const name = entry?.name ?? m.packKey
+    const ico = entry?.ico ?? '🪙'
+    const activated = typeof m.activatedAt === 'string' && m.activatedAt !== ''
+    const days = entry && typeof entry.days === 'number' ? entry.days : undefined
+    const noExp = m.expiresAt === undefined || m.expiresAt === null || m.expiresAt === 'infinity'
+    rows.push({
+      key: m.packKey,
+      label: ico + ' ' + name,
+      percent: gemsTotal > 0 ? Math.max(0, Math.min(100, (gemsLeft / gemsTotal) * 100)) : 0,
+      activated,
+      pendingHint: !activated && noExp && days !== undefined && days > 0 ? '首次使用后 ' + days + ' 天内有效' : '',
+      title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎' + (!activated && noExp ? '（未激活：首次消费后计时' + (days ? '，' + days + ' 天有效期' : '') + '）' : ''),
+    })
+  }
+  return rows
+}

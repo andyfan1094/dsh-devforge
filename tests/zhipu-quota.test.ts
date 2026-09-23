@@ -1,3 +1,4 @@
+import { extractPackageRows } from '../src/client/zhipu-quota-core.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { classifyQuotaLimit, parseQuotaLimits } from '../src/zhipu/quota.ts'
@@ -130,4 +131,48 @@ test('侧栏方舟行：周或月额度满时 5 小时窗口强制显示已满�
   })
   assert.equal(normal[0]?.percent, 40)
   assert.doesNotMatch(normal[0]?.label ?? '', /已阻断/)
+})
+
+const payload = {
+  packages: {
+    loggedIn: true,
+    username: 'admin',
+    balance: 23.49,
+    searchesLeft: 2349,
+    catalog: [
+      { key: 'chicken', name: '鸡腿套餐', ico: '🍗', days: 2 },
+      { key: 'fries', name: '薯条套餐', ico: '🍟', days: 7 },
+      { key: 'legacy', name: '初始余额', ico: '🪙', days: 0 },
+    ],
+    mine: [
+      { packKey: 'legacy', gemsTotal: 13.29, gemsLeft: 9.32, active: true, activatedAt: '2026-09-01T00:00:00Z', expiresAt: 'infinity' },
+      { packKey: 'fries', gemsTotal: 15, gemsLeft: 14.99, active: true, activatedAt: '2026-09-22T00:00:00Z', expiresAt: '2026-09-29T00:00:00Z' },
+      { packKey: 'chicken', gemsTotal: 3, gemsLeft: 3, active: true, activatedAt: null, expiresAt: 'infinity' },
+      { packKey: 'empty', gemsTotal: 5, gemsLeft: 0, active: false, activatedAt: null, expiresAt: 'infinity' },
+    ],
+  },
+}
+
+test('套餐行规整：目录名称/图标映射、剩余占比、未激活提示；耗尽实例剔除（辉哥 2026-09-23 定稿）', () => {
+  const rows = extractPackageRows(payload)
+  assert.equal(rows.length, 3, '耗尽的 empty 实例不显示')
+  assert.equal(rows[0].label, '🪙 初始余额')
+  assert.ok(rows[0].percent > 70 && rows[0].percent < 71)
+  assert.equal(rows[2].label, '🍗 鸡腿套餐')
+  assert.equal(rows[2].percent, 100)
+  assert.equal(rows[2].activated, false)
+  assert.equal(rows[2].pendingHint, '首次使用后 2 天内有效')
+  assert.equal(rows[1].activated, true)
+  assert.equal(rows[1].pendingHint, '')
+})
+
+test('套餐行规整：未登录 / 异常载荷返回空数组不炸', () => {
+  assert.deepEqual(extractPackageRows({ packages: { loggedIn: false } }), [])
+  assert.deepEqual(extractPackageRows({}), [])
+  assert.deepEqual(extractPackageRows(null), [])
+  assert.deepEqual(extractPackageRows({ packages: { loggedIn: true, mine: 'bad' } }), [])
+})
+
+test('套餐行规整：maxRows 截断', () => {
+  assert.equal(extractPackageRows(payload, 2).length, 2)
 })

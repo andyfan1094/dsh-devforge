@@ -78,6 +78,18 @@ export function makeModagentaiRoutes(service: ModagentaiService): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: MODAGENTAI_API.packages,
+      async handler(req, res) {
+        if (!guard(req, res)) return
+        try {
+          writeJson(res, 200, { ok: true, packages: await service.packages() })
+        } catch (error) {
+          writeError(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
       path: MODAGENTAI_API.login,
       async handler(req, res) {
         if (!guardWrite(req, res)) return

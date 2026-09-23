@@ -6,7 +6,7 @@
  * 方舟未配置 AK/SK 或套餐未订阅时不占行，失败不影响智谱行。 */
 import { createElement, useCallback, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import { extractArkRows, extractZhipuRows, formatWindowCountdown, type ArkQuotaRow } from './zhipu-quota-core.ts'
+import { extractArkRows, extractPackageRows, extractZhipuRows, formatWindowCountdown, type ArkQuotaRow, type PackageRow } from './zhipu-quota-core.ts'
 
 /** 本卡片消费的槽位面（窄化自 dsh-client-ui-slots，避免对槽位包强类型依赖）。 */
 interface SlotsFace {
@@ -27,6 +27,10 @@ const CARD_CSS = [
   '.dzq-card{display:flex;flex-direction:column;gap:4px;width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2,#d0d5dd);border-radius:8px;background:transparent;font:inherit;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary,#667085);text-align:left;cursor:pointer;transition:background-color .15s ease}',
   '.dzq-card:hover{background:var(--dsw-alias-interactive-bg-hover,#f3f4f6)}',
   '.dzq-card:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#2563eb);outline-offset:1px}',
+  '.dzq-pkg-head{font-size:11px;font-weight:600;color:var(--dsw-alias-text-primary,#101828);margin-bottom:2px}',
+  '.dzq-pkg-pending{font-size:10px;color:var(--dsw-alias-border-warning,#dc6803);border:1px solid currentColor;border-radius:999px;padding:0 6px;line-height:1.4}',
+  '.dzq-pkg-hint{font-size:10px;color:var(--dsw-alias-label-secondary,#667085)}',
+  '.dzq-divider{height:1px;background:var(--dsw-alias-border-l2,#d0d5dd);margin:6px 0;width:100%}',
   '.dzq-top{display:flex;align-items:baseline;gap:8px}',
   '.dzq-row{display:flex;flex-direction:column;gap:3px;width:100%}',
   '.dzq-row + .dzq-row{margin-top:6px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--dsw-alias-border-l2,#d0d5dd) 45%,transparent)}',
@@ -54,6 +58,12 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
     rows: null as ReturnType<typeof extractZhipuRows> | null,
     arkRows: null as ReturnType<typeof extractArkRows> | null,
     stale: false,
+    // 套餐区块（辉哥 2026-09-23 定稿：用户登录后显示「什么套餐/总量/剩余」）
+    pkgRows: null as ReturnType<typeof extractPackageRows> | null,
+    pkgBalance: null as number | null,
+    pkgSearchesLeft: null as number | null,
+    pkgUsername: '',
+    pkgExpired: false,
   })
   // 30 秒心跳：驱动「还有多久重置」倒计时走字（数据本身仍每 2 分钟拉取一次）。
   const [now, setNow] = useState(() => Date.now())
@@ -78,6 +88,23 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
     } catch {
       // 方舟刷新失败保持旧值；从未成功过则维持 null（不渲染方舟行）。
     }
+    // 官网账号套餐（独立容错：失败不影响渠道行）。
+    try {
+      const pkgResponse = await fetch('/api/dsh-devforge/modagentai/packages')
+      if (!pkgResponse.ok) throw new Error('HTTP ' + pkgResponse.status)
+      const pkgPayload = await pkgResponse.json() as { packages?: unknown }
+      const view = pkgPayload !== null && typeof pkgPayload === 'object' ? (pkgPayload as { packages?: Record<string, unknown> }).packages : undefined
+      setState((prev) => ({
+        ...prev,
+        pkgRows: extractPackageRows(pkgPayload),
+        pkgBalance: view !== undefined && typeof view.balance === 'number' ? view.balance : null,
+        pkgSearchesLeft: view !== undefined && typeof view.searchesLeft === 'number' ? view.searchesLeft : null,
+        pkgUsername: view !== undefined && typeof view.username === 'string' ? view.username : '',
+        pkgExpired: view !== undefined && view.expired === true,
+      }))
+    } catch {
+      // 套餐刷新失败保持旧值；从未成功过则维持 null（不渲染套餐区块）。
+    }
   }, [])
   useEffect(() => {
     void load()
@@ -89,7 +116,38 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
   // 收起窄栏（56px rail）暂不渲染；两类数据都为空/未加载时同样不渲染。
   const zhipuRow = state.rows !== null && state.rows.length > 0 ? state.rows[0] : null
   const arkRows = state.arkRows ?? []
-  if (zhipuRow === null && arkRows.length === 0) return null
+  const pkgRows = state.pkgRows ?? []
+  if (zhipuRow === null && arkRows.length === 0 && pkgRows.length === 0 && state.pkgBalance === null) return null
+
+  // 套餐行：剩余占比进度条（绿→琥珀→红按剩余水位反向着色：剩得少才危险）+ 未激活徽章。
+  const renderPackageRow = (row: PackageRow, key: string): React.ReactNode => {
+    const level = row.percent <= 15 ? 'danger' : row.percent <= 40 ? 'warning' : 'normal'
+    return createElement('span', { className: 'dzq-row', key: 'pkg-' + key },
+      createElement('span', { className: 'dzq-top' },
+        createElement('span', { className: 'dzq-label', title: row.title }, row.label),
+        !row.activated && createElement('span', { className: 'dzq-pkg-pending', title: row.title }, row.pendingHint !== '' ? '未激活' : '未激活'),
+        createElement('span', { className: 'dzq-pct' }, Math.round(row.percent) + '%'),
+      ),
+      createElement('span', {
+        className: 'dzq-track',
+        role: 'progressbar',
+        'aria-label': row.label + ' 剩余额度',
+        'aria-valuemin': 0,
+        'aria-valuemax': 100,
+        'aria-valuenow': Math.round(row.percent),
+      },
+        createElement('span', { className: 'dzq-fill', 'data-level': level, style: { width: Math.max(1, row.percent) + '%' } }),
+      ),
+      row.pendingHint !== '' && createElement('span', { className: 'dzq-pkg-hint' }, row.pendingHint),
+    )
+  }
+
+  // 套餐区块头部：账号名 + 总余额 + 可搜次数。
+  const pkgHeader = state.pkgRows === null ? null : createElement('span', { className: 'dzq-pkg-head' },
+    state.pkgExpired
+      ? '天工造梦 · 会话已过期，请到个人中心重新登录'
+      : '天工造梦 · ' + (state.pkgUsername !== '' ? state.pkgUsername : '未登录') + (state.pkgBalance !== null ? ' · 💎 ' + state.pkgBalance.toFixed(2) : '') + (state.pkgSearchesLeft !== null ? ' · 可搜 ' + state.pkgSearchesLeft + ' 次' : ''),
+  )
 
   const renderRow = (row: { label: string; percent: number; level: 'normal' | 'warning' | 'danger'; resetAt?: number; title: string }, key: string): React.ReactNode => {
     const resetText = formatWindowCountdown('5h', row.resetAt, now)
@@ -120,6 +178,9 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
   return createElement('div', { style: { width: '100%' } },
     createElement('style', null, CARD_CSS),
     createElement('button', { type: 'button', className: 'dzq-card', onClick: () => { void load() }, title: tip },
+      pkgHeader,
+      pkgRows.map((row) => renderPackageRow(row, row.key)),
+      (pkgRows.length > 0 || pkgHeader !== null) && (zhipuRow !== null || arkRows.length > 0) && createElement('span', { className: 'dzq-divider', key: 'div' }),
       zhipuRow !== null && renderRow(zhipuRow, 'zhipu'),
       arkRows.map((row) => renderRow(row, row.key)),
     ),
