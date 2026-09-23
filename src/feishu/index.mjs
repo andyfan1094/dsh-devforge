@@ -226,7 +226,10 @@ export function apply(ctx, config = {}) {
   // 飞书答题器：接管飞书会话的 ask_user_question，弹框改为飞书互动卡片送达用户手机。
   const questionAnswerer = createQuestionAnswerer({
     getClient: () => bridge?.getClient?.() ?? null,
-    sendText,
+    // apply 作用域内的发送函数名为 send（sendText 是 questions.mjs 的注入形参名）；
+    // 此处若误写裸标识符 sendText 会在 apply 同步段抛 ReferenceError，
+    // 被 safeActivate 静默吞掉（ctx.logger 不进 stdout），飞书桥整体无声死亡（0.38.4 实录）。
+    sendText: send,
     warn,
     info,
   })
