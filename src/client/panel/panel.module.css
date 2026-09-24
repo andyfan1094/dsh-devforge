@@ -160,6 +160,8 @@
 .resourceMeta[data-field="test"] .link { color: var(--dsw-alias-state-warning-primary, #a16207); }
 .resourceMeta[data-field="facts"] .fieldIcon { color: #7c3aed; }
 .resourceMeta[data-field="deploy"] .fieldIcon { color: var(--dsw-alias-state-success-primary, #16a34a); }
+.resourceMeta[data-empty="true"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.resourceMeta[data-empty="true"] .fieldIcon { opacity: .55; }
 .badge { flex: none; padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 999px; font-size: 11px; color: var(--dsw-alias-label-secondary, #667085); white-space: nowrap; }
 .badge[data-status="queued"] { color: var(--dsw-alias-label-secondary, #667085); }
 .badge[data-status="running"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }

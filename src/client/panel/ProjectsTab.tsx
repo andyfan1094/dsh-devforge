@@ -525,18 +525,18 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     {entry.repoBranch !== '' && ' · ' + entry.repoBranch}
                     {' · 最后提交：' + relativeCommitTime(entry.lastCommitAt)}
                   </span>
-                  {entry.siteUrl.trim() !== '' && (
-                    <span className={css['resourceMeta']} data-field="url">
-                      <span className={css['fieldIcon']}><IconBrowser size={12} /></span>
-                      <a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
-                    </span>
-                  )}
-                  {(entry.testUrl ?? '').trim() !== '' && (
-                    <span className={css['resourceMeta']} data-field="test">
-                      <span className={css['fieldIcon']}><IconTest size={12} /></span>
-                      <a className={css['link']} href={entry.testUrl} target="_blank" rel="noopener noreferrer">{entry.testUrl}</a>
-                    </span>
-                  )}
+                  <span className={css['resourceMeta']} data-field="url" data-empty={entry.siteUrl.trim() === '' ? 'true' : 'false'}>
+                    <span className={css['fieldIcon']}><IconBrowser size={12} /></span>
+                    {entry.siteUrl.trim() !== ''
+                      ? <a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
+                      : <span title="点「探测」自动绑定，或点「编辑」手工填写">官网地址：未绑定</span>}
+                  </span>
+                  <span className={css['resourceMeta']} data-field="test" data-empty={(entry.testUrl ?? '').trim() === '' ? 'true' : 'false'}>
+                    <span className={css['fieldIcon']}><IconTest size={12} /></span>
+                    {(entry.testUrl ?? '').trim() !== ''
+                      ? <a className={css['link']} href={entry.testUrl} target="_blank" rel="noopener noreferrer">{entry.testUrl}</a>
+                      : <span title="点「探测」自动绑定，或点「编辑」手工填写">测试地址：未绑定</span>}
+                  </span>
                   {(entry.facts ?? []).length > 0 && (
                     <span className={css['resourceMeta']} data-field="facts">
                       <span className={css['fieldIcon']} style={{ alignSelf: 'flex-start', marginTop: 2 }}><IconNote size={12} /></span>
