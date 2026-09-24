@@ -70,10 +70,13 @@ function genderLabelOf(gender: string | undefined): string {
 interface LocalIdentityProps {
   userProfile: MemoryUserProfile | null
   loaded: boolean
+  /** 身份卡注入启停开关（辉哥定稿：个人中心直接启停，保存即时生效）。 */
+  onToggleEnabled: (next: boolean) => void
+  toggleBusy: boolean
 }
 
-/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入状态（纯展示；编辑入口在卡片头部「编辑身份」）。 */
-function LocalIdentity({ userProfile, loaded }: LocalIdentityProps): JSX.Element {
+/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入启停开关。 */
+function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy }: LocalIdentityProps): JSX.Element {
   const alias = userProfile?.alias ?? ''
   const identity = userProfile?.identity ?? ''
   const habitCount = userProfile?.habits.length ?? 0
@@ -94,15 +97,23 @@ function LocalIdentity({ userProfile, loaded }: LocalIdentityProps): JSX.Element
               <span className={css['identityKvText']}>{identity}</span>
             </div>
           )}
-          <div className={css['identityKv']}>
-            <span className={css['identityKvLabel']}>习惯</span>
-            <span className={css['identityKvText']}>
-              习惯与硬偏好 {habitCount} 条 ·{' '}
-              <span className={css['identityInject']} data-on={enabled ? 'true' : undefined}>
-                {enabled ? '● 每轮常驻注入中' : '○ 注入已关闭'}
-              </span>
+          <label className={css['toggleRow']}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={toggleBusy || userProfile === null}
+              onChange={(e) => { onToggleEnabled(e.target.checked) }}
+            />
+            <span>
+              <strong>身份卡注入</strong>
+              <small>
+                每轮对话自动附带称呼/身份/习惯（习惯 {habitCount} 条） ·{' '}
+                <span className={css['identityInject']} data-on={enabled ? 'true' : undefined}>
+                  {enabled ? '● 常驻注入中' : '○ 已停用'}
+                </span>
+              </small>
             </span>
-          </div>
+          </label>
         </>
       )}
     </div>
@@ -161,6 +172,27 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   useEffect(() => { void refreshProfile() }, [refreshProfile])
   useEffect(() => { void refreshLocal() }, [refreshLocal])
+
+  // 身份卡注入开关的保存中状态（两处 LocalIdentity 共用，避免连点）。
+  const [toggleBusy, setToggleBusy] = useState(false)
+
+  /** 身份卡注入启停（辉哥定稿）：乐观更新，失败回滚；保存即时生效无需重启。 */
+  async function toggleInject(next: boolean): Promise<void> {
+    if (userProfile === null || toggleBusy) return
+    const previous = userProfile
+    setToggleBusy(true)
+    setUserProfile({ ...userProfile, enabled: next })
+    try {
+      setUserProfile(await api.saveUserProfile({ ...userProfile, enabled: next }))
+      setStatusMsg(next ? '身份卡注入已启用，即时生效。' : '身份卡注入已停用。')
+      setStatusErr('')
+    } catch (error) {
+      setUserProfile(previous)
+      setStatusErr('注入开关保存失败：' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      setToggleBusy(false)
+    }
+  }
 
   /** 登录官网账号（登录即自动配置中转），成功后拉资料进入资料态。 */
   async function doLogin(): Promise<void> {
@@ -276,7 +308,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
             <span className={css['identityHint']}>登录后自动配置中转，可用管理员开放的模型</span>
             {loginErr !== '' && <span className={css['identityExpired']}>{loginErr}</span>}
           </div>
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} />
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} />
         </div>
       )}
 
@@ -343,7 +375,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
               {statusErr !== '' && <span className={css['identityExpired']}>{statusErr}</span>}
             </div>
           )}
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} />
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} />
         </div>
       )}
     </div>

@@ -78,3 +78,26 @@ export interface ModagentaiProfile {
   gender?: string
   birthday?: string
 }
+
+/** 官网联网搜索单条网页结果（统一形态；content 截 400 字）。 */
+export interface ModagentaiSearchHit {
+  title: string
+  url: string
+  content: string
+}
+
+/** 官网联网搜索结果（服务端多渠道切换后返回；按次扣钻石）。 */
+export interface ModagentaiSearchResult {
+  /** 实际使用的渠道（tavily / zhipu / ark）。 */
+  channel: string
+  /** AI 答案（方舟兜底渠道有，其余渠道可空）。 */
+  answer: string
+  /** 网页结果列表。 */
+  results: ModagentaiSearchHit[]
+  /** 本次扣费（钻石）。 */
+  balance?: number
+  /** 扣费后余额折算的剩余搜索次数。 */
+  searchesLeft?: number
+  /** 服务端耗时（毫秒）。 */
+  took?: number
+}

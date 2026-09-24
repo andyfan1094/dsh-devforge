@@ -11,7 +11,7 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
-import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiStatus } from './protocol.ts'
+import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
 import { TIANGONG_REASONING_EFFORTS, tiangongEffortsOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
@@ -169,6 +169,71 @@ export class ModagentaiService {
       // 静默：搜索次数行不渲染
     }
     return out
+  }
+
+  /**
+   * 官网联网搜索（辉哥 2026-09-23 定稿：开放给会话模型当搜索工具）。
+   * 服务端多渠道自动切换（Tavily 主力/智谱备用/方舟兜底），按次扣钻石，
+   * 搜索成功才扣费；未登录/会话失效 401，余额不足 402，限频 429。
+   */
+  async webSearch(query: string): Promise<ModagentaiSearchResult> {
+    const settings = this.readSettings()
+    const token = await this.readToken()
+    if (settings.username === '' || token === '') throw new ModagentaiServiceError('未登录官网账号，请先在个人中心登录', 401)
+    const res = await fetch(SITE + '/api/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' },
+      body: JSON.stringify({ query: query.trim().slice(0, 400) }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT),
+    }).catch((error: unknown) => {
+      throw new ModagentaiServiceError('官网搜索网络失败：' + (error instanceof Error ? error.message : String(error)), 504)
+    })
+    if (res.status === 401) throw new ModagentaiServiceError('官网会话已失效，请在个人中心重新登录', 401)
+    const data = await res.json().catch(() => ({}) as Record<string, unknown>)
+    const body = (data ?? {}) as Record<string, unknown>
+    if (!res.ok || body.ok !== true) {
+      const nested = body.error as { message?: unknown } | undefined
+      const message = typeof nested?.message === 'string' && nested.message !== '' ? nested.message
+        : typeof body.message === 'string' && body.message !== '' ? body.message
+        : 'HTTP ' + res.status
+      throw new ModagentaiServiceError('官网搜索失败：' + message, res.status)
+    }
+    const hits = Array.isArray(body.results) ? body.results : []
+    return {
+      channel: typeof body.channel === 'string' ? body.channel : '',
+      answer: typeof body.answer === 'string' ? body.answer : '',
+      results: hits.map((raw) => {
+        const hit = raw as Record<string, unknown>
+        return { title: String(hit.title ?? ''), url: String(hit.url ?? ''), content: String(hit.content ?? '') }
+      }).filter((hit) => hit.url !== ''),
+      ...(typeof body.balance === 'number' ? { balance: body.balance } : {}),
+      ...(typeof body.searchesLeft === 'number' ? { searchesLeft: body.searchesLeft } : {}),
+      ...(typeof body.took === 'number' ? { took: body.took } : {}),
+    }
+  }
+
+  /**
+   * 搜索余量（辉哥定稿：GET /api/search/quota，余额折算剩余次数；不扣费）。
+   * 未登录/会话失效 401；官网返回字段防御式规整。
+   */
+  async searchQuota(): Promise<{ balance: number | null; costPerSearch: number | null; searchesLeft: number | null }> {
+    const settings = this.readSettings()
+    const token = await this.readToken()
+    if (settings.username === '' || token === '') throw new ModagentaiServiceError('未登录官网账号，请先在个人中心登录', 401)
+    const res = await fetch(SITE + '/api/search/quota', {
+      headers: { authorization: 'Bearer ' + token, 'user-agent': 'DeepSeek-Harness/1.0' },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT),
+    }).catch((error: unknown) => {
+      throw new ModagentaiServiceError('搜索余量查询网络失败：' + (error instanceof Error ? error.message : String(error)), 504)
+    })
+    if (res.status === 401) throw new ModagentaiServiceError('官网会话已失效，请在个人中心重新登录', 401)
+    const data = (await res.json().catch(() => ({}) as Record<string, unknown>)) as Record<string, unknown>
+    if (!res.ok || data.ok !== true) throw new ModagentaiServiceError('搜索余量查询失败：HTTP ' + res.status, res.status)
+    return {
+      balance: typeof data.balance === 'number' ? data.balance : null,
+      costPerSearch: typeof data.costPerSearch === 'number' ? data.costPerSearch : null,
+      searchesLeft: typeof data.searchesLeft === 'number' ? data.searchesLeft : null,
+    }
   }
 
   /**

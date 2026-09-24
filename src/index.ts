@@ -62,6 +62,7 @@ import { makeMcpRoutes } from './mcp/routes.ts'
 import { makeDbAdminRoutes } from './store/dbadmin-routes.ts'
 import { devforgeDbTools } from './store/agent-tools.ts'
 import { CredentialSyncService } from './store/credential-sync.ts'
+import { modagentaiWebTools } from './modagentai/tools.ts'
 import { makeModelCatalogRoute } from './model-catalog.ts'
 import { DouyinLiveService } from './douyin-live/service.ts'
 import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
@@ -310,6 +311,7 @@ const DEVFORGE_GUIDANCE = [
   '- xianyu_publish：在独立发布标签页上传图片、填写商品信息并核验发布结果；真实发布必须传入“确认发布”。',
   '- MCP 服务器接入：外部 MCP 服务器在天工造梦面板「MCP」页配置；启用的服务器其工具以 mcp__<serverName>__<tool> 名称注册（如 mcp__github__create_issue），可直接调用，调用失败如实报错。',
   '- devforge_db_*（schema/query/credential/config/backup_read）：天工造梦数据直达口——服务器密码/主机配置/账号令牌/API Key 全在本机 store.db 与配置文件里，需要凭据时**先查库再动手、不要找用户要**：WinRM 主机密码 SELECT data FROM docs WHERE domain = \'winrm.host\'，SSH 主机密码 domain = \'ssh.host\'，API Key 类凭据用 devforge_db_credential，库外配置（飞书 JSON/备份密码/凭据主存）用 devforge_db_config，CNB 加密备份用 devforge_db_backup_read。',
+  '- modagentai_web_search：天工造梦官网联网搜索（服务端多渠道自动切换，按次扣钻石约 0.01💎/次）——智谱/MiniMax 官方搜索限额或失效时的备用通道；modagentai_search_quota 查剩余次数。',
 ].join('\n')
 
 /**
@@ -917,7 +919,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   ]
   // 工作流软下线（0.39.0，辉哥定稿）：rag_run 工具停注、面板页签隐藏；引擎与路由保留，
   // 恢复方法——本行数组重新加回 `ragRunTool(workflowEngine)`（import 恢复 './workflow/tools.ts'）即可。
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools()]
+  // 官网搜索（0.39.0，辉哥定稿）：modagentai.com 联网搜索开放给模型，智谱/MiniMax 限额时的第三条通道。
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
