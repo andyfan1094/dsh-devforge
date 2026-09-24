@@ -260,6 +260,18 @@ export async function sendCard(client, chatId, card, { receiveIdType } = {}) {
   return String(response?.data?.message_id ?? '')
 }
 
+/** 原地更新一张已发送的 interactive 卡片（模型卡分页翻页用），不新增会话消息。 */
+export async function updateCard(client, messageId, card) {
+  const id = String(messageId ?? '').trim()
+  if (id === '') throw new Error('message id is empty')
+  const response = await client.im.v1.message.patch({
+    path: { message_id: id },
+    data: { content: JSON.stringify(card) },
+  })
+  if (response?.code !== undefined && response.code !== 0) throw new Error('feishu updateCard failed: ' + (response?.msg ?? response?.code))
+  return true
+}
+
 export async function sendFile(client, chatId, filePath, { replyTo = '', receiveIdType } = {}) {
   const fileKey = await uploadFile(client, filePath)
   const idType = receiveIdType ?? (String(chatId).startsWith('oc_') ? 'chat_id' : String(chatId).startsWith('on_') ? 'union_id' : 'open_id')

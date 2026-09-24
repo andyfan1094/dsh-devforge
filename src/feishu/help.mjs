@@ -6,15 +6,16 @@ import { sendCard } from './outbound.mjs'
 
 /** 卡片容量护栏：飞书单卡 30 KB 上限，模型数量与文本长度都要截断。 */
 const MAX_TEXT_CHARS = 1_500
-/** 模型全量展示（辉哥定稿）：上限只是 30KB 护栏，双列网格下 60 个模型约 18KB，正常规模全放得下。 */
-export const MAX_HELP_MODEL_BUTTONS = 60
+/** 模型卡分页每页条数：49 个模型实测全塞一卡会被飞书拒（11310 element exceeds the limit），分页是第二条红线的解。 */
+export const MODEL_PAGE_SIZE = 24
 export const MAX_HELP_EFFORT_BUTTONS = 8
 
-/** 回调动作名：帮助卡快捷命令、模型挑选、思考强度应用。 */
+/** 回调动作名：帮助卡快捷命令、模型挑选、思考强度应用、模型卡翻页。 */
 export const HELP_ACTIONS = {
   CMD: 'feishu_help_cmd',
   MODEL_PICK: 'feishu_model_pick',
   MODEL_APPLY: 'feishu_model_apply',
+  MODEL_PAGE: 'feishu_model_page',
 }
 
 /** 卡片文本截断：过长内容进卡片会被飞书整卡拒绝，宁可截断保可用。 */
@@ -76,14 +77,18 @@ function gridRows(buttons, perRow = 2) {
 }
 
 /**
- * 模型选择卡：当前选中值 + 按提供商分组的双列模型网格，全量展示不截断。
+ * 模型选择卡（分页版）：当前选中值 + 按提供商分组的双列模型网格。
  * current: { provider, model, reasoningEffort }；models: [{ provider, model, name, reasoningEfforts }]。
  * 点模型按钮发 feishu_model_pick，由宿主回一张思考强度选择卡。
- * 默认上限只是 30KB 护栏（正常规模全量展示），真超限才截断并提示。
+ * 为什么分页：实测 49 个模型全塞一张卡会被飞书拒（ErrCode 11310 element exceeds the limit），
+ * 元素节点数是独立于 30KB 的第二条红线；每页 24 个模型双列排布实测可通过。
+ * 页码超出范围时自动收敛到合法页；单页放下时不出翻页按钮。
  */
-export function buildModelCard(current, models, { maxModels = MAX_HELP_MODEL_BUTTONS } = {}) {
+export function buildModelCard(current, models, { page = 0, pageSize = MODEL_PAGE_SIZE } = {}) {
   const list = (Array.isArray(models) ? models : []).filter((item) => String(item?.provider ?? '').trim() !== '' && String(item?.model ?? '').trim() !== '')
-  const shown = list.slice(0, maxModels)
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize))
+  const safePage = Math.min(Math.max(0, Math.trunc(page)), totalPages - 1)
+  const shown = list.slice(safePage * pageSize, (safePage + 1) * pageSize)
   const currentLabel = current?.model ? clip(String(current.model), 60) : '（跟随默认配置）'
   const effortLabel = current?.reasoningEffort ? clip(String(current.reasoningEffort), 40) : '默认'
   const elements = [
@@ -110,10 +115,19 @@ export function buildModelCard(current, models, { maxModels = MAX_HELP_MODEL_BUT
     group.push(button(label + (picked ? '（当前）' : ''), { action: HELP_ACTIONS.MODEL_PICK, provider, model: String(item.model) }, picked ? 'primary' : 'default'))
   }
   flushGroup()
-  if (list.length > shown.length) {
-    elements.push(md('（模型数量超过 ' + maxModels + ' 上限，仅展示前 ' + shown.length + ' 个；完整列表请在电脑端「天工造梦 → 飞书」面板选择）'))
+  if (shown.length === 0 && list.length === 0) elements.push(md('暂无可用模型：请先在电脑端「天工造梦 → 飞书」面板配置模型。'))
+  if (totalPages > 1) {
+    elements.push({ tag: 'hr' })
+    elements.push({
+      tag: 'column_set',
+      flex_mode: 'bisect',
+      columns: [
+        { tag: 'column', width: 'weighted', weight: 1, elements: [button('◀ 上一页', { action: HELP_ACTIONS.MODEL_PAGE, page: Math.max(0, safePage - 1) }, safePage === 0 ? 'default' : 'primary')] },
+        { tag: 'column', width: 'weighted', weight: 1, elements: [md('**第 ' + (safePage + 1) + ' / ' + totalPages + ' 页** · 共 ' + list.length + ' 个模型')] },
+        { tag: 'column', width: 'weighted', weight: 1, elements: [button('下一页 ▶', { action: HELP_ACTIONS.MODEL_PAGE, page: Math.min(totalPages - 1, safePage + 1) }, safePage >= totalPages - 1 ? 'default' : 'primary')] },
+      ],
+    })
   }
-  if (shown.length === 0) elements.push(md('暂无可用模型：请先在电脑端「天工造梦 → 飞书」面板配置模型。'))
   return {
     schema: '2.0',
     header: { template: 'turquoise', title: { tag: 'plain_text', content: '🔁 模型与思考强度' } },

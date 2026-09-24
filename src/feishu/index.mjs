@@ -7,10 +7,10 @@ import { homedir } from 'node:os'
 import { basename, extname, join, resolve as resolvePath } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
-import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
+import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
-import { buildEffortCard, buildHelpCard, buildModelCard, HELP_ACTIONS, sendCardToChat } from './help.mjs'
+import { buildEffortCard, buildHelpCard, buildModelCard, MODEL_PAGE_SIZE, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
 import { makeRoutes } from './routes.mjs'
@@ -584,10 +584,19 @@ export function apply(ctx, config = {}) {
   /** 给指定飞书会话发一张互动卡片；失败抛错由调用方兜底为文字回复。 */
   const sendCardTo = (chatId, card) => sendCardToChat(() => bridge?.getClient?.() ?? null, chatId, card)
 
-  /** /model：拉取可选模型并发模型选择卡（modelOptions 内部会刷新模型状态）。 */
+  /**
+   * 模型卡翻页缓存：chatId -> { models, current, messageId, at }。
+   * 翻页回调必须原地更新同一张卡（PATCH message），需要记住发卡时的模型清单与 message_id；
+   * 模型清单短时间内不变，缓存 10 分钟，过期后提示重新 /model。
+   */
+  const modelCardCache = new Map()
+  const MODEL_CARD_CACHE_MS = 10 * 60 * 1000
+
+  /** /model：拉取可选模型并发模型选择卡（modelOptions 内部会刷新模型状态），并记录翻页缓存。 */
   const sendModelCard = async (chatId) => {
     const options = await runtime.modelOptions()
-    await sendCardTo(chatId, buildModelCard(options.current, options.models))
+    const messageId = await sendCardTo(chatId, buildModelCard(options.current, options.models, { pageSize: MODEL_PAGE_SIZE }))
+    modelCardCache.set(String(chatId ?? '').trim(), { models: options.models, current: options.current, messageId, at: Date.now() })
   }
 
   const handleCommand = async (envelope) => {
@@ -777,7 +786,12 @@ export function apply(ctx, config = {}) {
     const patch = { provider, model, ...(effort === '' ? { reasoningEffort: '' } : { reasoningEffort: effort }) }
     // 回调必须秒回 toast，配置更新（含桥重启）放后台跑，结果用文本回执。
     void enqueueConfigUpdate(patch)
-      .then(() => send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话已重建，直接发消息即可开始。'))
+      .then(() => {
+        // 翻页缓存同步新选中值，翻页后「当前」高亮不漂移。
+        const cached = modelCardCache.get(chatId)
+        if (cached !== undefined) modelCardCache.set(chatId, { ...cached, current: { provider, model, ...(effort === '' ? {} : { reasoningEffort: effort }) }, at: Date.now() })
+        return send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话已重建，直接发消息即可开始。')
+      })
       .catch((error) => send(chatId, '模型切换失败：' + (error instanceof Error ? error.message : String(error))))
     return { toast: { content: '正在切换模型…' } }
   }
@@ -824,6 +838,33 @@ export function apply(ctx, config = {}) {
       const chatId = chatIdOfCardAction(data)
       if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
       return handleModelApply(chatId, value)
+    }
+    if (action === HELP_ACTIONS.MODEL_PAGE) {
+      // 翻页：原地更新同一张模型卡，不新增会话消息；缓存过期时提示重新 /model。
+      const chatId = chatIdOfCardAction(data)
+      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      const cached = modelCardCache.get(chatId)
+      if (cached === undefined || Date.now() - cached.at > MODEL_CARD_CACHE_MS) {
+        return { toast: { content: '模型列表已过期，请重新发送 /model' } }
+      }
+      const page = Math.trunc(Number(value?.page ?? 0))
+      if (!Number.isFinite(page) || page < 0) return { toast: { content: '无效页码，已忽略' } }
+      const card = buildModelCard(cached.current, cached.models, { page, pageSize: MODEL_PAGE_SIZE })
+      try {
+        await updateCard(bridge?.getClient?.(), cached.messageId, card)
+        return { toast: { content: '已翻页' } }
+      } catch (error) {
+        // 原地更新失败（卡片过期/被删等）退回发新卡，翻页能力不能死。
+        warn('model card in-place page update failed: ' + (error instanceof Error ? error.message : String(error)))
+        try {
+          const messageId = await sendCardTo(chatId, card)
+          modelCardCache.set(chatId, { ...cached, messageId, at: Date.now() })
+          return { toast: { content: '已翻页（新卡片）' } }
+        } catch (fallbackError) {
+          warn('model card page fallback delivery failed: ' + (fallbackError instanceof Error ? fallbackError.message : String(fallbackError)))
+          return { toast: { content: '翻页失败，请重新发送 /model' } }
+        }
+      }
     }
     return null
   }
