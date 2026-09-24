@@ -10,6 +10,7 @@ import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './f
 import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
+import { buildEffortCard, buildHelpCard, buildModelCard, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
 import { makeRoutes } from './routes.mjs'
@@ -578,10 +579,31 @@ export function apply(ctx, config = {}) {
     return ['独立飞书会话：' + entry.sessionId, '状态：' + String(entry.agent.status ?? 'unknown'), '工作目录：' + resolved.cwd, '实际配置：' + actual].join('\n')
   }
 
+  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会话任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+
+  /** 给指定飞书会话发一张互动卡片；失败抛错由调用方兜底为文字回复。 */
+  const sendCardTo = (chatId, card) => sendCardToChat(() => bridge?.getClient?.() ?? null, chatId, card)
+
+  /** /model：拉取可选模型并发模型选择卡（modelOptions 内部会刷新模型状态）。 */
+  const sendModelCard = async (chatId) => {
+    const options = await runtime.modelOptions()
+    await sendCardTo(chatId, buildModelCard(options.current, options.models))
+  }
+
   const handleCommand = async (envelope) => {
     const command = String(envelope.text.slice(1).trim().split(/\s+/)[0] ?? '').toLowerCase()
     if (command === 'whoami') return '飞书身份：' + envelope.userId
-    if (command === 'help') return '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/status 查看本飞书会话；/stop 停止本会话任务（排队中的消息一并取消）；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+    if (command === 'help') {
+      // 帮助卡发送失败时回退为文字版，绝不静默无响应。
+      try { await sendCardTo(envelope.chatId, buildHelpCard()) }
+      catch (error) { warn('help card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return HELP_FALLBACK_TEXT }
+      return null
+    }
+    if (command === 'model') {
+      try { await sendModelCard(envelope.chatId) }
+      catch (error) { warn('model card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return '模型卡片获取失败：' + (error instanceof Error ? error.message : String(error)) }
+      return null
+    }
     if (command === 'status') {
       try { await refreshModelState() } catch {}
       return statusText(envelope.chatId)
@@ -738,6 +760,74 @@ export function apply(ctx, config = {}) {
     ])
   }
 
+  /**
+   * 卡片回调统一路由：问答卡片归答题器；帮助/模型卡片的快捷动作在这里执行。
+   * chatId 取自回调 context（p2p 会话为 open_chat_id）；模型切换复用面板同款
+   * updateConfig 链路（会重建会话），任务运行中直接拒绝并提示。
+   */
+  const chatIdOfCardAction = (data) => String(data?.context?.open_chat_id ?? data?.open_chat_id ?? '').trim()
+
+  const handleModelApply = (chatId, value) => {
+    const provider = String(value?.provider ?? '').trim()
+    const model = String(value?.model ?? '').trim()
+    const effort = String(value?.effort ?? '').trim()
+    if (provider === '' || model === '') return { toast: { content: '回调缺少模型信息，已忽略' } }
+    const entry = conversations.get(chatId)
+    if (entry !== undefined && entry.agent.status === 'running') return { toast: { content: '任务运行中，请先发送 /stop 再切换模型' } }
+    const patch = { provider, model, ...(effort === '' ? { reasoningEffort: '' } : { reasoningEffort: effort }) }
+    // 回调必须秒回 toast，配置更新（含桥重启）放后台跑，结果用文本回执。
+    void enqueueConfigUpdate(patch)
+      .then(() => send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话已重建，直接发消息即可开始。'))
+      .catch((error) => send(chatId, '模型切换失败：' + (error instanceof Error ? error.message : String(error))))
+    return { toast: { content: '正在切换模型…' } }
+  }
+
+  const handleFeishuCardAction = async (value, data) => {
+    const action = String(value?.action ?? '')
+    if (action.startsWith('feishu_question')) return questionAnswerer.handleCardValue(value)
+    if (action === HELP_ACTIONS.CMD) {
+      const chatId = chatIdOfCardAction(data)
+      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      const cmd = String(value?.cmd ?? '').trim()
+      if (cmd === 'status') {
+        try { await refreshModelState() } catch {}
+        await send(chatId, statusText(chatId))
+        return { toast: { content: '状态已发送' } }
+      }
+      if (cmd === 'model') {
+        try { await sendModelCard(chatId) }
+        catch (error) { warn('model card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return { toast: { content: '模型卡片获取失败' } } }
+        return { toast: { content: '已发送模型选择卡片' } }
+      }
+      return null
+    }
+    if (action === HELP_ACTIONS.MODEL_PICK) {
+      const chatId = chatIdOfCardAction(data)
+      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      const provider = String(value?.provider ?? '').trim()
+      const model = String(value?.model ?? '').trim()
+      if (provider === '' || model === '') return { toast: { content: '回调缺少模型信息，已忽略' } }
+      let efforts = []
+      let name = model
+      try {
+        const info = await ctx.llm.resolveModelInfo(provider, model)
+        efforts = reasoningEffortsOf(info)
+        name = String(info.name ?? model)
+      } catch (error) {
+        warn('resolveModelInfo failed for ' + provider + '/' + model + ': ' + (error instanceof Error ? error.message : String(error)))
+      }
+      try { await sendCardTo(chatId, buildEffortCard({ provider, model, name, reasoningEfforts: efforts })) }
+      catch (error) { warn('effort card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return { toast: { content: '思考强度卡片发送失败' } } }
+      return { toast: { content: '请选择思考强度' } }
+    }
+    if (action === HELP_ACTIONS.MODEL_APPLY) {
+      const chatId = chatIdOfCardAction(data)
+      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      return handleModelApply(chatId, value)
+    }
+    return null
+  }
+
   async function startBridge() {
     if (closing) return
     await repairPersistedFeishuSessions()
@@ -752,8 +842,8 @@ export function apply(ctx, config = {}) {
       logger: ctx?.logger,
       onStopRequest: handleStopRequest,
       onMenuCommand: handleMenuCommand,
-      // 问题卡片按钮回调路由给飞书答题器（停止按钮仍由桥内部处理）。
-      onCardAction: (value) => questionAnswerer.handleCardValue(value),
+      // 卡片按钮回调统一路由：问答归答题器，帮助/模型卡在此分发（停止按钮仍由桥内部处理）。
+      onCardAction: (value, data) => handleFeishuCardAction(value, data),
       onLoadState: () => store.getState(),
       onSaveState: (patch) => store.setState(patch),
     })
