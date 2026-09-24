@@ -73,10 +73,14 @@ interface LocalIdentityProps {
   /** 身份卡注入启停开关（辉哥定稿：个人中心直接启停，保存即时生效）。 */
   onToggleEnabled: (next: boolean) => void
   toggleBusy: boolean
+  /** 官网搜索工具启停（modagentai_web_search 等模型工具；扣钻石，可一键停）。 */
+  searchEnabled: boolean | null
+  searchBusy: boolean
+  onToggleSearch: (next: boolean) => void
 }
 
-/** 插件内身份段：称呼 / 身份简介 / 习惯与硬偏好 + 注入启停开关。 */
-function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy }: LocalIdentityProps): JSX.Element {
+/** 插件内身份段：称呼 / 身份简介 / 注入启停开关 + 官网搜索工具开关。 */
+function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy, searchEnabled, searchBusy, onToggleSearch }: LocalIdentityProps): JSX.Element {
   const alias = userProfile?.alias ?? ''
   const identity = userProfile?.identity ?? ''
   const habitCount = userProfile?.habits.length ?? 0
@@ -110,6 +114,23 @@ function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy }: Loc
                 每轮对话自动附带称呼/身份/习惯（习惯 {habitCount} 条） ·{' '}
                 <span className={css['identityInject']} data-on={enabled ? 'true' : undefined}>
                   {enabled ? '● 常驻注入中' : '○ 已停用'}
+                </span>
+              </small>
+            </span>
+          </label>
+          <label className={css['toggleRow']}>
+            <input
+              type="checkbox"
+              checked={searchEnabled === true}
+              disabled={searchBusy || searchEnabled === null}
+              onChange={(e) => { onToggleSearch(e.target.checked) }}
+            />
+            <span>
+              <strong>官网搜索工具</strong>
+              <small>
+                模型可用的联网搜索（modagentai_web_search），按次扣钻石约 0.01💎 ·{' '}
+                <span className={css['identityInject']} data-on={searchEnabled === true ? 'true' : undefined}>
+                  {searchEnabled === null ? '读取中…' : searchEnabled ? '● 已启用' : '○ 已停用'}
                 </span>
               </small>
             </span>
@@ -172,9 +193,32 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
 
   useEffect(() => { void refreshProfile() }, [refreshProfile])
   useEffect(() => { void refreshLocal() }, [refreshLocal])
+  useEffect(() => { void api.getModagentaiToolSettings().then((s) => setSearchEnabled(s.webSearchEnabled)).catch(() => setSearchEnabled(null)) }, [api])
 
   // 身份卡注入开关的保存中状态（两处 LocalIdentity 共用，避免连点）。
   const [toggleBusy, setToggleBusy] = useState(false)
+
+  // 官网搜索工具启停（本地 settings；null=未加载）。
+  const [searchEnabled, setSearchEnabled] = useState<boolean | null>(null)
+  const [searchBusy, setSearchBusy] = useState(false)
+
+  /** 官网搜索工具启停：乐观更新，失败回滚；保存即时生效无需重启。 */
+  async function toggleSearch(next: boolean): Promise<void> {
+    if (searchBusy || searchEnabled === null) return
+    setSearchBusy(true)
+    const previous = searchEnabled
+    setSearchEnabled(next)
+    try {
+      setSearchEnabled((await api.saveModagentaiToolSettings(next)).webSearchEnabled)
+      setStatusMsg(next ? '官网搜索工具已启用，模型立即可用。' : '官网搜索工具已停用，模型调用将被拒绝。')
+      setStatusErr('')
+    } catch (error) {
+      setSearchEnabled(previous)
+      setStatusErr('搜索工具开关保存失败：' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      setSearchBusy(false)
+    }
+  }
 
   /** 身份卡注入启停（辉哥定稿）：乐观更新，失败回滚；保存即时生效无需重启。 */
   async function toggleInject(next: boolean): Promise<void> {
@@ -308,7 +352,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
             <span className={css['identityHint']}>登录后自动配置中转，可用管理员开放的模型</span>
             {loginErr !== '' && <span className={css['identityExpired']}>{loginErr}</span>}
           </div>
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} />
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} searchEnabled={searchEnabled} searchBusy={searchBusy} onToggleSearch={(next) => { void toggleSearch(next) }} />
         </div>
       )}
 
@@ -375,7 +419,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
               {statusErr !== '' && <span className={css['identityExpired']}>{statusErr}</span>}
             </div>
           )}
-          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} />
+          <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} searchEnabled={searchEnabled} searchBusy={searchBusy} onToggleSearch={(next) => { void toggleSearch(next) }} />
         </div>
       )}
     </div>

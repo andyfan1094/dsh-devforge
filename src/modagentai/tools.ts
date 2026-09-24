@@ -28,6 +28,7 @@ export function modagentaiWebTools(modagentai: ModagentaiService) {
       output: { schema, render: (_args, value) => text(render(value)) },
       async execute(args: { query?: string }) {
         if (typeof args.query !== 'string' || args.query.trim() === '') return jsonValue({ ok: false, error: '缺少 query 参数' })
+        if (!modagentai.isWebSearchEnabled()) return jsonValue({ ok: false, error: '官网搜索工具已停用（面板个人中心可开启）' })
         try {
           const result = await modagentai.webSearch(args.query)
           return jsonValue({ ok: true, ...result })
@@ -45,6 +46,7 @@ export function modagentaiWebTools(modagentai: ModagentaiService) {
       parameters: {},
       output: { schema, render: (_args, value) => text(render(value)) },
       async execute() {
+        if (!modagentai.isWebSearchEnabled()) return jsonValue({ ok: false, error: '官网搜索工具已停用（面板个人中心可开启）' })
         try {
           const quota = await modagentai.searchQuota()
           return jsonValue({ ok: true, ...quota })

@@ -582,6 +582,21 @@ export class DevforgeApi {
     return data.profile
   }
 
+  /** 读取官网搜索工具启停状态（modagentai_web_search / modagentai_search_quota 共用开关）。 */
+  async getModagentaiToolSettings(signal?: AbortSignal): Promise<{ webSearchEnabled: boolean }> {
+    return readJson<{ ok: boolean; webSearchEnabled: boolean }>(await fetch(MODAGENTAI_API.toolSettings, { signal }))
+  }
+
+  /** 保存官网搜索工具启停（保存即时生效，无需重启）。 */
+  async saveModagentaiToolSettings(enabled: boolean, signal?: AbortSignal): Promise<{ webSearchEnabled: boolean }> {
+    return readJson<{ ok: boolean; webSearchEnabled: boolean }>(await fetch(MODAGENTAI_API.toolSettings, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    }))
+  }
+
   /** 读取 OpenAI 中转站、凭据、聊天路由与生图模型的脱敏状态。 */
   async getOpenAiGatewayStatus(signal?: AbortSignal): Promise<OpenAiGatewayStatus> {
     const data = await readJson<{ status: OpenAiGatewayStatus }>(await fetch(OPENAI_GATEWAY_API.status, { signal }))

@@ -68,9 +68,11 @@ interface ModagentaiAccountSettings {
   autoApplied: boolean
   appliedModels: number
   appliedAt: number
+  /** 官网搜索工具启停（辉哥定稿：扣钻石工具可一键停用；缺省启用，旧数据无字段视为开）。 */
+  webSearchEnabled: boolean
 }
 
-const EMPTY_SETTINGS: ModagentaiAccountSettings = { username: '', role: '', autoApplied: false, appliedModels: 0, appliedAt: 0 }
+const EMPTY_SETTINGS: ModagentaiAccountSettings = { username: '', role: '', autoApplied: false, appliedModels: 0, appliedAt: 0, webSearchEnabled: true }
 const SETTINGS_KEY = 'modagentai.settings'
 const SITE = 'https://modagentai.com'
 
@@ -97,12 +99,23 @@ export class ModagentaiService {
       autoApplied: raw.autoApplied === true,
       appliedModels: typeof raw.appliedModels === 'number' && Number.isFinite(raw.appliedModels) ? raw.appliedModels : 0,
       appliedAt: typeof raw.appliedAt === 'number' && Number.isFinite(raw.appliedAt) ? raw.appliedAt : 0,
+      webSearchEnabled: raw.webSearchEnabled !== false,
     }
   }
 
   /** 原子写回账号会话信息。 */
   private writeSettings(next: ModagentaiAccountSettings): void {
     putSettings(getDb(), SETTINGS_KEY, next)
+  }
+
+  /** 官网搜索工具是否启用（工具注册与执行双重检查的数据源；缺省启用）。 */
+  isWebSearchEnabled(): boolean {
+    return this.readSettings().webSearchEnabled
+  }
+
+  /** 设置官网搜索工具启停（面板开关；保存即时生效，无需重启）。 */
+  setWebSearchEnabled(next: boolean): void {
+    this.writeSettings({ ...this.readSettings(), webSearchEnabled: next })
   }
 
   /** 读取受管凭据里的会话令牌（未配置返回空串）。 */
@@ -401,7 +414,7 @@ export class ModagentaiService {
     await this.ctx.credentials.set(credentialRef(MODAGENTAI_SESSION_REF), token)
     const role = siteUser?.role === 'admin' ? 'admin' : 'user'
     const displayName = typeof siteUser?.username === 'string' && siteUser.username !== '' ? siteUser.username : username
-    const settings: ModagentaiAccountSettings = { username: displayName, role, autoApplied: false, appliedModels: 0, appliedAt: Date.now() }
+    const settings: ModagentaiAccountSettings = { username: displayName, role, autoApplied: false, appliedModels: 0, appliedAt: Date.now(), webSearchEnabled: this.isWebSearchEnabled() }
     this.writeSettings(settings)
 
     // ④ 登录即自动配置中转（失败不回滚登录，用户可手动重试）

@@ -157,5 +157,34 @@ export function makeModagentaiRoutes(service: ModagentaiService): WebRoute[] {
         }
       },
     },
+    {
+      // 官网搜索工具启停（辉哥定稿）：GET 读 / POST 写共用一条 exact 路由（同 profile 的 method 分流模式）。
+      kind: 'exact',
+      path: MODAGENTAI_API.toolSettings,
+      async handler(req, res) {
+        if (req.method === 'GET') {
+          if (!guard(req, res)) return
+          writeJson(res, 200, { ok: true, webSearchEnabled: service.isWebSearchEnabled() })
+          return
+        }
+        if (req.method === 'POST') {
+          if (!guardWrite(req, res)) return
+          try {
+            const body = await readBody(req)
+            if (typeof body.enabled !== 'boolean') {
+              writeJson(res, 400, { ok: false, error: '缺少 enabled 布尔字段' })
+              return
+            }
+            service.setWebSearchEnabled(body.enabled)
+            writeJson(res, 200, { ok: true, webSearchEnabled: service.isWebSearchEnabled() })
+          } catch (error) {
+            writeError(res, error)
+          }
+          return
+        }
+        writeJson(res, 405, { ok: false, error: 'GET/POST only' })
+      },
+    },
   ]
 }
+

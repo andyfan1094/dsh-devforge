@@ -8,6 +8,8 @@ export const MODAGENTAI_API = {
   logout: '/api/dsh-devforge/modagentai/logout',
   applyGateway: '/api/dsh-devforge/modagentai/apply-gateway',
   profile: '/api/dsh-devforge/modagentai/profile',
+  /** GET 读 / POST 写：官网搜索工具启停（面板个人中心开关）。 */
+  toolSettings: '/api/dsh-devforge/modagentai/tool-settings',
 } as const
 
 /** 官网站点与用户级网关（OpenAI 兼容）地址。 */

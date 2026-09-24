@@ -154,3 +154,38 @@ test('modagentai_search_quota：返回余额折算；401 报重新登录', async
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('搜索工具开关：停用后 web_search 与 quota 均拒绝且不发请求，重新启用恢复', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-tools-'))
+  process.env.DSH_HOME = home
+  const stub = stubFetch(() => new Response(JSON.stringify({ ok: true, channel: 'tavily', answer: '', results: [], searchesLeft: 10 }), { status: 200 }))
+  try {
+    writeAccount('辉哥')
+    const modagentai = makeCtx({})
+    const search = toolOf(modagentai, 'modagentai_web_search')
+    const quota = toolOf(modagentai, 'modagentai_search_quota')
+    stub.install()
+    // 默认启用：可调用。
+    assert.equal(((await search.execute({ query: 'x' })) as { ok: boolean }).ok, true)
+    // 停用：两工具均拒绝且不发请求。
+    modagentai.setWebSearchEnabled(false)
+    const blocked = await search.execute({ query: 'x' }) as { ok: boolean; error: string }
+    assert.equal(blocked.ok, false)
+    assert.ok(blocked.error.includes('已停用'))
+    const blockedQuota = await quota.execute({}) as { ok: boolean; error: string }
+    assert.equal(blockedQuota.ok, false)
+    assert.ok(blockedQuota.error.includes('已停用'))
+    const callsAfterBlock = stub.calls.length
+    // 持久化：重读开关仍为 false。
+    assert.equal(modagentai.isWebSearchEnabled(), false)
+    // 重新启用：恢复可调用。
+    modagentai.setWebSearchEnabled(true)
+    assert.equal(((await quota.execute({})) as { ok: boolean }).ok, true)
+    assert.ok(stub.calls.length > callsAfterBlock, '重新启用后应恢复真实请求')
+  } finally {
+    stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
