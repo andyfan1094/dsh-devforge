@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { RemoteHostSummary } from '../../protocol.ts'
-import type { AutomatchSuggestion, ProjectDetectResult, ProjectEntry, ProjectScanResult, RepoKind, ScannedProject } from '../../projects/protocol.ts'
+import type { AutomatchSuggestion, ProjectDetectResult, ProjectEntry, ProjectProbeResult, ProjectScanResult, RepoKind, ScannedProject } from '../../projects/protocol.ts'
 import type { ConventionDir, WorkspaceConvention } from '../../workspace/convention.ts'
 import { DEFAULT_CONVENTION } from '../../workspace/convention.ts'
 import css from './panel.module.css'
@@ -102,6 +102,8 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
   /** 产出公约配置（null=未加载）；conventionOpen=配置区展开。 */
   const [convention, setConvention] = useState<WorkspaceConvention | null>(null)
   const [conventionOpen, setConventionOpen] = useState(false)
+  /** 最近一次探测结果（结构化卡呈现；null=未展示）。 */
+  const [probeView, setProbeView] = useState<{ name: string; result: ProjectProbeResult } | null>(null)
   /** 挂载后是否已完成过一次静默分支刷新（防重复写库）。 */
   const refreshedOnce = useRef(false)
 
@@ -338,7 +340,8 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
     })
   }
 
-  /** 自动探测：对远程主机只读探测项目站点，保守回填地址/服务器绑定（不覆盖手填）。 */
+  /** 自动探测：对远程主机只读探测项目站点，保守回填地址/服务器绑定（不覆盖手填）。
+   *  结果以结构化卡呈现（probeView），通道/域名/地址/目录/服务分层分色，不再堆纯文本。 */
   const probe = (entry: ProjectEntry): void => {
     void run(async () => {
       const result = await api.probeProject(entry.id)
@@ -346,19 +349,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
         setError(result.error ?? '探测失败。')
         return
       }
-      const lines = result.hits.map((hit) =>
-        '🔍 ' + hit.transport + ':' + hit.alias
-        + (hit.domain !== undefined ? ' · 域名 ' + hit.domain : '')
-        + (hit.siteUrl !== undefined ? ' · ' + hit.siteUrl : '')
-        + (hit.testUrl !== undefined ? '（测试）' : '')
-        + (hit.deployDir !== undefined ? ' · 目录 ' + hit.deployDir : '')
-        + (hit.serviceName !== undefined ? ' · 服务 ' + hit.serviceName : ''))
-      const summary = [
-        ...(result.hits.length === 0 ? ['未发现与该项目相关的站点配置。'] : lines),
-        ...result.applied,
-        ...result.skipped,
-      ]
-      setNotice('探测完成（' + entry.name + '）：\n' + summary.join('\n'))
+      setProbeView({ name: entry.name, result })
       await refresh()
     })
   }
@@ -447,6 +438,48 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== '' && <div className={css['banner']} data-kind="info">{notice}</div>}
 
+      {probeView !== null && (
+        <div className={css['probeCard']} role="status" aria-label="项目探测结果">
+          <div className={css['probeCardHead']}>
+            <span className={css['probeCardTitle']}>探测结果 · {probeView.name}</span>
+            <span className={css['badge']} data-status={probeView.result.hits.length > 0 ? 'succeeded' : 'queued'}>
+              {probeView.result.hits.length > 0 ? '命中 ' + probeView.result.hits.length : '无命中'}
+            </span>
+            <button type="button" className={css['ghostButton']} onClick={() => { setProbeView(null) }}>关闭</button>
+          </div>
+          {probeView.result.hits.length > 0 && (
+            <div className={css['probeHits']}>
+              {probeView.result.hits.map((hit, index) => (
+                <div key={hit.transport + ':' + hit.alias + ':' + String(index)} className={css['probeHit']}>
+                  <span className={css['transportBadge']} data-transport={hit.transport}>{hit.transport}:{hit.alias}</span>
+                  {hit.domain !== undefined && (
+                    <span className={css['probeChip']}><span className={css['probeChipLabel']}>域名</span><span className={css['probeChipValue']} data-kind="domain">{hit.domain}</span></span>
+                  )}
+                  {hit.siteUrl !== undefined && (
+                    <span className={css['probeChip']}><span className={css['probeChipLabel']}>地址</span><span className={css['probeChipValue']} data-kind={hit.testUrl !== undefined ? 'test' : 'url'}>
+                      <a href={hit.siteUrl} target="_blank" rel="noopener noreferrer">{hit.siteUrl}</a>
+                    </span></span>
+                  )}
+                  {hit.deployDir !== undefined && (
+                    <span className={css['probeChip']}><span className={css['probeChipLabel']}>目录</span><span className={css['probeChipValue']} data-kind="dir">{hit.deployDir}</span></span>
+                  )}
+                  {hit.serviceName !== undefined && (
+                    <span className={css['probeChip']}><span className={css['probeChipLabel']}>服务</span><span className={css['probeChipValue']} data-kind="service">{hit.serviceName}</span></span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className={css['probeActions']}>
+            {probeView.result.applied.map((item) => <div key={item} className={css['probeAction']} data-kind="applied">{item}</div>)}
+            {probeView.result.skipped.map((item) => <div key={item} className={css['probeAction']} data-kind="skipped">{item}</div>)}
+            {probeView.result.applied.length === 0 && probeView.result.skipped.length === 0 && (
+              <div className={css['probeAction']} data-kind="empty">本次没有可自动回填的字段（或全部已有值）。</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {editing === null && scan === null && (
         <div className={css['toolbar']}>
           <span className={css['sectionHint']}>本机项目登记（路径 · 描述 · 仓库 · 发布服务器）</span>
@@ -516,7 +549,11 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     发布服务器：
                     {entry.deployTargets.length === 0
                       ? '—'
-                      : entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、')}
+                      : entry.deployTargets.map((target) => (
+                        <span key={target.transport + ':' + target.alias} className={css['transportBadge']} data-transport={target.transport} style={{ marginRight: 5 }}>
+                          {target.transport}:{target.alias}{target.remotePath !== undefined && target.remotePath !== '' ? '' : ''}
+                        </span>
+                      ))}
                     {entry.deployCommand !== undefined && entry.deployCommand !== '' && ' · 命令：' + entry.deployCommand}
                   </span>
                 </div>

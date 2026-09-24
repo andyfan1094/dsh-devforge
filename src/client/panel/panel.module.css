@@ -157,6 +157,30 @@
 .transportBadge[data-transport="ssh"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }
 .transportBadge[data-transport="winrm"] { color: var(--dsw-alias-state-success-primary, #16a34a); border-color: var(--dsw-alias-state-success-primary, #16a34a); }
 
+/* 项目探测结果卡（0.40.x）：结构化分层替代纯文本横幅——通道徽章/域名/地址/目录/服务分色分层级。 */
+.probeCard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 8px; background: var(--dsw-alias-bg-subtle, #f8fafc); }
+.probeCardHead { display: flex; align-items: center; gap: 8px; }
+.probeCardTitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 700; color: var(--dsw-alias-label-primary, #101828); }
+.probeHits { display: flex; flex-direction: column; gap: 6px; }
+.probeHit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 9px; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 6px; background: var(--dsw-alias-bg-primary, #fff); }
+.probeChip { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; font-size: 12px; }
+.probeChipLabel { flex: none; font-size: 11px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.probeChipValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--dsw-alias-label-primary, #101828); }
+.probeChipValue[data-kind="domain"] { color: #7c3aed; }
+.probeChipValue[data-kind="url"] { color: var(--dsw-alias-state-business-primary, #2563eb); }
+.probeChipValue a { color: inherit; }
+.probeChipValue[data-kind="test"] { color: var(--dsw-alias-state-warning-primary, #a16207); }
+.probeChipValue[data-kind="test"]::after { content: '测试'; margin-left: 4px; padding: 0 5px; border: 1px solid var(--dsw-alias-state-warning-primary, #a16207); border-radius: 999px; font-size: 10px; font-weight: 700; }
+.probeChipValue[data-kind="dir"] { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 500; color: var(--dsw-alias-label-secondary, #667085); }
+.probeChipValue[data-kind="service"] { color: var(--dsw-alias-state-success-primary, #15803d); }
+.probeActions { display: flex; flex-direction: column; gap: 3px; }
+.probeAction { font-size: 12px; line-height: 1.5; }
+.probeAction[data-kind="applied"]::before { content: '✔'; margin-right: 5px; color: var(--dsw-alias-state-success-primary, #15803d); font-weight: 700; }
+.probeAction[data-kind="applied"] { color: var(--dsw-alias-state-success-primary, #15803d); }
+.probeAction[data-kind="skipped"]::before { content: '⏭'; margin-right: 5px; color: var(--dsw-alias-state-warning-primary, #a16207); }
+.probeAction[data-kind="skipped"] { color: var(--dsw-alias-state-warning-primary, #a16207); }
+.probeAction[data-kind="empty"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+
 .form { display: flex; flex-direction: column; gap: 12px; width: min(680px, 100%); }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .fieldLabel { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary, #667085); }
