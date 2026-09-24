@@ -99,6 +99,7 @@ import { StandardsStore } from './standards.ts'
 import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { devforgeProjectTool } from './projects/tools.ts'
 import { runProjectDeploy } from './projects/deploy.ts'
+import { runProjectProbe } from './projects/probe.ts'
 import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
 import { listProjects } from './projects/store.ts'
@@ -872,6 +873,17 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     settings: ctx.settings,
     agentPresets: ctx.get('agentPresets') as import('./forge.ts').ForgeHostServices['agentPresets'],
   })
+  // 项目探测执行器（0.40.x）：延迟取远程引擎与全部已配置主机清单（deployTargets 为空时兜底全扫）。
+  // 路由与 devforge_project 工具共用同一闭包，保证行为一致。
+  const runProjectProbeById = async (id: string) => {
+    const entry = listProjects().find((project) => project.id === id)
+    if (entry === undefined) return { ok: false, hits: [], applied: [], skipped: [], error: 'unknown project: ' + id }
+    const allHosts = [
+      ...(() => { try { return new SshHostStore().list().map((host) => ({ transport: 'ssh' as const, alias: host.alias })) } catch { return [] } })(),
+      ...(() => { try { return new WinrmHostStore().list().map((host) => ({ transport: 'winrm' as const, alias: host.alias })) } catch { return [] } })(),
+    ]
+    return runProjectProbe(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine }, allHosts)
+  }
   const routes = [
     ...makeDouyinLiveRoutes(douyinLive),
     ...makeRoutes(engine, standards, restartManager, () => ({
@@ -890,6 +902,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         if (entry === undefined) return { ok: false, results: [], error: 'unknown project: ' + id }
         return runProjectDeploy(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine })
       },
+    }, {
+      // 项目自动探测执行器（0.40.x）：与工具共用闭包。
+      run: runProjectProbeById,
     }, {
       // 250k 压缩预设一键配置：读状态走同步快照；创建/设默认走异步执行器。
       // agentPresets 未进本插件 Context 类型增强，按运行时可选服务读取并断言最小结构。
@@ -920,7 +935,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   // 工作流软下线（0.39.0，辉哥定稿）：rag_run 工具停注、面板页签隐藏；引擎与路由保留，
   // 恢复方法——本行数组重新加回 `ragRunTool(workflowEngine)`（import 恢复 './workflow/tools.ts'）即可。
   // 官网搜索（0.39.0，辉哥定稿）：modagentai.com 联网搜索开放给模型，智谱/MiniMax 限额时的第三条通道。
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool({ run: runProjectProbeById }), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

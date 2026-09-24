@@ -16,7 +16,7 @@ import type { DshWebRestartManager } from './restart.ts'
 import { detectProjectGit, listProjects, refreshAllProjectGitMeta, relocateProject, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
 import { automatchProjects, describeProject, scanForProjects } from './projects/scan.ts'
 import { runProjectDeploy } from './projects/deploy.ts'
-import type { ProjectDeployResult } from './projects/protocol.ts'
+import type { ProjectDeployResult, ProjectProbeResult } from './projects/protocol.ts'
 import { WORKSPACE_API, getConvention, saveConvention, validateConvention } from './workspace/convention.ts'
 import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
@@ -103,6 +103,8 @@ export function makeRoutes(
   },
   /** 一键发布执行器（可选；index.ts 闭包延迟取远程引擎，请求时才解引用）。 */
   deploy?: { run(id: string): Promise<ProjectDeployResult> },
+  /** 项目自动探测执行器（可选；index.ts 闭包延迟取远程引擎与主机清单）。 */
+  probe?: { run(id: string): Promise<ProjectProbeResult> },
   /** 250k 压缩预设一键配置（可选；缺失时对应路由返回 503）。 */
   agentPreset250k?: {
     status: () => import('./agent-preset-250k.ts').AgentPreset250kStatus
@@ -436,6 +438,25 @@ export function makeRoutes(
         if (entry === undefined) { writeJson(res, 404, { ok: false, error: 'unknown project: ' + body.id }); return }
         try {
           writeJson(res, 200, { ok: true, result: await deploy.run(body.id) })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: PROJECTS_API.projectProbe,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        if (probe === undefined) { writeJson(res, 503, { ok: false, error: '探测执行器未就绪（远程引擎尚未激活）。' }); return }
+        const body = await readJsonBody(req)
+        if (!body || typeof body.id !== 'string' || body.id.trim() === '') {
+          writeJson(res, 400, { ok: false, error: 'id 必填' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, result: await probe.run(body.id) })
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

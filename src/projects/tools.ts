@@ -10,13 +10,16 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { appendProjectFact, listProjects, registerProjectFromPath } from './store.ts'
-import type { ProjectEntry } from './protocol.ts'
+import type { ProjectEntry, ProjectProbeResult } from './protocol.ts'
 
 /** 工具输出值类型（与 schema 一一对应）。 */
 interface ProjectToolOutput {
   ok: boolean
   message?: string
 }
+
+/** 探测执行器（index.ts 注入；与面板 probe 路由共用同一闭包）。 */
+export type ProjectProbeRunner = (id: string) => Promise<ProjectProbeResult>
 
 /** 项目条目紧凑渲染（一行一项目）。 */
 function renderProject(entry: ProjectEntry): string {
@@ -26,6 +29,8 @@ function renderProject(entry: ProjectEntry): string {
     '仓库:' + (entry.repoUrl !== '' ? entry.repoKind + ' ' + entry.repoUrl : '未关联'),
   ]
   if (entry.repoBranch !== '') parts.push('分支:' + entry.repoBranch)
+  if (entry.siteUrl !== '') parts.push('线上:' + entry.siteUrl)
+  if ((entry.testUrl ?? '') !== '') parts.push('测试:' + entry.testUrl!)
   if (entry.deployTargets.length > 0) parts.push('发布:' + entry.deployTargets.map((t) => t.transport + ':' + t.alias).join(','))
   if (entry.pathExists === false) parts.push('⚠️本机路径失效')
   return parts.join(' | ')
@@ -49,16 +54,16 @@ function renderFacts(entry: ProjectEntry): string {
   return ['项目事实（最近在前）：', ...recent.map((fact) => '- ' + new Date(fact.at).toISOString().slice(0, 10) + '：' + fact.text)].join('\n')
 }
 
-/** devforge_project 工具定义（无状态，直接读登记表）。 */
-export function devforgeProjectTool() {
+/** devforge_project 工具定义（无状态，直接读登记表；probe 动作经注入的执行器走远程探测）。 */
+export function devforgeProjectTool(probe?: { run: ProjectProbeRunner }) {
   return defineTool({
     name: 'devforge_project',
-    description: 'Resolve registered projects of this machine: list all, fuzzy-resolve one by name/path keyword, read details (with accumulated project facts), register a local project path (auto-detects Git), or note a project fact for future sessions. ' +
-      'Triggers: 我的项目, 项目列表, 项目解析, 项目登记, 项目笔记, devforge_project, registered projects.',
+    description: 'Resolve registered projects of this machine: list all, fuzzy-resolve one by name/path keyword, read details (with accumulated project facts), register a local project path (auto-detects Git), note a project fact for future sessions, or probe remote servers to auto-bind site URLs / test URLs / deploy targets. ' +
+      'Triggers: 我的项目, 项目列表, 项目解析, 项目登记, 项目笔记, 项目探测, 自动绑定, devforge_project, registered projects.',
     parameters: {
-      action: { type: 'string', enum: ['list', 'resolve', 'detail', 'register', 'note'], description: 'list=项目清单；resolve=按关键词解析单个项目；detail=按 id 取详情；register=按本机路径登记/更新项目（自动检测 Git）；note=向项目追加一条事实（数据库位置/发布方式/关键路径/坑），后续会话自动注入。默认 list。' },
+      action: { type: 'string', enum: ['list', 'resolve', 'detail', 'register', 'note', 'probe'], description: 'list=项目清单；resolve=按关键词解析单个项目；detail=按 id 取详情；register=按本机路径登记/更新项目（自动检测 Git）；note=向项目追加一条事实（数据库位置/发布方式/关键路径/坑），后续会话自动注入；probe=对项目跑远程只读探测，自动绑定服务器/线上地址/测试地址/域名（为空才回填，不覆盖手填）。默认 list。' },
       keyword: { type: 'string', description: 'resolve：项目名称/路径/仓库地址关键词（如「天工」「dsh-devforge」）。' },
-      id: { type: 'string', description: 'detail/note：项目 id。' },
+      id: { type: 'string', description: 'detail/note/probe：项目 id（probe 也接受 keyword 定位）。' },
       path: { type: 'string', description: 'register：项目本机绝对路径。' },
       name: { type: 'string', description: 'register：项目名，缺省用目录名。' },
       description: { type: 'string', description: 'register：项目描述（可选）。' },
@@ -100,6 +105,27 @@ export function devforgeProjectTool() {
         }
         return appendProjectFact(target.id, text, 'agent')
       }
+      if (action === 'probe') {
+        if (probe === undefined) return { ok: false, message: '探测能力未启用（远程运维 remote.enabled=false 或插件未注入执行器）。' }
+        let target = entries.find((entry) => entry.id === (args.id ?? ''))
+        if (target === undefined && (args.keyword ?? '').trim() !== '') target = matchProject(entries, args.keyword ?? '')
+        if (target === undefined) return { ok: false, message: '未定位到项目：请先 resolve 或 list 拿到 id，再 action=probe。' }
+        const result = await probe.run(target.id)
+        if (!result.ok) return { ok: false, message: '探测失败：' + (result.error ?? '未知原因') }
+        const blocks = [
+          '项目「' + target.name + '」探测完成：',
+          ...result.hits.map((hit) => '- ' + hit.transport + ':' + hit.alias
+            + (hit.domain !== undefined ? ' · 域名 ' + hit.domain : '')
+            + (hit.siteUrl !== undefined ? ' · 地址 ' + hit.siteUrl : '')
+            + (hit.testUrl !== undefined ? ' · [测试]' : '')
+            + (hit.deployDir !== undefined ? ' · 目录 ' + hit.deployDir : '')
+            + (hit.serviceName !== undefined ? ' · 服务 ' + hit.serviceName : '')),
+          ...result.applied.map((item) => '✔ ' + item),
+          ...result.skipped.map((item) => '⏭ ' + item),
+        ]
+        if (result.hits.length === 0) blocks.push('（未发现站点配置；可在服务器上确认 nginx/Caddy/IIS 是否有该项目的站点）')
+        return { ok: true, message: blocks.join('\n') }
+      }
       // detail
       const hit = entries.find((entry) => entry.id === (args.id ?? ''))
       if (hit === undefined) return { ok: false, message: '项目不存在：' + (args.id ?? '') }
@@ -110,6 +136,7 @@ export function devforgeProjectTool() {
           '描述：' + (hit.description !== '' ? hit.description : '（未填写）'),
           renderProject(hit),
           '线上地址：' + (hit.siteUrl !== '' ? hit.siteUrl : '—'),
+          '测试地址：' + ((hit.testUrl ?? '') !== '' ? hit.testUrl! : '—'),
           renderFacts(hit),
         ].filter((block) => block !== '').join('\n'),
       }

@@ -26,6 +26,8 @@ export const PROJECTS_API = {
   projectAutomatch: '/api/dsh-devforge/projects/automatch',
   /** 一键发布（POST {id}）：对全部发布目标逐台执行 deployCommand。 */
   projectDeploy: '/api/dsh-devforge/projects/deploy',
+  /** 自动探测（POST {id}）：对远程主机跑只读命令，匹配项目站点并回填地址/服务器。 */
+  projectProbe: '/api/dsh-devforge/projects/probe',
 } as const
 
 /** 代码仓库托管类型。 */
@@ -77,6 +79,8 @@ export interface ProjectEntry {
   repoBranch: string
   /** 线上地址（项目发布后的访问网址，可留空）。 */
   siteUrl: string
+  /** 测试/预览地址（测试环境访问网址，可留空；自动探测命中后回填）。 */
+  testUrl?: string
   /** 发布对应的服务器列表。 */
   deployTargets: DeployTarget[]
   /** 发布命令（可选；在项目目录内执行，如 pnpm run deploy，经远程运维通道执行）。 */
@@ -167,6 +171,38 @@ export interface DeployTargetResult {
 export interface ProjectDeployResult {
   ok: boolean
   results: DeployTargetResult[]
+  error?: string
+}
+
+/** 单台主机上的项目站点探测命中。 */
+export interface ProbeHit {
+  /** 通道类型。 */
+  transport: 'ssh' | 'winrm'
+  /** 远程主机别名。 */
+  alias: string
+  /** 命中的域名（nginx server_name / IIS binding host；缺省未发现域名）。 */
+  domain?: string
+  /** 组装出的正式地址（有证书线索时 https，否则 http；含非标端口）。 */
+  siteUrl?: string
+  /** 测试线索命中的地址（站点/目录/主机名带 test|staging|uat|dev|test- 前后缀）。 */
+  testUrl?: string
+  /** 部署目录（nginx root / proxy_pass 上游 / IIS PhysicalPath）。 */
+  deployDir?: string
+  /** 服务名线索（systemd 单元 / IIS 站点名）。 */
+  serviceName?: string
+  /** 证据行（截断后原文，供人工核验，绝不含凭据）。 */
+  evidence: string[]
+}
+
+/** 项目自动探测结果（含保守自动回填说明）。 */
+export interface ProjectProbeResult {
+  ok: boolean
+  /** 逐台探测命中（未命中的主机不返回或 evidence 为空）。 */
+  hits: ProbeHit[]
+  /** 自动回填的动作说明（如「已绑定发布服务器 ssh:my」「已回填线上地址 https://…」）。 */
+  applied: string[]
+  /** 探测范围说明（扫了哪些主机、哪些字段因已有值或歧义未回填）。 */
+  skipped: string[]
   error?: string
 }
 

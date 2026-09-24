@@ -49,13 +49,14 @@ interface ProjectFormState {
   repoUrl: string
   repoBranch: string
   siteUrl: string
+  testUrl: string
   deployTargets: Array<{ transport: 'ssh' | 'winrm'; alias: string; remotePath: string }>
   deployCommand: string
 }
 
 /** 空表单。 */
 function emptyForm(): ProjectFormState {
-  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [], deployCommand: '' }
+  return { id: '', name: '', path: '', description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', testUrl: '', deployTargets: [], deployCommand: '' }
 }
 
 /** 由既有条目构造表单。 */
@@ -69,6 +70,7 @@ function formFromEntry(entry: ProjectEntry): ProjectFormState {
     repoUrl: entry.repoUrl,
     repoBranch: entry.repoBranch,
     siteUrl: entry.siteUrl,
+    testUrl: entry.testUrl ?? '',
     deployTargets: entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias, remotePath: target.remotePath ?? '' })),
     deployCommand: entry.deployCommand ?? '',
   }
@@ -240,6 +242,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       repoUrl: editing.repoUrl,
       repoBranch: editing.repoBranch,
       siteUrl: editing.siteUrl,
+      testUrl: editing.testUrl.trim() === '' ? undefined : editing.testUrl.trim(),
       deployTargets: editing.deployTargets,
       deployCommand: editing.deployCommand.trim() === '' ? undefined : editing.deployCommand.trim(),
     })
@@ -332,6 +335,31 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       })
       if (result.ok) setNotice('发布完成（' + entry.name + '）：\n' + lines.join('\n'))
       else setError('发布存在失败项（' + entry.name + '）：\n' + lines.join('\n'))
+    })
+  }
+
+  /** 自动探测：对远程主机只读探测项目站点，保守回填地址/服务器绑定（不覆盖手填）。 */
+  const probe = (entry: ProjectEntry): void => {
+    void run(async () => {
+      const result = await api.probeProject(entry.id)
+      if (!result.ok) {
+        setError(result.error ?? '探测失败。')
+        return
+      }
+      const lines = result.hits.map((hit) =>
+        '🔍 ' + hit.transport + ':' + hit.alias
+        + (hit.domain !== undefined ? ' · 域名 ' + hit.domain : '')
+        + (hit.siteUrl !== undefined ? ' · ' + hit.siteUrl : '')
+        + (hit.testUrl !== undefined ? '（测试）' : '')
+        + (hit.deployDir !== undefined ? ' · 目录 ' + hit.deployDir : '')
+        + (hit.serviceName !== undefined ? ' · 服务 ' + hit.serviceName : ''))
+      const summary = [
+        ...(result.hits.length === 0 ? ['未发现与该项目相关的站点配置。'] : lines),
+        ...result.applied,
+        ...result.skipped,
+      ]
+      setNotice('探测完成（' + entry.name + '）：\n' + summary.join('\n'))
+      await refresh()
     })
   }
 
@@ -438,7 +466,12 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
       )}
 
       {editing === null && scan === null && projects.length > 0 && (
-        <div className={css['tableWrap']}>
+        <div
+          className={[css['tableWrap'], css['projectListViewport']].join(' ')}
+          role="region"
+          aria-label="项目列表"
+          tabIndex={0}
+        >
           <div className={css['resourceList']}>
             {projects.map((entry) => (
               <div key={entry.id} className={css['resourceRow']}>
@@ -460,6 +493,11 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                   {entry.siteUrl.trim() !== '' && (
                     <span className={css['resourceMeta']}>
                       网址：<a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
+                    </span>
+                  )}
+                  {(entry.testUrl ?? '').trim() !== '' && (
+                    <span className={css['resourceMeta']}>
+                      测试：<a className={css['link']} href={entry.testUrl} target="_blank" rel="noopener noreferrer">{entry.testUrl}</a>
                     </span>
                   )}
                   {(entry.facts ?? []).length > 0 && (
@@ -486,6 +524,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                   {entry.pathExists === false && (
                     <button type="button" className={css['ghostButton']} onClick={() => { relocate(entry) }}>重定位</button>
                   )}
+                  <button type="button" className={css['ghostButton']} disabled={busy} title="对远程主机只读探测项目站点，自动绑定服务器与地址（为空才回填，不覆盖手填）" onClick={() => { probe(entry) }}>探测</button>
                   {entry.deployCommand !== undefined && entry.deployCommand !== '' && entry.deployTargets.length > 0 && entry.pathExists !== false && (
                     <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { deploy(entry) }}>发布</button>
                   )}
@@ -692,7 +731,7 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
             />
           </div>
           <div className={css['field']}>
-            <label className={css['fieldLabel']} htmlFor="project-site">线上地址（发布后的访问网址，可选）</label>
+            <label className={css['fieldLabel']} htmlFor="project-site">线上地址（发布后的访问网址，可选；可由「探测」自动回填）</label>
             <input
               id="project-site"
               className={css['input']}
@@ -700,6 +739,17 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
               placeholder="https://modagentai.com"
               {...inputProps}
               onChange={(event) => { setEditing({ ...editing, siteUrl: event.target.value }) }}
+            />
+          </div>
+          <div className={css['field']}>
+            <label className={css['fieldLabel']} htmlFor="project-test-url">测试地址（测试环境访问网址，可选；可由「探测」自动回填）</label>
+            <input
+              id="project-test-url"
+              className={css['input']}
+              value={editing.testUrl}
+              placeholder="http://192.168.71.13:8082 或 https://test.example.com"
+              {...inputProps}
+              onChange={(event) => { setEditing({ ...editing, testUrl: event.target.value }) }}
             />
           </div>
           <div className={css['field']}>

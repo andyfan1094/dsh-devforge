@@ -190,6 +190,7 @@ export function saveProject(payload: Record<string, unknown>): ProjectEntry {
     repoUrl: typeof payload.repoUrl === 'string' ? payload.repoUrl.trim() : (existing?.repoUrl ?? ''),
     repoBranch: typeof payload.repoBranch === 'string' ? payload.repoBranch.trim() : (existing?.repoBranch ?? ''),
     siteUrl: typeof payload.siteUrl === 'string' ? payload.siteUrl.trim() : (existing?.siteUrl ?? ''),
+    testUrl: typeof payload.testUrl === 'string' ? payload.testUrl.trim() : (existing?.testUrl ?? ''),
     deployTargets: Array.isArray(payload.deployTargets)
       ? (payload.deployTargets as DeployTarget[]).map((target) => ({
           transport: target.transport,

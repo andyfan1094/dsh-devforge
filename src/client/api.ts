@@ -22,7 +22,7 @@ import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiProfile, typ
 import { MODEL_CATALOG_API, type ModelCatalogProvider } from '../model-catalog.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
-import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
+import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectProbeResult, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
 import type { PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
@@ -310,6 +310,16 @@ export class DevforgeApi {
   /** 项目面板：一键发布（对全部发布目标逐台执行 deployCommand）。 */
   async deployProject(id: string): Promise<ProjectDeployResult> {
     const data = await readJson<{ result: ProjectDeployResult }>(await fetch(PROJECTS_API.projectDeploy, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }))
+    return data.result
+  }
+
+  /** 项目面板：自动探测（对远程主机只读探测并保守回填地址/服务器绑定）。 */
+  async probeProject(id: string): Promise<ProjectProbeResult> {
+    const data = await readJson<{ result: ProjectProbeResult }>(await fetch(PROJECTS_API.projectProbe, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id }),

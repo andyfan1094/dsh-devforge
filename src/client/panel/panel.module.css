@@ -137,6 +137,8 @@
 .primaryButton:disabled { opacity: .5; cursor: default; }
 
 .tableWrap { overflow: hidden; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; }
+/* 项目卡列表独立滚动：内容不足时自动收缩，超出视口时才滚动，避免底部出现空白框。 */
+.projectListViewport { box-sizing: border-box; flex: 0 1 auto; height: auto; max-height: calc(100dvh - 250px); min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .resourceList { display: flex; flex-direction: column; }
 .resourceRow { display: flex; align-items: center; gap: 10px; min-width: 0; padding: var(--dv-row-pad) 12px; border-bottom: 1px solid var(--dsw-alias-separator-primary, #edf0f2); }
 .resourceRow:last-child { border-bottom: none; }
