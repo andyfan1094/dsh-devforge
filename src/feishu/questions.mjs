@@ -7,7 +7,26 @@
 //   resolve { answers: [{ id, selected: string[], custom? }] }
 //   取消/超时 reject Error{ name:'UserQuestionError', code:'ASK_CANCELLED'|'ASK_ABORTED' }
 import { randomUUID } from 'node:crypto'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { sendCard } from './outbound.mjs'
+
+/**
+ * 文件日志器：把答题器的关键节点（注册/认领/放行/失败）追加落到固定文件。
+ * 为什么需要：宿主 stdout 未必重定向，ctx.logger 又不进 stdout（0.38.4 无声死亡教训），
+ * 认领 miss 若无落盘证据就永远黑箱。logFile 由宿主注入（隔离 HOME 下 homedir 跟随，
+ * 暂存实例自然隔离）；未注入（单测）时不产生任何文件写入。
+ */
+function createFileLogger(logFile) {
+  if (typeof logFile !== 'string' || logFile.trim() === '') return () => {}
+  const target = logFile.trim()
+  return (level, message) => {
+    try {
+      mkdirSync(dirname(target), { recursive: true })
+      appendFileSync(target, '[' + new Date().toISOString() + '] [' + level + '] ' + String(message) + '\n', 'utf8')
+    } catch {}
+  }
+}
 
 /** 单题等待上限：超过即视为用户不在场，报错让模型改用文字继续，防止任务永久挂起。 */
 const QUESTION_TIMEOUT_MS = 30 * 60 * 1000
@@ -107,10 +126,12 @@ export function createQuestionAnswerer({
   getClient,
   sendText,
   deliverCard,
+  logFile = '',
   warn = () => {},
   info = () => {},
 } = {}) {
-  /** agentId -> chatId：判断一条 user-questions/request 是否属于飞书会话。 */
+  const fileLog = createFileLogger(logFile)
+  /** agentId/sessionId -> chatId：判断一条 user-questions/request 是否属于飞书会话。 */
   const agentChat = new Map()
   /** askId -> 挂起记录；卡片按钮回调按 askId 路由。 */
   const pending = new Map()
@@ -121,14 +142,34 @@ export function createQuestionAnswerer({
   /** 关闭标志：dispose 后拒绝一切新问题（含排队在微任务里尚未起跑的 runAsk）。 */
   let closed = false
 
-  /** 记录飞书会话的 agent，答题器只为这些 agent 认领问题。 */
-  const registerAgent = (agentId, chatId) => {
+  /**
+   * 记录飞书会话的 agent，答题器只为这些 agent 认领问题。
+   * 双键注册：agent 实例 id 与其 session id 各映射一条（前缀 session: 区分），
+   * 任一命中即可认领——运行时升级或句柄重建可能让两个 id 不同步（0.38.4 实测认领全 miss）。
+   */
+  const registerAgent = (agentId, chatId, sessionId = '') => {
     const id = String(agentId ?? '').trim()
     const chat = String(chatId ?? '').trim()
-    if (id !== '' && chat !== '') agentChat.set(id, chat)
+    const sid = String(sessionId ?? '').trim()
+    if (chat === '') {
+      fileLog('warn', 'register: chatId 为空，忽略注册 agent=' + (id || '(空)'))
+      return
+    }
+    if (id !== '') {
+      agentChat.set(id, chat)
+    } else {
+      warn('registerAgent：agent id 为空，仅按会话 id 注册 chat=' + chat)
+      fileLog('warn', 'register: agent id 为空，仅按会话 id 注册 chat=' + chat)
+    }
+    if (sid !== '') agentChat.set('session:' + sid, chat)
+    fileLog('info', 'register: agent=' + (id || '(空)') + ' session=' + (sid || '(空)') + ' -> chat=' + chat)
   }
   const forgetAgent = (agentId) => {
-    agentChat.delete(String(agentId ?? '').trim())
+    const id = String(agentId ?? '').trim()
+    if (id === '') return
+    // 调用方传来的可能是 agent id 也可能是 session id，两种键一并清除。
+    agentChat.delete(id)
+    agentChat.delete('session:' + id)
   }
   const forgetAll = () => {
     agentChat.clear()
@@ -136,8 +177,12 @@ export function createQuestionAnswerer({
 
   /** 判定该请求是否属于飞书会话；不属于则答题器不认领。 */
   const chatIdOfRequest = (request) => {
-    const chatId = agentChat.get(String(request?.agent?.id ?? '').trim())
-    return chatId === undefined ? '' : chatId
+    const agent = request?.agent
+    const direct = agentChat.get(String(agent?.id ?? '').trim())
+    if (direct !== undefined) return direct
+    const sessionKey = 'session:' + String(agent?.session?.id ?? '').trim()
+    if (sessionKey !== 'session:') return agentChat.get(sessionKey) ?? ''
+    return ''
   }
 
   /** 失败收口：清理挂起记录、解除信号监听、reject 给宿主 waterfall。 */
@@ -147,6 +192,7 @@ export function createQuestionAnswerer({
     if (pendingByChat.get(record.chatId) === record.askId) pendingByChat.delete(record.chatId)
     if (record.timer !== undefined) clearTimeout(record.timer)
     if (record.onAbort !== undefined) record.signal?.removeEventListener?.('abort', record.onAbort)
+    fileLog('warn', 'fail: ask=' + record.askId + ' chat=' + record.chatId + ' code=' + String(error?.code ?? '?') + ' message=' + String(error?.message ?? error))
     record.reject(error)
   }
 
@@ -254,7 +300,18 @@ export function createQuestionAnswerer({
   /** waterfall 入口：非飞书会话 next() 放行给其他答题器；同会话问题按序串行。 */
   const answer = async (request, next) => {
     const chatId = chatIdOfRequest(request)
-    if (chatId === '') return await next()
+    if (chatId === '') {
+      // 认领 miss 必须留痕：注册了哪些键、请求带的是哪个 agent/session，
+      // 否则「问题弹到电脑端」永远无法归因（0.38.4 实录）。
+      const agent = request?.agent
+      const missDetail = 'miss: request.agent.id=' + String(agent?.id ?? '(空)')
+        + ' session=' + String(agent?.session?.id ?? '(空)')
+        + ' registered=[' + [...agentChat.keys()].join(', ') + ']'
+      warn('user-questions/request 非飞书会话，放行给其他答题器：' + missDetail)
+      fileLog('warn', missDetail)
+      return await next()
+    }
+    fileLog('info', 'claim: chat=' + chatId + ' agent=' + String(request?.agent?.id ?? '(空)') + ' questions=' + (Array.isArray(request?.questions) ? request.questions.length : 0))
     const previous = chatChains.get(chatId) ?? Promise.resolve()
     const operation = previous.catch(() => {}).then(() => runAsk(chatId, request))
     chatChains.set(chatId, operation)
@@ -348,5 +405,5 @@ export function createQuestionAnswerer({
     chatChains.clear()
   }
 
-  return { answer, registerAgent, forgetAgent, forgetAll, hasPendingCustom, recordCustomAnswer, handleCardValue, dispose }
+  return { answer, registerAgent, forgetAgent, forgetAll, hasPendingCustom, recordCustomAnswer, handleCardValue, dispose, log: fileLog }
 }

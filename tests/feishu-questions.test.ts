@@ -5,6 +5,9 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildQuestionCard, createQuestionAnswerer } from '../src/feishu/questions.mjs'
 
 /** 内存假答题环境：记录发出的卡片与文本，手动投递按钮回调。 */
@@ -172,4 +175,74 @@ test('答题器：开放题文本捕获只消费匹配会话的消息', async ()
   assert.equal(answerer.recordCustomAnswer('oc_chat1', '没有了'), true)
   const answer = await pendingPromise
   assert.deepEqual(answer.answers[0].custom, '没有了')
+})
+
+test('答题器：agent id 未注册但 session id 命中时按会话 id 二级认领', async () => {
+  const { answerer, sentCards, firstCard } = fakeAnswerer()
+  answerer.registerAgent('agent-1', 'oc_chat1', 'sess-1')
+  // 运行时句柄重建后 agent 实例 id 变化，但 session id 不变——必须仍能认领
+  const pendingPromise = answerer.answer({ agent: { id: 'agent-NEW', session: { id: 'sess-1' } }, questions: QUESTIONS })
+  await firstCard
+  assert.equal(sentCards.length, 1, 'session id 命中应投递卡片')
+  answerer.dispose()
+  await pendingPromise.then(() => null, () => {})
+})
+
+test('答题器：agent id 为空时仅按 session id 注册，仍可认领', async () => {
+  const { answerer, sentCards, firstCard } = fakeAnswerer()
+  answerer.registerAgent('', 'oc_chat1', 'sess-2')
+  const pendingPromise = answerer.answer({ agent: { id: '', session: { id: 'sess-2' } }, questions: QUESTIONS })
+  await firstCard
+  assert.equal(sentCards.length, 1)
+  answerer.dispose()
+  await pendingPromise.then(() => null, () => {})
+})
+
+test('答题器：forgetAgent 对 agent id 与 session id 两种键都生效', async () => {
+  const { answerer } = fakeAnswerer()
+  answerer.registerAgent('agent-1', 'oc_chat1', 'sess-1')
+  answerer.forgetAgent('sess-1')
+  let delegated1 = false
+  await answerer.answer({ agent: { id: 'agent-NEW', session: { id: 'sess-1' } }, questions: QUESTIONS }, async () => { delegated1 = true })
+  assert.ok(delegated1, 'session id 键被清除后不应再按 session 认领')
+  answerer.registerAgent('agent-2', 'oc_chat2', 'sess-2')
+  answerer.forgetAgent('agent-2')
+  let delegated2 = false
+  await answerer.answer({ agent: { id: 'agent-2' }, questions: QUESTIONS }, async () => { delegated2 = true })
+  assert.ok(delegated2, 'agent id 键被清除后不应再按 agent id 认领')
+  answerer.forgetAgent('sess-2')
+  let delegated3 = false
+  await answerer.answer({ agent: { id: 'agent-NEW2', session: { id: 'sess-2' } }, questions: QUESTIONS }, async () => { delegated3 = true })
+  assert.ok(delegated3, 'session id 键被清除后不应再按 session 认领')
+})
+
+test('答题器：认领 miss 与注册都写落盘诊断日志', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'feishu-qa-'))
+  const logFile = join(dir, 'logs', 'feishu-questions.log')
+  try {
+    const answerer = createQuestionAnswerer({
+      getClient: () => ({}),
+      sendText: async () => {},
+      deliverCard: async () => 'om_x',
+      logFile,
+    })
+    answerer.registerAgent('agent-1', 'oc_chat1', 'sess-1')
+    await answerer.answer({ agent: { id: 'other-agent', session: { id: 'other-sess' } }, questions: QUESTIONS }, async () => {})
+    const content = readFileSync(logFile, 'utf8')
+    assert.ok(content.includes('register: agent=agent-1 session=sess-1 -> chat=oc_chat1'), '注册应落盘')
+    assert.ok(content.includes('miss: request.agent.id=other-agent'), 'miss 应落盘并带请求 agent id')
+    assert.ok(content.includes('registered=['), 'miss 应带已注册键清单便于归因')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('答题器：未传 logFile 时不产生文件写入且功能不受影响', async () => {
+  const { answerer } = fakeAnswerer()
+  answerer.registerAgent('agent-1', 'oc_chat1')
+  assert.equal(typeof answerer.log, 'function', 'log 访问器始终可用（宿主用于记录监听注册结果）')
+  answerer.log('info', '不应抛错')
+  let delegated = false
+  await answerer.answer({ agent: { id: 'unknown' }, questions: QUESTIONS }, async () => { delegated = true })
+  assert.ok(delegated)
 })

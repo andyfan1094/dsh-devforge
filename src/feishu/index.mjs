@@ -3,7 +3,8 @@
 // runtime behavior preserved. See THIRD_PARTY_NOTICES.md.
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { basename, extname, resolve as resolvePath } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, extname, join, resolve as resolvePath } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
 import { allowedPathOf, sendFile, sendImage } from './outbound.mjs'
@@ -230,6 +231,9 @@ export function apply(ctx, config = {}) {
     // 此处若误写裸标识符 sendText 会在 apply 同步段抛 ReferenceError，
     // 被 safeActivate 静默吞掉（ctx.logger 不进 stdout），飞书桥整体无声死亡（0.38.4 实录）。
     sendText: send,
+    // 答题器诊断日志落固定文件：认领 miss、注册映射、投递失败都要有据可查；
+    // homedir() 跟随 HOME 环境变量，隔离 HOME 暂存实例自然落自己的 logs。
+    logFile: join(homedir(), '.dsh', 'logs', 'feishu-questions.log'),
     warn,
     info,
   })
@@ -555,7 +559,8 @@ export function apply(ctx, config = {}) {
       }
       const entry = { chatId: key, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting }
       conversations.set(key, entry)
-      questionAnswerer.registerAgent(handle.agent.id, key)
+      // 双键注册：agent 实例 id + 会话 id 都映射到本飞书会话，任一命中即可认领问题卡片。
+      questionAnswerer.registerAgent(handle.agent.id, key, sessionId)
       lastSessionError = ''
       return entry
     })()
@@ -940,7 +945,15 @@ export function apply(ctx, config = {}) {
   try { disposers.push(ctx.on('session/event', (session, event) => { void tracker.observeSessionEvent(session, event) })) } catch {}
   try { disposers.push(ctx.on('session/event', (session, event) => { void completionNotifier.observe(session, event) })) } catch {}
   // 飞书答题器挂上宿主 user-questions waterfall：飞书会话由卡片认领，其余放行。
-  try { disposers.push(ctx.on('user-questions/request', (request, next) => questionAnswerer.answer(request, next))) } catch {}
+  // 注册失败绝不静默：0.38.4 的教训是 try/catch 空吞让整条链路无声失效，
+  // 这里失败要同时进 ctx 日志与答题器落盘日志，认领全 miss 时可据此归因。
+  try {
+    disposers.push(ctx.on('user-questions/request', (request, next) => questionAnswerer.answer(request, next)))
+    questionAnswerer.log('info', 'waterfall listener registered: user-questions/request')
+  } catch (error) {
+    warn('user-questions/request 监听注册失败，问题卡片将无法认领：' + (error instanceof Error ? error.message : String(error)))
+    questionAnswerer.log('warn', 'waterfall listener register FAILED: ' + (error instanceof Error ? error.message : String(error)))
+  }
   try { disposers.push(ctx.on('agent/error', (payload) => { void tracker.observeAgentError(payload) })) } catch {}
   try {
     disposers.push(ctx.on('agent/disposed', (payload) => {
