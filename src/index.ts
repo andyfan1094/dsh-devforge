@@ -39,10 +39,6 @@ import { HostStore as SshHostStore } from './remote/ssh/store.ts'
 import { HostStore as WinrmHostStore } from './remote/winrm/store.ts'
 import { makeRoutes } from './routes.ts'
 import { readAgentPreset250kStatus, setupAgentPreset250k } from './agent-preset-250k.ts'
-import { makeBrainRouterRoutes } from './brain-router/routes.ts'
-import { installBrainRouterSection, installBrainRouterWrapper, listBrainRouterCatalog, writeBrainRouterSettings } from './brain-router/service.ts'
-import { BRAIN_ROUTER_DEFAULTS, type BrainRouterSettings } from './brain-router/protocol.ts'
-import { BRAIN_ROUTER_DISCIPLINE_SECTION_NAME, BRAIN_ROUTER_DISCIPLINE_SECTION_ORDER, BRAIN_ROUTER_DISCIPLINE_TEXT } from './brain-router/discipline.ts'
 import { RagService } from './rag/service.ts'
 import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
@@ -61,12 +57,12 @@ import { UserProfileInjectionService, DEFAULT_USER_PROFILE, normalizeUserProfile
 import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
-import { ragRunTool } from './workflow/tools.ts'
 import { McpService } from './mcp/service.ts'
 import { makeMcpRoutes } from './mcp/routes.ts'
 import { makeDbAdminRoutes } from './store/dbadmin-routes.ts'
 import { devforgeDbTools } from './store/agent-tools.ts'
 import { CredentialSyncService } from './store/credential-sync.ts'
+import { makeModelCatalogRoute } from './model-catalog.ts'
 import { DouyinLiveService } from './douyin-live/service.ts'
 import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
 import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
@@ -858,23 +854,6 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),
   }, (input) => generateText({ system: input.system, user: input.user, ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}), ...(input.provider !== undefined ? { provider: input.provider } : {}), ...(input.model !== undefined ? { model: input.model } : {}) }))
 
-  // ---- 主脑路由（0.26.0）：GPT 系列主模型只当大脑，其委派的子代理改道工人模型 ----
-  // 设置节与委派拦截只装一次（拦截器每次委派实时读设置，改面板设置即时生效，
-  // 与 sync 热更新解耦）；safeActivate 兜底保证单点失败不拖垮插件其余能力。
-  let brainRouterRead: () => BrainRouterSettings = () => ({ ...BRAIN_ROUTER_DEFAULTS })
-  let brainRouterWrapperInstalled = false
-  safeActivate(ctx, '主脑路由设置节', () => { brainRouterRead = installBrainRouterSection(ctx) })
-  safeActivate(ctx, '主脑路由拦截', () => { brainRouterWrapperInstalled = installBrainRouterWrapper(ctx, brainRouterRead) })
-  // 主脑纪律（0.26.2）：路由启用时注入分工约定——主模型只规划/指挥/验收，
-  // 实现类操作一律委派 subagent。text 动态求值：面板开关路由即时生效，无需重启。
-  safeActivate(ctx, '主脑纪律注入', () => {
-    ctx.systemPrompt.section({
-      name: BRAIN_ROUTER_DISCIPLINE_SECTION_NAME,
-      order: BRAIN_ROUTER_DISCIPLINE_SECTION_ORDER,
-      text: () => (brainRouterRead().enabled ? BRAIN_ROUTER_DISCIPLINE_TEXT : ''),
-    })
-  })
-
   // ---- 可重挂表面（路由/工具/系统提示）----
   // 远程引擎引用（activateRemote 赋值；一键发布请求时经闭包延迟解引用，复用同一连接池）。
   let remoteActivation: ReturnType<typeof activateRemote> | undefined
@@ -931,15 +910,13 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ...makeMcpRoutes(mcpService),
     // 数据管理（0.39.0）：库表透明浏览 + 密钥掩码/明文复制（reveal 走审计日志，值不入日志）。
     ...makeDbAdminRoutes({ info: (message, ...args) => { try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响路由 */ } } }),
-    // 主脑路由（0.26.0）：面板读写设置 + 模型目录；委派拦截在 apply 阶段一次性挂载。
-    ...makeBrainRouterRoutes({
-      read: () => brainRouterRead(),
-      write: (value) => writeBrainRouterSettings(ctx, value),
-      catalog: () => listBrainRouterCatalog(ctx),
-      wrapperInstalled: () => brainRouterWrapperInstalled,
-    }),
+    // 模型目录（0.39.0）：全 provider 模型与推理档位（记忆工作台等面板下拉数据源；
+    // 原主脑路由 catalog 能力的中立迁移，主脑路由已于 0.39.0 下线删除）。
+    makeModelCatalogRoute(ctx),
   ]
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), ragRunTool(workflowEngine), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools()]
+  // 工作流软下线（0.39.0，辉哥定稿）：rag_run 工具停注、面板页签隐藏；引擎与路由保留，
+  // 恢复方法——本行数组重新加回 `ragRunTool(workflowEngine)`（import 恢复 './workflow/tools.ts'）即可。
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool(), devforgeWorkspaceTool(), ...devforgeDbTools()]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

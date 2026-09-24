@@ -148,37 +148,26 @@ test('删空被保留保护拒绝且不落任何墓碑', async () => {
   assert.deepEqual(listDeletedModels(getDb(), MINIMAX_PROVIDER_ID), [])
 })
 
-test('主脑路由工人模型命中待删 id 且 provider 匹配时拒绝删除', async () => {
+test('主脑路由已下线（0.39.0）：曾经受保护的工人模型现在可正常删除', async () => {
+  // 0.38.x 版本里主脑路由开启且工人模型命中待删 id 时会拒绝删除；
+  // 主脑路由模块删除后该保护不存在，删除直接生效。
   const service = makeMiniMaxService(
     { 'minimax-cn': { apiKeyEnv: 'MINIMAX_CN_API_KEY', models: [{ id: 'MiniMax-M3' }, { id: 'MiniMax-M2.7' }] } },
     { 'brain-router': { enabled: true, workerProvider: 'minimax-cn', workerModel: 'MiniMax-M3' } },
   )
-  await assert.rejects(
-    () => service.deleteModels(['MiniMax-M3']),
-    (error: unknown) => {
-      assert.ok(error instanceof MiniMaxServiceError)
-      assert.equal((error as MiniMaxServiceError).status, 400)
-      assert.equal((error as Error).message, '模型正被主脑路由的工人模型引用，请先在主脑路由页签更换工人模型')
-      return true
-    },
-  )
+  const status = await service.deleteModels(['MiniMax-M3'])
+  assert.deepEqual(status.models.map((model) => model.id), ['MiniMax-M2.7'])
+  assert.deepEqual(listDeletedModels(getDb(), MINIMAX_PROVIDER_ID), ['MiniMax-M3'])
 })
 
-test('工人 provider 不匹配或总开关关闭时不拦截删除', async () => {
-  // workerProvider 指向别家 provider：不拦截。
-  const mismatch = makeMiniMaxService(
-    { 'minimax-cn': { apiKeyEnv: 'MINIMAX_CN_API_KEY', models: [{ id: 'MiniMax-M3' }, { id: 'MiniMax-M2.7' }] } },
-    { 'brain-router': { enabled: true, workerProvider: 'zai-coding-cn', workerModel: 'MiniMax-M3' } },
-  )
-  const status = await mismatch.deleteModels(['MiniMax-M3'])
-  assert.deepEqual(status.models.map((model) => model.id), ['MiniMax-M2.7'])
-  // enabled=false：路由整体不生效，不拦截。
-  const disabled = makeMiniMaxService(
+test('settings.yaml 残留 brain-router 段不影响删除链路', async () => {
+  // 主脑路由已删除：settings 里的历史 brain-router 段成为孤儿数据，删除链路直接忽略它。
+  const service = makeMiniMaxService(
     { 'minimax-cn': { apiKeyEnv: 'MINIMAX_CN_API_KEY', models: [{ id: 'MiniMax-M3' }, { id: 'MiniMax-M2.7' }] } },
     { 'brain-router': { enabled: false, workerProvider: 'minimax-cn', workerModel: 'MiniMax-M3' } },
   )
-  const statusDisabled = await disabled.deleteModels(['MiniMax-M3'])
-  assert.deepEqual(statusDisabled.models.map((model) => model.id), ['MiniMax-M2.7'])
+  const status = await service.deleteModels(['MiniMax-M3'])
+  assert.deepEqual(status.models.map((model) => model.id), ['MiniMax-M2.7'])
 })
 
 test('启动自动补齐跳过墓碑模型，restore 全量恢复并清墓碑', async () => {

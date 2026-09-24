@@ -119,32 +119,13 @@ export function normalizeDeleteIds(raw: unknown, errorFactory: (message: string,
 }
 
 /**
- * 删除前的引用保护：主脑路由开启、工人模型命中待删 id 且工人 provider 就是当前 provider 时
- * 拒绝删除，提示先到主脑路由页签更换工人模型（brain-router 命名空间未注册时按未开启处理）。
- */
-export function assertModelsNotReferencedByBrainRouter(
-  ctx: Pick<Context, 'settings'>,
-  providerId: string,
-  ids: ReadonlySet<string>,
-  errorFactory: (message: string, status: number) => Error,
-): void {
-  const section = ctx.settings.get(settingsNamespace('brain-router')) as
-    | { enabled?: unknown; workerProvider?: unknown; workerModel?: unknown }
-    | undefined
-  if (section?.enabled !== true) return
-  const workerModel = typeof section.workerModel === 'string' ? section.workerModel.trim() : ''
-  const workerProvider = typeof section.workerProvider === 'string' ? section.workerProvider.trim() : ''
-  if (workerModel === '' || workerProvider !== providerId || !ids.has(workerModel)) return
-  throw errorFactory('模型正被主脑路由的工人模型引用，请先在主脑路由页签更换工人模型', 400)
-}
-
-/**
  * 墓碑式删除的公共实现（zhipu zai / zhipu official / minimax / ark agent / ark coding /
  * siliconflow 六条路由共用），顺序固定：
- * 1) 主脑路由引用保护 → 2) 保留保护（至少保留一个模型）→
- * 3) 先立碑（设置写回失败时墓碑已就位，防启动复活；重删幂等，restore 会清碑）→
- * 4) mutate 写回 models（沿用 SettingsConflictError 重试 2 次范式）。
+ * 1) 保留保护（至少保留一个模型）→
+ * 2) 先立碑（设置写回失败时墓碑已就位，防启动复活；重删幂等，restore 会清碑）→
+ * 3) mutate 写回 models（沿用 SettingsConflictError 重试 2 次范式）。
  * 成功后由调用方自行回读 status 返回。
+ * （0.39.0：原第 1 步「主脑路由引用保护」随主脑路由下线一并删除。）
  */
 export async function deleteProviderModelsWithTombstone(options: {
   ctx: Pick<Context, 'settings'>
@@ -155,7 +136,6 @@ export async function deleteProviderModelsWithTombstone(options: {
   const { ctx, providerId, ids, errorFactory } = options
   const namespace = settingsNamespace('llm-pi-ai')
   const idSet = new Set(ids)
-  assertModelsNotReferencedByBrainRouter(ctx, providerId, idSet, errorFactory)
   const readModels = (): Array<Record<string, unknown>> => {
     const section = ctx.settings.get(namespace) as { providers?: Record<string, { models?: unknown }> } | undefined
     const models = section?.providers?.[providerId]?.models

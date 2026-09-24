@@ -5,7 +5,7 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
-import { assertModelsNotReferencedByBrainRouter, normalizeDeleteIds } from '../model-tombstones.ts'
+import { normalizeDeleteIds } from '../model-tombstones.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
 import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayModelInfo, OpenAiGatewayModelPatch, OpenAiGatewayStatus } from './protocol.ts'
 
@@ -432,7 +432,6 @@ export class OpenAiGatewayService {
     if (index < 0) throw new OpenAiServiceError('指定端点不存在', 404)
     const endpoint = endpoints[index] as OpenAiGatewayEndpointConfig
     const providerId = openAiProviderId(endpoint, index)
-    assertModelsNotReferencedByBrainRouter(this.ctx, providerId, ids, (message, status) => new OpenAiServiceError(message, status))
     const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const models = readProviderModels(section?.providers?.[providerId])
     const nextModels = models.filter((model) => !(typeof model.id === 'string' && ids.has(model.id)))

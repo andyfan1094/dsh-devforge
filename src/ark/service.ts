@@ -268,8 +268,7 @@ export class ArkCodingPlanService {
 
   /**
    * 批量删除模型并写入墓碑防启动复活：plan='agent' 操作 Agent Plan 路由，
-   * plan='coding' 操作 Coding Plan 路由。校验（ids 形状）、主脑路由引用保护、
-   * 保留保护与并发重试统一走公共实现。
+   * plan='coding' 操作 Coding Plan 路由。校验（ids 形状）、保留保护与并发重试统一走公共实现。
    */
   async deleteModels(ids: unknown, plan: 'agent' | 'coding' = 'agent'): Promise<ArkStatus> {
     const providerId = plan === 'coding' ? ARK_CODING_PROVIDER_ID : ARK_PROVIDER_ID

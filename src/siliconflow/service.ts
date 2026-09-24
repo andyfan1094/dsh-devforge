@@ -198,7 +198,7 @@ export class SiliconFlowService {
 
   /**
    * 批量删除 siliconflow 路由内的模型（单个/批量同一入口），并写入墓碑防启动复活。
-   * 校验（ids 形状）、主脑路由引用保护、保留保护与并发重试统一走公共实现。
+   * 校验（ids 形状）、保留保护与并发重试统一走公共实现。
    */
   async deleteModels(ids: unknown): Promise<SiliconFlowStatus> {
     await deleteProviderModelsWithTombstone({

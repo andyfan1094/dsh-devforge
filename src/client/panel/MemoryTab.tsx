@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import { type BrainRouterCatalogProvider } from '../../brain-router/protocol.ts'
+import { type ModelCatalogProvider } from '../../model-catalog.ts'
 import { type MemoryDreamRun, type MemoryDreamStatus, type MemoryGraph, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type NativeMemoryEntry } from '../../memory/protocol.ts'
 import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
@@ -67,7 +67,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [dream, setDream] = useState<MemoryDreamStatus | null>(null)
   // 做梦运行详情展开 id（空=全部收起）：degraded 的跳过明细存在 run.skipped，此前 UI 无处可看。
   const [dreamDetailId, setDreamDetailId] = useState('')
-  const [catalog, setCatalog] = useState<BrainRouterCatalogProvider[]>([])
+  const [catalog, setCatalog] = useState<ModelCatalogProvider[]>([])
   // 布局状态：页签、工具栏过滤、分页、折叠面板。
   const [tab, setTab] = useState<MemoryTabId>('library')
   const [filterQuery, setFilterQuery] = useState('')
@@ -80,7 +80,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [nextStatus, nextSettings, nextCatalog] = await Promise.all([api.getMemoryStatus(), api.getMemorySettings(), api.getBrainRouterCatalog().catch(() => [] as BrainRouterCatalogProvider[])])
+      const [nextStatus, nextSettings, nextCatalog] = await Promise.all([api.getMemoryStatus(), api.getMemorySettings(), api.getModelCatalog().catch(() => [] as ModelCatalogProvider[])])
       setCatalog(nextCatalog)
       const nextDocs = nextStatus.memoryKbId === '' ? [] : await api.listMemories()
       // 预览最近 30 条的首块内容：沉淀条目文件名是时间戳，必须给可读内容（单条失败回退文件名）
