@@ -98,14 +98,15 @@
 }
 
 .panelContent { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.tabBody { box-sizing: border-box; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow-y: auto; }
+/* max-height 视口兜底（2026-09-24）：与 .githubWorkspace 同因同治——外层高度链断裂时保住滚动面。 */
+.tabBody { box-sizing: border-box; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow-y: auto; max-height: calc(100vh - 140px); }
 .toolbar { display: flex; align-items: center; gap: 8px; flex: none; min-height: var(--dv-control-h, 28px); }
 .toolbarSpacer, .rowSpacer { flex: 1 1 auto; min-width: 0; }
 /* 说明性短句：p/span 通用，显式清零段落默认外边距保证行距一致。 */
 .sectionHint { margin: 0; font-size: 12px; color: var(--dsw-alias-label-secondary, #667085); }
 
 /* 统一工作区基础：所有普通页签占满同一滚动平面，禁止各页自建不同的外层间距与卡片。 */
-.workspace { box-sizing: border-box; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow-y: auto; font-size: 13px; }
+.workspace { box-sizing: border-box; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow-y: auto; font-size: 13px; max-height: calc(100vh - 140px); }
 .surface { box-sizing: border-box; display: flex; min-width: 0; flex-direction: column; gap: var(--dv-section-gap); padding: var(--dv-card-pad); background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: var(--dv-radius-card, 8px); }
 .surfaceHeader, .formRow, .actionRow { display: flex; min-width: 0; align-items: center; gap: 8px; flex-wrap: wrap; }
 .formRow { align-items: flex-end; }
@@ -185,6 +186,10 @@
 
 /* 天工造梦内嵌 GitHub 工作台：保持运维工具的紧凑信息密度，不使用营销式卡片。 */
 /* max-height 兜底（2026-09-24）：外层 flex 高度链若被宿主/皮肤样式打断，本滚动面会被
+   撑到内容自然高度并被 .panelContent 的 overflow:hidden 裁切成「不可滚的一屏」。
+   视口兜底保证无论外层链路是否生效，本面板自身永远可滚；链路正常时 flex:1 的高度
+   小于该上限，max-height 不参与布局，行为与原来完全一致。 */
+/* 视口兜底（2026-09-24）：外层 flex 高度链若被宿主/皮肤样式打断，本滚动面会被
    撑到内容自然高度并被 .panelContent 的 overflow:hidden 裁切成「不可滚的一屏」。
    视口兜底保证无论外层链路是否生效，本面板自身永远可滚；链路正常时 flex:1 的高度
    小于该上限，max-height 不参与布局，行为与原来完全一致。 */

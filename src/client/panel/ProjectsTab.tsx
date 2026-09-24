@@ -130,6 +130,17 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
 
   useEffect(() => { void refresh() }, [refresh])
 
+  /** 页面重新获焦时静默刷新项目清单（2026-09-24）：长驻页签在多次会话/登记操作后
+   *  数据可能陈旧（尤其清单顺序变化时旧快照的滚动定位会失真），获焦即静默对账，
+   *  不闪加载态、失败静默不打扰。 */
+  useEffect(() => {
+    const onFocus = (): void => {
+      void api.listProjects().then((next) => { setProjects(next) }).catch(() => { /* 静默 */ })
+    }
+    window.addEventListener('focus', onFocus)
+    return () => { window.removeEventListener('focus', onFocus) }
+  }, [api])
+
   /** 打开面板后静默刷新一次分支/远端（主动保鲜；失败静默，不打扰首屏）。 */
   useEffect(() => {
     if (refreshedOnce.current) return
