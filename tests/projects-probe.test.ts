@@ -102,6 +102,34 @@ test('IIS 输出解析：站点名/物理路径命中，绑定抽域名端口，
   assert.equal(test?.testUrl, 'http://test.modagentai.com:8082')
 })
 
+test('IIS 地址兜底：IP 型绑定直接用；无 host 的端口绑定用主机 IP 构造（IP 带端口也算）', () => {
+  const stdout = [
+    'jhapi|Started|D:\\WWW\\jhapi|192.168.71.13:3501:*',
+    'AAPIZDCX|Started|D:\\WWW\\TestHency\\jhapizidongchengx|*:3505:',
+  ].join('\n')
+  const hits = parseWinrmProbeOutput(['jhapi'], stdout, '192.168.71.13')
+  const bound = hits.find((hit) => hit.serviceName === 'jhapi')
+  assert.equal(bound?.siteUrl, 'http://192.168.71.13:3501', 'IP 型绑定直接成地址')
+  const wildcard = parseWinrmProbeOutput(['jhapizidongchengx'], stdout, '192.168.71.13').find((hit) => hit.serviceName === 'AAPIZDCX')
+  assert.equal(wildcard?.siteUrl, 'http://192.168.71.13:3505', '无 host 绑定退回主机 IP+端口')
+  assert.equal(wildcard?.domain, '192.168.71.13')
+  assert.equal(wildcard?.deployDir, 'D:\\WWW\\TestHency\\jhapizidongchengx')
+})
+
+test('nginx 地址兜底：无 server_name 但有 root/listen 时用主机 IP+端口', () => {
+  const stdout = [
+    '/etc/nginx/sites-enabled/jhapi:2: listen 3501;',
+    '/etc/nginx/sites-enabled/jhapi:3: root /var/www/jhapi;',
+  ].join('\n')
+  const hits = parseSshProbeOutput(['jhapi'], stdout, '192.168.71.13')
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0]?.siteUrl, 'http://192.168.71.13:3501')
+  assert.equal(hits[0]?.deployDir, '/var/www/jhapi')
+  // 没有 fallbackHost 时不构造地址，只给目录证据
+  const noFallback = parseSshProbeOutput(['jhapi'], stdout)
+  assert.equal(noFallback[0]?.siteUrl, undefined)
+})
+
 test('保守回填：为空且唯一命中才回填；已有值不覆盖；多候选跳过；发布目标自动绑定', async () => {
   getDb()
   const sshEngine = {

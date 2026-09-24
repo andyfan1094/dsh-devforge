@@ -879,8 +879,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     const entry = listProjects().find((project) => project.id === id)
     if (entry === undefined) return { ok: false, hits: [], applied: [], skipped: [], error: 'unknown project: ' + id }
     const allHosts = [
-      ...(() => { try { return new SshHostStore().list().map((host) => ({ transport: 'ssh' as const, alias: host.alias })) } catch { return [] } })(),
-      ...(() => { try { return new WinrmHostStore().list().map((host) => ({ transport: 'winrm' as const, alias: host.alias })) } catch { return [] } })(),
+      ...(() => { try { return new SshHostStore().list().map((host) => ({ transport: 'ssh' as const, alias: host.alias, host: host.host })) } catch { return [] } })(),
+      ...(() => { try { return new WinrmHostStore().list().map((host) => ({ transport: 'winrm' as const, alias: host.alias, host: host.host })) } catch { return [] } })(),
     ]
     return runProjectProbe(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine }, allHosts)
   }

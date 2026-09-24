@@ -28,10 +28,12 @@ export interface ProbeEngines {
   winrm?: { exec(alias: string, command: string, timeoutMs?: number): Promise<ProbeEngineOutcome> }
 }
 
-/** 主机清单条目（探测目标；deployTargets 为空时用全部已配置主机兜底）。 */
+/** 主机清单条目（探测目标；deployTargets 为空时用全部已配置主机兜底）。
+ *  host 为该台的 IP/主机名：站点绑定没有域名时用它 + 端口兜底构造地址（辉哥：IP 带端口也算）。 */
 export interface ProbeHostRef {
   transport: 'ssh' | 'winrm'
   alias: string
+  host?: string
 }
 
 /** 单台探测超时（毫秒）：只读命令应很快，30s 足够。 */
@@ -128,8 +130,9 @@ interface SshSiteCandidate {
 /**
  * 解析 SSH 探测输出：grep 结果按文件归组还原站点画像，再叠加目录/服务线索。
  * 仅返回与项目关键词确实相关的文件（命中关键词才算），避免把服务器上全部站点都拉回来。
+ * fallbackHost：站点没有 server_name 域名时，用该主机 IP/主机名 + 端口兜底构造地址。
  */
-export function parseSshProbeOutput(keywords: string[], stdout: string): ProbeHit[] {
+export function parseSshProbeOutput(keywords: string[], stdout: string, fallbackHost?: string): ProbeHit[] {
   const pattern = new RegExp(keywords.map(escapeRegExp).join('|'), 'i')
   const dirSep = '---DIRS---'
   const svcSep = '---SVC---'
@@ -194,10 +197,14 @@ export function parseSshProbeOutput(keywords: string[], stdout: string): ProbeHi
         evidence: clampEvidence(evidenceLines),
       })
     } else {
-      // 无域名但 root/proxy 命中：至少给出部署目录证据
+      // 无域名但 root/proxy 命中：用主机 IP + 端口兜底地址（没有 IP 则只给部署目录证据）
+      const fallbackUrl = fallbackHost !== undefined && fallbackHost !== '' && port !== undefined
+        ? buildUrl(fallbackHost, port, https)
+        : undefined
       hits.push({
         transport: 'ssh',
         alias: '',
+        ...(fallbackUrl !== undefined ? { domain: fallbackHost!, siteUrl: fallbackUrl } : {}),
         ...(roots[0] !== undefined ? { deployDir: roots[0] } : (proxies[0] !== undefined ? { deployDir: proxies[0] } : {})),
         evidence: clampEvidence(evidenceLines),
       })
@@ -225,8 +232,9 @@ export function parseSshProbeOutput(keywords: string[], stdout: string): ProbeHi
 /**
  * 解析 WinRM 探测输出：每行 `Name|State|PhysicalPath|bindings`，
  * bindings 项形如 `host:port:ip`；站点名/物理路径命中关键词才算。
+ * fallbackHost：绑定没有 host（如 `*:3505:`）时，用该主机 IP/主机名 + 端口兜底构造地址。
  */
-export function parseWinrmProbeOutput(keywords: string[], stdout: string): ProbeHit[] {
+export function parseWinrmProbeOutput(keywords: string[], stdout: string, fallbackHost?: string): ProbeHit[] {
   const pattern = new RegExp(keywords.map(escapeRegExp).join('|'), 'i')
   const hits: ProbeHit[] = []
   for (const rawLine of stdout.split('\n')) {
@@ -237,15 +245,19 @@ export function parseWinrmProbeOutput(keywords: string[], stdout: string): Probe
     const bindingList = bindings.split(';').filter((item) => item !== '')
     const firstBinding = bindingList[0] ?? ''
     const parts = firstBinding.split(':')
-    const host = parts[0] !== undefined && parts[0] !== '' && parts[0] !== '*' ? parts[0] : undefined
+    const rawHost = parts[0]
+    const host = rawHost !== undefined && rawHost !== '' && rawHost !== '*' ? rawHost : undefined
     const port = parts[1] !== undefined ? Number(parts[1]) : undefined
+    const portValid = Number.isFinite(port)
     const httpsBinding = bindingList.some((item) => item.split(':').length >= 2 && Number(item.split(':')[1]) === 443)
+    // 地址 = 绑定域名（含 IP 型绑定），没有域名时退回主机 IP + 端口（辉哥：IP 带端口也算）
+    const urlHost = host ?? (fallbackHost !== undefined && fallbackHost !== '' ? fallbackHost : undefined)
     const evidence = [`站点 ${name}（${state ?? '未知'}）`, `物理路径 ${physicalPath}`, ...bindingList.map((item) => '绑定 ' + item)]
     hits.push({
       transport: 'winrm',
       alias: '',
-      ...(host !== undefined ? { domain: host, siteUrl: buildUrl(host, Number.isFinite(port) ? port : undefined, httpsBinding) } : {}),
-      ...((TEST_HINT_RE.test(name ?? '') || TEST_HINT_RE.test(physicalPath ?? '')) && host !== undefined ? { testUrl: buildUrl(host, Number.isFinite(port) ? port : undefined, httpsBinding) } : {}),
+      ...(urlHost !== undefined && portValid ? { domain: urlHost, siteUrl: buildUrl(urlHost, port, httpsBinding) } : {}),
+      ...((TEST_HINT_RE.test(name ?? '') || TEST_HINT_RE.test(physicalPath ?? '')) && urlHost !== undefined && portValid ? { testUrl: buildUrl(urlHost, port, httpsBinding) } : {}),
       ...(physicalPath !== undefined && physicalPath !== '' ? { deployDir: physicalPath } : {}),
       ...(name !== undefined && name !== '' ? { serviceName: name } : {}),
       evidence: clampEvidence(evidence),
@@ -275,7 +287,10 @@ export async function runProjectProbe(
   }
 
   const targets: ProbeHostRef[] = entry.deployTargets.length > 0
-    ? entry.deployTargets.map((target) => ({ transport: target.transport, alias: target.alias }))
+    ? entry.deployTargets.map((target) => {
+      const known = allHosts.find((candidate) => candidate.transport === target.transport && candidate.alias === target.alias)
+      return { transport: target.transport, alias: target.alias, ...(known?.host !== undefined ? { host: known.host } : {}) }
+    })
     : allHosts
   if (targets.length === 0) {
     return { ok: false, hits: [], applied: [], skipped: [], error: '没有可探测主机：项目未绑定发布服务器，且远程运维未配置任何主机。' }
@@ -295,8 +310,8 @@ export async function runProjectProbe(
         continue
       }
       const parsed = target.transport === 'ssh'
-        ? parseSshProbeOutput(keywords, outcome.stdout ?? '')
-        : parseWinrmProbeOutput(keywords, outcome.stdout ?? '')
+        ? parseSshProbeOutput(keywords, outcome.stdout ?? '', target.host)
+        : parseWinrmProbeOutput(keywords, outcome.stdout ?? '', target.host)
       for (const hit of parsed) hits.push({ ...hit, alias: target.alias })
     } catch (cause) {
       failures.push(target.transport + ':' + target.alias + '（' + (cause instanceof Error ? cause.message : String(cause)) + '）')
