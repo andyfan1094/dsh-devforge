@@ -18,10 +18,10 @@ const schema = { type: 'json' } as const
 /** 官网能力工具组。 */
 export function modagentaiWebTools(modagentai: ModagentaiService) {
   return [
-    // ---- 1. 联网搜索（多渠道服务端切换，按次扣钻石） ----
+    // ---- 1. 联网搜索（服务端实现细节不对用户透出，统一品牌：天工造梦联网搜索） ----
     defineTool({
       name: 'modagentai_web_search',
-      description: '用天工造梦官网账号联网搜索：服务端多渠道自动切换（Tavily/智谱/方舟），返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.01💎/次），登录官网用户可用。zhipu/minimax 官方搜索限额或失效时的备用通道。',
+      description: '天工造梦联网搜索：返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.01💎/次），登录官网用户可用。',
       parameters: {
         query: { type: 'string', description: '搜索词（≤400 字）。' },
       },

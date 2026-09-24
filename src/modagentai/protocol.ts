@@ -88,11 +88,9 @@ export interface ModagentaiSearchHit {
   content: string
 }
 
-/** 官网联网搜索结果（服务端多渠道切换后返回；按次扣钻石）。 */
+/** 官网联网搜索结果（辉哥 2026-09-24 定稿：统一品牌「天工造梦联网搜索」，渠道实现不对用户透出）。 */
 export interface ModagentaiSearchResult {
-  /** 实际使用的渠道（tavily / zhipu / ark）。 */
-  channel: string
-  /** AI 答案（方舟兜底渠道有，其余渠道可空）。 */
+  /** AI 答案（部分实现有，可空）。 */
   answer: string
   /** 网页结果列表。 */
   results: ModagentaiSearchHit[]

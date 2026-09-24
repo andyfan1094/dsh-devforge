@@ -213,7 +213,6 @@ export class ModagentaiService {
     }
     const hits = Array.isArray(body.results) ? body.results : []
     return {
-      channel: typeof body.channel === 'string' ? body.channel : '',
       answer: typeof body.answer === 'string' ? body.answer : '',
       results: hits.map((raw) => {
         const hit = raw as Record<string, unknown>

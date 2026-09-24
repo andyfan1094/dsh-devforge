@@ -68,7 +68,6 @@ test('modagentai_web_search：成功返回答案与网页列表，请求带 Bear
   process.env.DSH_HOME = home
   const stub = stubFetch(() => new Response(JSON.stringify({
     ok: true,
-    channel: 'tavily',
     answer: 'CNB 是国内代码托管平台。',
     results: [{ title: 'CNB 官网', url: 'https://cnb.cool', content: '云原生构建' }, { title: '无链接行', url: '', content: 'x' }],
     cost: 0.01,
@@ -81,9 +80,9 @@ test('modagentai_web_search：成功返回答案与网页列表，请求带 Bear
     const modagentai = makeCtx({})
     const search = toolOf(modagentai, 'modagentai_web_search')
     stub.install()
-    const result = await search.execute({ query: '  CNB 是什么  ' }) as { ok: boolean; channel: string; answer: string; results: Array<{ url: string }>; searchesLeft: number }
+    const result = await search.execute({ query: '  CNB 是什么  ' }) as { ok: boolean; answer: string; results: Array<{ url: string }>; searchesLeft: number }
     assert.equal(result.ok, true)
-    assert.equal(result.channel, 'tavily')
+    assert.equal('channel' in result, false, '渠道实现不得透出给用户（辉哥 2026-09-24）')
     assert.equal(result.answer, 'CNB 是国内代码托管平台。')
     assert.equal(result.results.length, 1, '无 url 的行应被过滤')
     assert.equal(result.results[0]?.url, 'https://cnb.cool')
@@ -158,7 +157,7 @@ test('modagentai_search_quota：返回余额折算；401 报重新登录', async
 test('搜索工具开关：停用后 web_search 与 quota 均拒绝且不发请求，重新启用恢复', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-tools-'))
   process.env.DSH_HOME = home
-  const stub = stubFetch(() => new Response(JSON.stringify({ ok: true, channel: 'tavily', answer: '', results: [], searchesLeft: 10 }), { status: 200 }))
+  const stub = stubFetch(() => new Response(JSON.stringify({ ok: true, answer: '', results: [], searchesLeft: 10 }), { status: 200 }))
   try {
     writeAccount('辉哥')
     const modagentai = makeCtx({})
