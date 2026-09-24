@@ -16,8 +16,7 @@ import { SkinTab } from './SkinTab.tsx'
 import { ProfileTab } from './ProfileTab.tsx'
 import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconSkin, IconProfile, IconMcp } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
-import { RagTab } from './RagTab.tsx'
-import { MemoryTab } from './MemoryTab.tsx'
+import { MemoryHubTab } from './MemoryHubTab.tsx'
 // 工作流软下线（0.39.0）：WorkflowTab 组件保留但页签按钮移除（不可达），恢复时在页签栏加回按钮即可。
 import { WorkflowTab } from './WorkflowTab.tsx'
 import { McpTab } from './McpTab.tsx'
@@ -34,8 +33,8 @@ export interface DevforgePanelProps {
   onBack: () => void
 }
 
-/** 页签类型（'workflow' 保留用于软下线恢复；'brainrouter' 已随主脑路由下线删除）。 */
-type Tab = 'profile' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'memory' | 'workflow' | 'mcp' | 'dbadmin' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
+/** 页签类型（'workflow' 保留用于软下线恢复；'memory' 已随 0.40.x 记忆合并页签并入 'rag'，仅 navigateFromProfile 参数兼容）。 */
+type Tab = 'profile' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'workflow' | 'mcp' | 'dbadmin' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
@@ -139,10 +138,15 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
     if (tab === 'codeplan' && siteRole !== 'admin') setTab('profile')
   }, [tab, siteRole])
 
+  /** 记忆合并页签的分区（0.40.x）：直接点页签默认知识库检索；个人中心「编辑身份」跳入直达长期记忆。 */
+  const [memorySection, setMemorySection] = useState<'rag' | 'workbench'>('rag')
+
   /** 身份卡「编辑身份」等入口只切换现有页签，不重复实现业务逻辑；CodePlan 仅管理员可达。 */
   const navigateFromProfile = (target: 'codeplan' | 'memory' | 'feishu' | 'pluginupdate'): void => {
     if (target === 'codeplan' && siteRole !== 'admin') return
-    setTab(target)
+    // 记忆工作台入口（0.40.x）并入合并后的「记忆」页签，直达长期记忆分区
+    if (target === 'memory') setMemorySection('workbench')
+    setTab(target === 'memory' ? 'rag' : target)
   }
 
   return (
@@ -171,8 +175,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {/* 个人中心固定为首个页签（辉哥 2026-09-21 定稿：替换教程页）。 */}
         <button type="button" role="tab" aria-selected={tab === 'profile'} data-active={tab === 'profile' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('profile') }}><IconProfile />个人中心</button>
         {siteRole === 'admin' && <button type="button" role="tab" aria-selected={tab === 'codeplan'} data-active={tab === 'codeplan' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="仅官网管理员可见" onClick={() => { setTab('codeplan') }}><IconChart />Coding Plan</button>}
-        <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('rag') }}><IconTiangong />记忆中枢</button>
-        <button type="button" role="tab" aria-selected={tab === 'memory'} data-active={tab === 'memory' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('memory') }}><IconTiangong />记忆工作台</button>
+        <button type="button" role="tab" aria-selected={tab === 'rag'} data-active={tab === 'rag' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="记忆：知识库检索 + 长期记忆管理（0.40.x 合并页签）" onClick={() => { setMemorySection('rag'); setTab('rag') }}><IconTiangong />记忆</button>
         {/* 工作流软下线（0.39.0）：按钮移除，恢复时在此处加回 <IconWorkflow />工作流 按钮。 */}
         <button type="button" role="tab" aria-selected={tab === 'mcp'} data-active={tab === 'mcp' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="外部 MCP 服务器接入：工具以 mcp__<命名空间>__<工具名> 注册给模型" onClick={() => { setTab('mcp') }}><IconMcp />MCP</button>
         <button type="button" role="tab" aria-selected={tab === 'dbadmin'} data-active={tab === 'dbadmin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="数据管理：库表数据全透明可查；密钥只显掩码、复制直达剪贴板" onClick={() => { setTab('dbadmin') }}><IconChart />数据管理</button>
@@ -224,8 +227,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {tab === 'browser' && <BrowserTab api={api} />}
 
         {tab === 'codeplan' && <CodingPlanTab api={api} />}
-        {tab === 'rag' && <RagTab />}
-        {tab === 'memory' && <MemoryTab api={api} />}
+        {tab === 'rag' && <MemoryHubTab api={api} section={memorySection} onSectionChange={setMemorySection} />}
         {tab === 'workflow' && <WorkflowTab />}
 
         {tab === 'mcp' && <McpTab api={api} />}
