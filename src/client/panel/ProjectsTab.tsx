@@ -14,6 +14,7 @@ import type { RemoteHostSummary } from '../../protocol.ts'
 import type { AutomatchSuggestion, ProjectDetectResult, ProjectEntry, ProjectProbeResult, ProjectScanResult, RepoKind, ScannedProject } from '../../projects/protocol.ts'
 import type { ConventionDir, WorkspaceConvention } from '../../workspace/convention.ts'
 import { DEFAULT_CONVENTION } from '../../workspace/convention.ts'
+import { IconBrowser, IconInfo, IconNote, IconProject, IconRepo, IconServer, IconTerminal, IconTest } from './icons.tsx'
 import css from './panel.module.css'
 
 /** 仓库类型的中文展示与徽标配色。 */
@@ -514,47 +515,56 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                     <span className={css['badge']} data-status="failed">路径失效</span>
                   )}
                   {entry.description.trim() !== '' && (
-                    <span className={css['resourceMeta']}>{entry.description}</span>
+                    <span className={css['resourceMeta']} data-field="desc"><span className={css['fieldIcon']}><IconInfo size={12} /></span>{entry.description}</span>
                   )}
-                  <span className={css['resourceMeta']}>路径：{entry.path}</span>
-                  <span className={css['resourceMeta']}>
-                    仓库：<span className={css['badge']} data-kind={entry.repoKind}>{REPO_KIND_LABEL[entry.repoKind]}</span>{' '}
+                  <span className={css['resourceMeta']} data-field="path"><span className={css['fieldIcon']}><IconProject size={12} /></span>{entry.path}</span>
+                  <span className={css['resourceMeta']} data-field="repo">
+                    <span className={css['fieldIcon']}><IconRepo size={12} /></span>
+                    <span className={css['badge']} data-kind={entry.repoKind}>{REPO_KIND_LABEL[entry.repoKind]}</span>{' '}
                     {entry.repoUrl !== '' ? entry.repoUrl : '—'}
                     {entry.repoBranch !== '' && ' · ' + entry.repoBranch}
                     {' · 最后提交：' + relativeCommitTime(entry.lastCommitAt)}
                   </span>
                   {entry.siteUrl.trim() !== '' && (
-                    <span className={css['resourceMeta']}>
-                      网址：<a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
+                    <span className={css['resourceMeta']} data-field="url">
+                      <span className={css['fieldIcon']}><IconBrowser size={12} /></span>
+                      <a className={css['link']} href={entry.siteUrl} target="_blank" rel="noopener noreferrer">{entry.siteUrl}</a>
                     </span>
                   )}
                   {(entry.testUrl ?? '').trim() !== '' && (
-                    <span className={css['resourceMeta']}>
-                      测试：<a className={css['link']} href={entry.testUrl} target="_blank" rel="noopener noreferrer">{entry.testUrl}</a>
+                    <span className={css['resourceMeta']} data-field="test">
+                      <span className={css['fieldIcon']}><IconTest size={12} /></span>
+                      <a className={css['link']} href={entry.testUrl} target="_blank" rel="noopener noreferrer">{entry.testUrl}</a>
                     </span>
                   )}
                   {(entry.facts ?? []).length > 0 && (
-                    <span className={css['resourceMeta']}>
-                      项目事实（{(entry.facts ?? []).length} 条，最近在前）：
-                      {(entry.facts ?? []).slice(-3).reverse().map((fact) => (
-                        <span key={fact.text} style={{ display: 'block' }}>
-                          · {fact.text}{' '}
-                          <button type="button" className={css['ghostButton']} style={{ fontSize: '0.85em', padding: '0 4px' }} title="删除该事实" onClick={() => { removeFact(entry, fact.text) }}>移除</button>
-                        </span>
-                      ))}
-                      {(entry.facts ?? []).length > 3 && <span style={{ display: 'block' }}>…等共 {(entry.facts ?? []).length} 条（全部随会话注入）</span>}
+                    <span className={css['resourceMeta']} data-field="facts">
+                      <span className={css['fieldIcon']} style={{ alignSelf: 'flex-start', marginTop: 2 }}><IconNote size={12} /></span>
+                      <span style={{ minWidth: 0 }}>
+                        项目事实（{(entry.facts ?? []).length} 条，最近在前）：
+                        {(entry.facts ?? []).slice(-3).reverse().map((fact) => (
+                          <span key={fact.text} style={{ display: 'block' }}>
+                            · {fact.text}{' '}
+                            <button type="button" className={css['ghostButton']} style={{ fontSize: '0.85em', padding: '0 4px' }} title="删除该事实" onClick={() => { removeFact(entry, fact.text) }}>移除</button>
+                          </span>
+                        ))}
+                        {(entry.facts ?? []).length > 3 && <span style={{ display: 'block' }}>…等共 {(entry.facts ?? []).length} 条（全部随会话注入）</span>}
+                      </span>
                     </span>
                   )}
-                  <span className={css['resourceMeta']}>
-                    发布服务器：
+                  <span className={css['resourceMeta']} data-field="deploy">
+                    <span className={css['fieldIcon']}><IconServer size={12} /></span>
                     {entry.deployTargets.length === 0
-                      ? '—'
-                      : entry.deployTargets.map((target) => (
-                        <span key={target.transport + ':' + target.alias} className={css['transportBadge']} data-transport={target.transport} style={{ marginRight: 5 }}>
-                          {target.transport}:{target.alias}{target.remotePath !== undefined && target.remotePath !== '' ? '' : ''}
-                        </span>
-                      ))}
-                    {entry.deployCommand !== undefined && entry.deployCommand !== '' && ' · 命令：' + entry.deployCommand}
+                      ? '发布服务器：—'
+                      : <span>发布服务器：</span>}
+                    {entry.deployTargets.map((target) => (
+                      <span key={target.transport + ':' + target.alias} className={css['transportBadge']} data-transport={target.transport} style={{ marginRight: 5 }}>
+                        {target.transport}:{target.alias}
+                      </span>
+                    ))}
+                    {entry.deployCommand !== undefined && entry.deployCommand !== '' && (
+                      <span><span className={css['fieldIcon']}><IconTerminal size={12} /></span>{entry.deployCommand}</span>
+                    )}
                   </span>
                 </div>
                 <div className={css['inlineActions']}>

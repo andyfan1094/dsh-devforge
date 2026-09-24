@@ -164,3 +164,47 @@ export function IconMcp({ size }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** 项目卡·描述行：圆圈 i。 */
+export function IconInfo({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  )
+}
+
+/** 项目卡·测试地址行：烧瓶。 */
+export function IconTest({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M10 2v7.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V2" />
+      <path d="M8.5 2h7" />
+      <path d="M7 15h10" />
+    </svg>
+  )
+}
+
+/** 项目卡·项目事实行：便签。 */
+export function IconNote({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10l6-6V5a2 2 0 0 0-2-2z" />
+      <path d="M15 21v-6h6" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+    </svg>
+  )
+}
+
+/** 项目卡·发布命令行：终端。 */
+export function IconTerminal({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="m4 17 6-6-6-6" />
+      <path d="M12 19h8" />
+    </svg>
+  )
+}

@@ -147,6 +147,19 @@
 .resourceTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .resourceMeta, .resourceMessage { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dsw-alias-label-secondary, #667085); }
 .resourceMessage { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+/* 项目卡字段图标与分色（0.40.x）：不同字段类型图标+颜色分层，一眼可辨。 */
+.fieldIcon { display: inline-flex; flex: none; margin-right: 5px; vertical-align: -2px; }
+.resourceMeta[data-field="desc"] { color: var(--dsw-alias-label-primary, #101828); }
+.resourceMeta[data-field="desc"] .fieldIcon { color: var(--dsw-alias-state-business-primary, #2563eb); }
+.resourceMeta[data-field="path"] { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.resourceMeta[data-field="path"] .fieldIcon { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.resourceMeta[data-field="repo"] { color: var(--dsw-alias-state-business-primary, #2563eb); }
+.resourceMeta[data-field="url"] .fieldIcon { color: var(--dsw-alias-state-business-primary, #2563eb); }
+.resourceMeta[data-field="test"] { color: var(--dsw-alias-state-warning-primary, #a16207); }
+.resourceMeta[data-field="test"] .fieldIcon { color: var(--dsw-alias-state-warning-primary, #a16207); }
+.resourceMeta[data-field="test"] .link { color: var(--dsw-alias-state-warning-primary, #a16207); }
+.resourceMeta[data-field="facts"] .fieldIcon { color: #7c3aed; }
+.resourceMeta[data-field="deploy"] .fieldIcon { color: var(--dsw-alias-state-success-primary, #16a34a); }
 .badge { flex: none; padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 999px; font-size: 11px; color: var(--dsw-alias-label-secondary, #667085); white-space: nowrap; }
 .badge[data-status="queued"] { color: var(--dsw-alias-label-secondary, #667085); }
 .badge[data-status="running"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }
