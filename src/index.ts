@@ -309,6 +309,7 @@ const DEVFORGE_GUIDANCE = [
   '- xianyu_reply：仅在用户明确确认联系人和完整正文后真实发送，confirmation 必须绑定联系人，例如“确认发送给‘张三’”。',
   '- xianyu_publish：在独立发布标签页上传图片、填写商品信息并核验发布结果；真实发布必须传入“确认发布”。',
   '- MCP 服务器接入：外部 MCP 服务器在天工造梦面板「MCP」页配置；启用的服务器其工具以 mcp__<serverName>__<tool> 名称注册（如 mcp__github__create_issue），可直接调用，调用失败如实报错。',
+  '- devforge_db_*（schema/query/credential/config/backup_read）：天工造梦数据直达口——服务器密码/主机配置/账号令牌/API Key 全在本机 store.db 与配置文件里，需要凭据时**先查库再动手、不要找用户要**：WinRM 主机密码 SELECT data FROM docs WHERE domain = \'winrm.host\'，SSH 主机密码 domain = \'ssh.host\'，API Key 类凭据用 devforge_db_credential，库外配置（飞书 JSON/备份密码/凭据主存）用 devforge_db_config，CNB 加密备份用 devforge_db_backup_read。',
 ].join('\n')
 
 /**

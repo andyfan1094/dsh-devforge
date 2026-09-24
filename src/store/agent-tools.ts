@@ -127,7 +127,7 @@ export function devforgeDbTools(): Array<ReturnType<typeof defineTool>> {
     // ---- 1. 库结构：表清单 + 建表 SQL + 行数 + 域统计 ----
     defineTool({
       name: 'devforge_db_schema',
-      description: '查看天工造梦数据库（store.db）结构：全部表、建表 SQL、行数、docs/settings 域统计与凭据数量。只读。',
+      description: '查看天工造梦数据库（store.db）结构：全部表、建表 SQL、行数、docs/settings 域统计与凭据数量。数据地图：服务器/主机配置在 docs 域（domain 取值 winrm.host / ssh.host / cnb.account / github.account 等，data 列是 JSON、含密码与令牌明文）；API Key 类凭据在 credential 表。只读。',
       parameters: {},
       output: { schema, render: (_args, value) => text(render(value)) },
       async execute() {
@@ -154,7 +154,7 @@ export function devforgeDbTools(): Array<ReturnType<typeof defineTool>> {
     // ---- 2. 只读 SQL 查询（独立只读连接 + 语法白名单双重防线） ----
     defineTool({
       name: 'devforge_db_query',
-      description: '对天工造梦数据库（store.db）执行只读 SQL 查询（SELECT/WITH；行数上限、超长单元格截断）。表结构先用 devforge_db_schema 查看。只读，写语句会被拒绝。',
+      description: '对天工造梦数据库（store.db）执行只读 SQL（SELECT/WITH；行数上限、超长单元格截断）。需要服务器密码/主机配置/账号令牌时直接查库，例如 WinRM 主机（含密码）：SELECT data FROM docs WHERE domain = \'winrm.host\'；SSH 主机：domain = \'ssh.host\'。表结构先用 devforge_db_schema 查看。只读，写语句会被拒绝。',
       parameters: {
         sql: { type: 'string', description: '只读 SQL（SELECT/WITH 开头；多语句用分号分隔）。' },
         limit: { type: 'integer', description: '返回行数上限，默认 200，最大 1000。' },
@@ -175,7 +175,7 @@ export function devforgeDbTools(): Array<ReturnType<typeof defineTool>> {
     // ---- 3. 凭据镜像：按 ref 取明文（辉哥要求模型可轻易获取） ----
     defineTool({
       name: 'devforge_db_credential',
-      description: '读取天工造梦凭据镜像（store.db credential 表）：不带 ref 列出全部凭据名；带 ref 返回明文值（API Key/令牌等）。明文仅限本机会话使用，绝不写日志。',
+      description: '读取天工造梦凭据镜像（store.db credential 表，存 API Key/令牌类凭据）：不带 ref 列出全部凭据名；带 ref 返回明文值。注意：服务器密码（WinRM/SSH）不在本表，用 devforge_db_query 查 docs 域（domain = \'winrm.host\' / \'ssh.host\'）。明文仅限本机会话使用，绝不写日志。',
       parameters: {
         ref: { type: 'string', description: '凭据 ref 名（如 ZAI_CODING_CN_API_KEY）；缺省列出全部 ref 名。' },
       },
@@ -198,7 +198,7 @@ export function devforgeDbTools(): Array<ReturnType<typeof defineTool>> {
     // ---- 4. 库外配置白名单读取 ----
     defineTool({
       name: 'devforge_db_config',
-      description: '读取天工造梦库外配置文件（白名单）：feishu=飞书桥配置（含 appSecret）；backup-secret=备份密码；credentials-yaml=受管凭据主存（values=true 给全文，否则只列 ref 名）。只读。',
+      description: '读取天工造梦库外配置文件（白名单）：feishu=飞书桥配置（含 appSecret）；backup-secret=备份密码；credentials-yaml=受管凭据主存（values=true 给全文，否则只列 ref 名）。注意：此处只有 API Key 类凭据，服务器密码（WinRM/SSH）用 devforge_db_query 查 store.db docs 域（domain = \'winrm.host\' / \'ssh.host\'）。只读。',
       parameters: {
         name: { type: 'string', enum: ['feishu', 'backup-secret', 'credentials-yaml'], description: '配置名。' },
         values: { type: 'boolean', description: 'credentials-yaml 时是否返回全文（含全部 Key）；默认 false 只列 ref 名。' },
@@ -221,7 +221,7 @@ export function devforgeDbTools(): Array<ReturnType<typeof defineTool>> {
           const path = join(home, '.credentials.yaml')
           if (!existsSync(path)) return jsonValue({ ok: false, error: '受管凭据主存不存在：' + path })
           if (args.values === true) return jsonValue({ ok: true, name: 'credentials-yaml', path, content: readFileSync(path, 'utf8') })
-          return jsonValue({ ok: true, name: 'credentials-yaml', path, refs: await listCredentialRefs(path), hint: 'values=true 取全文' })
+          return jsonValue({ ok: true, name: 'credentials-yaml', path, refs: await listCredentialRefs(path), hint: 'values=true 取全文', nextHint: '本文件只有 API Key 类凭据；WinRM/SSH 服务器密码在 store.db 的 docs 域——用 devforge_db_query 执行 SELECT data FROM docs WHERE domain = \'winrm.host\'（或 \'ssh.host\'）直接获取' })
         } catch (error) {
           return jsonValue({ ok: false, error: '读取配置失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 200) })
         }

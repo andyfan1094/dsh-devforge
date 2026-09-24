@@ -100,6 +100,22 @@ test('devforge_db_credential：列名与明文', async () => {
   assert.equal(missing.ok, false)
 })
 
+test('工具描述与返回体携带数据地图（模型引导：服务器密码直查 docs 域，不绕路不问人）', () => {
+  const tools = devforgeDbTools()
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
+  // schema/query/credential/config 四把工具描述必须写明 winrm.host 数据位置。
+  for (const name of ['devforge_db_schema', 'devforge_db_query', 'devforge_db_credential', 'devforge_db_config']) {
+    assert.ok(String(byName.get(name)?.description).includes('winrm.host'), name + ' 描述缺数据地图')
+  }
+})
+
+test('devforge_db_config：credentials-yaml 返回 nextHint 指路 docs 域', async () => {
+  seed()
+  const result = await callTool('devforge_db_config', { name: 'credentials-yaml' })
+  assert.ok(String(result.nextHint).includes('winrm.host'))
+  assert.ok(String(result.nextHint).includes('devforge_db_query'))
+})
+
 test('devforge_db_config：三个白名单与明文返回', async () => {
   const feishu = await callTool('devforge_db_config', { name: 'feishu' })
   assert.equal(feishu.config.appSecret, 'fs-secret-1234')
