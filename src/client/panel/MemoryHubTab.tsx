@@ -13,8 +13,8 @@ export type MemorySection = 'rag' | 'workbench'
 
 export function MemoryHubTab({ api, section, onSectionChange }: { api: DevforgeApi; section: MemorySection; onSectionChange: (next: MemorySection) => void }): JSX.Element {
   return (
-    <div>
-      <div className={css['segmented']} role="group" aria-label="记忆分区" style={{ marginBottom: 10 }}>
+    <div className={css['memoryHub']}>
+      <div className={css['segmented']} role="group" aria-label="记忆分区" data-dsh-part="segmented">
         <button type="button" data-active={section === 'rag' || undefined} onClick={() => { onSectionChange('rag') }}>知识库检索</button>
         <button type="button" data-active={section === 'workbench' || undefined} onClick={() => { onSectionChange('workbench') }}>长期记忆</button>
       </div>

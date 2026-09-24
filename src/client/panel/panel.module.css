@@ -702,6 +702,10 @@
 
 /* 记忆工作台：统计、策略、条目和迁移入口的紧凑信息布局。 */
 .memoryWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: var(--dv-gap); overflow: auto; }
+/* 记忆合并页签容器（0.40.x）：自身是 panelContent 的 flex 子项并续传高度链，
+   segmented 行不收缩，子 Tab（.workspace/.memoryWorkspace）保持 flex:1 + overflow:auto 正常滚动。 */
+.memoryHub { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 10px; }
+.memoryHub > .segmented { flex: none; align-self: flex-start; }
 .memoryHeader, .panelHeading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
 .memoryHeader { align-items: flex-start; }
 .workspaceTitle { margin: 0 0 4px; font-size: 18px; }
