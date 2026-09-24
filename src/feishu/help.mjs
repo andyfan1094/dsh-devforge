@@ -6,7 +6,8 @@ import { sendCard } from './outbound.mjs'
 
 /** 卡片容量护栏：飞书单卡 30 KB 上限，模型数量与文本长度都要截断。 */
 const MAX_TEXT_CHARS = 1_500
-export const MAX_HELP_MODEL_BUTTONS = 12
+/** 模型全量展示（辉哥定稿）：上限只是 30KB 护栏，双列网格下 60 个模型约 18KB，正常规模全放得下。 */
+export const MAX_HELP_MODEL_BUTTONS = 60
 export const MAX_HELP_EFFORT_BUTTONS = 8
 
 /** 回调动作名：帮助卡快捷命令、模型挑选、思考强度应用。 */
@@ -60,9 +61,25 @@ export function buildHelpCard() {
 }
 
 /**
- * 模型选择卡：当前选中值 + 按提供商分组的模型按钮（数量有上限，超出提示去面板）。
+ * 双列按钮网格：把按钮按每行 2 个包进 column_set，密度高、手机上不用无限下滑。
+ * 尾行奇数时用空列补位保持两列等宽。辉哥定稿：可以挤一点，但模型要全部展示。
+ */
+function gridRows(buttons, perRow = 2) {
+  const rows = []
+  for (let index = 0; index < buttons.length; index += perRow) {
+    const chunk = buttons.slice(index, index + perRow)
+    const columns = chunk.map((element) => ({ tag: 'column', width: 'weighted', weight: 1, elements: [element] }))
+    while (columns.length < perRow) columns.push({ tag: 'column', width: 'weighted', weight: 1, elements: [md('')] })
+    rows.push({ tag: 'column_set', flex_mode: 'bisect', columns })
+  }
+  return rows
+}
+
+/**
+ * 模型选择卡：当前选中值 + 按提供商分组的双列模型网格，全量展示不截断。
  * current: { provider, model, reasoningEffort }；models: [{ provider, model, name, reasoningEfforts }]。
  * 点模型按钮发 feishu_model_pick，由宿主回一张思考强度选择卡。
+ * 默认上限只是 30KB 护栏（正常规模全量展示），真超限才截断并提示。
  */
 export function buildModelCard(current, models, { maxModels = MAX_HELP_MODEL_BUTTONS } = {}) {
   const list = (Array.isArray(models) ? models : []).filter((item) => String(item?.provider ?? '').trim() !== '' && String(item?.model ?? '').trim() !== '')
@@ -75,18 +92,26 @@ export function buildModelCard(current, models, { maxModels = MAX_HELP_MODEL_BUT
     { tag: 'hr' },
   ]
   let lastProvider = ''
+  let group = []
+  const flushGroup = () => {
+    if (group.length === 0) return
+    elements.push(...gridRows(group))
+    group = []
+  }
   for (const item of shown) {
     const provider = String(item.provider)
     if (provider !== lastProvider) {
+      flushGroup()
       elements.push(md('**' + clip(provider, 40) + '**'))
       lastProvider = provider
     }
     const label = clip(String(item.name ?? item.model), 32)
     const picked = current?.provider === provider && current?.model === item.model
-    elements.push(button(label + (picked ? '（当前）' : ''), { action: HELP_ACTIONS.MODEL_PICK, provider, model: String(item.model) }, picked ? 'primary' : 'default'))
+    group.push(button(label + (picked ? '（当前）' : ''), { action: HELP_ACTIONS.MODEL_PICK, provider, model: String(item.model) }, picked ? 'primary' : 'default'))
   }
+  flushGroup()
   if (list.length > shown.length) {
-    elements.push(md('（仅展示前 ' + shown.length + ' 个模型，完整列表请在电脑端「天工造梦 → 飞书」面板选择）'))
+    elements.push(md('（模型数量超过 ' + maxModels + ' 上限，仅展示前 ' + shown.length + ' 个；完整列表请在电脑端「天工造梦 → 飞书」面板选择）'))
   }
   if (shown.length === 0) elements.push(md('暂无可用模型：请先在电脑端「天工造梦 → 飞书」面板配置模型。'))
   return {

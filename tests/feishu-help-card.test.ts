@@ -7,8 +7,14 @@ import assert from 'node:assert/strict'
 import { buildEffortCard, buildHelpCard, buildModelCard, sendCardToChat, HELP_ACTIONS } from '../src/feishu/help.mjs'
 
 const cardBytes = (card) => Buffer.byteLength(JSON.stringify(card), 'utf8')
-const buttonsOf = (card) => card.body.elements.filter((element) => element?.tag === 'button')
-const valuesOf = (card) => buttonsOf(card).map((button) => button.behaviors?.[0]?.value).filter(Boolean)
+/** 递归收集卡片内全部按钮：模型卡网格化后按钮嵌在 column_set 的列里。 */
+const buttonsOf = (element) => {
+  if (element === null || typeof element !== 'object') return []
+  const own = element.tag === 'button' ? [element] : []
+  const nested = [...(element.columns ?? []), ...(element.elements ?? [])].flatMap((child) => buttonsOf(child))
+  return [...own, ...nested]
+}
+const valuesOf = (card) => buttonsOf(card?.body ?? {}).map((button) => button.behaviors?.[0]?.value).filter(Boolean)
 
 test('帮助卡：命令清单齐全，快捷按钮回调值正确，卡片小于 30KB', () => {
   const card = buildHelpCard()
@@ -44,13 +50,35 @@ test('模型卡：按提供商分组展示、当前模型高亮、回调值携�
   assert.ok(cardBytes(card) < 30 * 1024)
 })
 
-test('模型卡：超出数量上限时截断并提示去面板', () => {
-  const many = Array.from({ length: 20 }, (_, index) => ({ provider: 'p', model: 'm' + index, name: '模型' + index, reasoningEfforts: [] }))
-  const card = buildModelCard({ provider: '', model: '' }, many, { maxModels: 5 })
+test('模型卡：双列网格排布，全部模型都要展示', () => {
+  const many = Array.from({ length: 20 }, (_, index) => ({ provider: 'p' + (index < 9 ? 1 : 2), model: 'm' + index, name: '模型' + index, reasoningEfforts: [] }))
+  const card = buildModelCard({ provider: '', model: '' }, many)
+  const grids = card.body.elements.filter((element) => element?.tag === 'column_set')
+  assert.ok(grids.length > 0, '模型按钮应以双列 column_set 网格排布')
+  const gridButtons = grids.flatMap((grid) => grid.columns.map((column: any) => column.elements?.[0]).filter((element: any) => element?.tag === 'button'))
+  const plainButtons = card.body.elements.filter((element) => element?.tag === 'button')
+  assert.equal(gridButtons.length, many.length, '20 个模型必须全部上卡（辉哥定稿：可以挤，不能截断）')
+  assert.equal(plainButtons.length, 0, '模型按钮不应再以整行按钮堆叠')
+  const pickValues = gridButtons.map((element: any) => element.behaviors?.[0]?.value).filter((value: any) => value?.action === HELP_ACTIONS.MODEL_PICK)
+  assert.equal(new Set(pickValues.map((value: any) => value.model)).size, many.length, '每个模型的回调值都要在')
+  for (const grid of grids) assert.ok(grid.columns.every((column: any) => column.elements?.length > 0), '网格列不允许空 elements')
+  assert.ok(cardBytes(card) < 30 * 1024, '全量模型卡必须小于飞书 30KB 上限')
+})
+
+test('模型卡：30 个模型全量展示仍小于 30KB', () => {
+  const many = Array.from({ length: 30 }, (_, index) => ({ provider: 'volcengine-ark-plan', model: 'doubao-seed-' + index, name: 'Doubao Seed ' + index, reasoningEfforts: [{ id: 'high', name: '高' }] }))
+  const card = buildModelCard({ provider: '', model: '' }, many)
+  assert.equal(valuesOf(card).filter((value) => value.action === HELP_ACTIONS.MODEL_PICK).length, 30)
+  assert.ok(cardBytes(card) < 30 * 1024)
+})
+
+test('模型卡：超过 30KB 护栏上限才截断并提示', () => {
+  const tooMany = Array.from({ length: 70 }, (_, index) => ({ provider: 'p', model: 'm' + index, name: '模型' + index, reasoningEfforts: [] }))
+  const card = buildModelCard({ provider: '', model: '' }, tooMany)
   const pickValues = valuesOf(card).filter((value) => value.action === HELP_ACTIONS.MODEL_PICK)
-  assert.equal(pickValues.length, 5)
+  assert.equal(pickValues.length, 60)
   const texts = card.body.elements.map((element) => element?.text?.content ?? '').join('\n')
-  assert.ok(texts.includes('仅展示前 5 个模型'), '截断后必须提示')
+  assert.ok(texts.includes('仅展示前 60 个'), '护栏截断必须提示')
 })
 
 test('模型卡：无可用模型时给出面板配置指引', () => {
