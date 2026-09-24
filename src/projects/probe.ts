@@ -45,8 +45,9 @@ const EVIDENCE_LINE_MAX = 200
 /** 单台证据行数上限。 */
 const EVIDENCE_LINES_MAX = 8
 
-/** 测试环境线索词（文件名/路径/主机名/站点名包含即视为测试落点）。 */
-const TEST_HINT_RE = /(^|[-._/])(test|testing|staging|stage|uat|dev|preview|预发|测试)([-._/]|$)/i
+/** 测试环境线索词（文件名/路径/主机名/站点名包含即视为测试落点）。
+ *  词边界含驼峰：TESTHecnyOpenAIapi 这类 TEST 紧贴大写驼峰也算测试站。 */
+const TEST_HINT_RE = /(^|[-._/])(test|testing|staging|stage|uat|dev|preview|预发|测试)(?=[-._/A-Z\u4e00-\u9fff]|$)/i
 
 /** 无效域名黑名单（server_name 里的占位/回环项）。 */
 const INVALID_DOMAIN_RE = /^(~|_|\*|localhost|127\.0\.0\.1|0\.0\.0\.0|::1|default_server)/i

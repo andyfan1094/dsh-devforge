@@ -116,6 +116,21 @@ test('IIS 地址兜底：IP 型绑定直接用；无 host 的端口绑定用主�
   assert.equal(wildcard?.deployDir, 'D:\\WWW\\TestHency\\jhapizidongchengx')
 })
 
+test('驼峰测试站识别：TESTHecnyOpenAIapi 前缀紧贴大写也算测试落点，正式站不受影响', () => {
+  const stdout = [
+    'HecnyOpenAIapi|Started|D:\\AIpro\\HecnyOpenAIapi\\site|*:3503:',
+    'TESTHecnyOpenAIapi|Started|D:\\AIpro\\HecnyOpenAIapi\\test\\TESTsite|*:3507:',
+  ].join('\n')
+  const hits = parseWinrmProbeOutput(['hecnyopenaiapi'], stdout, '192.168.71.13')
+  assert.equal(hits.length, 2)
+  const prod = hits.find((hit) => hit.serviceName === 'HecnyOpenAIapi')
+  assert.equal(prod?.testUrl, undefined, '生产站不带测试标识')
+  assert.equal(prod?.siteUrl, 'http://192.168.71.13:3503')
+  const test = hits.find((hit) => hit.serviceName === 'TESTHecnyOpenAIapi')
+  assert.equal(test?.testUrl, 'http://192.168.71.13:3507', '驼峰 TEST 前缀识别为测试地址')
+  assert.equal(test?.siteUrl, 'http://192.168.71.13:3507')
+})
+
 test('nginx 地址兜底：无 server_name 但有 root/listen 时用主机 IP+端口', () => {
   const stdout = [
     '/etc/nginx/sites-enabled/jhapi:2: listen 3501;',
