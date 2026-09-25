@@ -4,19 +4,16 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { StandardDetail, StandardSummary } from '../../protocol.ts'
 import type { SkinRuntimeApi } from '../theme/skin-runtime.ts'
 import { BrowserTab } from './BrowserTab.tsx'
 import { PluginUpdateTab, type UpdateCheckState } from './PluginUpdateTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
-import { ProjectsTab } from './ProjectsTab.tsx'
-import { ReposTab } from './ReposTab.tsx'
-import { RemoteOperationsTab } from './RemoteOperationsTab.tsx'
 import { SkinTab } from './SkinTab.tsx'
 import { ProfileTab } from './ProfileTab.tsx'
-import { IconStandards, IconBrowser, IconChart, IconServer, IconProject, IconRepo, IconFeishu, IconTiangong, IconUpdate, IconSkin, IconProfile, IconMcp } from './icons.tsx'
+import { IconBrowser, IconChart, IconProject, IconFeishu, IconTiangong, IconUpdate, IconSkin, IconProfile, IconMcp } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import { MemoryHubTab } from './MemoryHubTab.tsx'
+import { DevHubTab } from './DevHubTab.tsx'
 // 工作流软下线（0.39.0）：WorkflowTab 组件保留但页签按钮移除（不可达），恢复时在页签栏加回按钮即可。
 import { WorkflowTab } from './WorkflowTab.tsx'
 import { McpTab } from './McpTab.tsx'
@@ -33,8 +30,8 @@ export interface DevforgePanelProps {
   onBack: () => void
 }
 
-/** 页签类型（'workflow' 保留用于软下线恢复；'memory' 已随 0.40.x 记忆合并页签并入 'rag'，仅 navigateFromProfile 参数兼容）。 */
-type Tab = 'profile' | 'standards' | 'browser' | 'codeplan' | 'rag' | 'workflow' | 'mcp' | 'dbadmin' | 'remote' | 'projects' | 'repos' | 'feishu' | 'pluginupdate' | 'skin'
+/** 页签类型（'workflow' 保留用于软下线恢复；'memory' 并入 'rag'、'standards/projects/repos/remote' 并入 'dev'，均为 0.40.x 合并页签）。 */
+type Tab = 'profile' | 'browser' | 'codeplan' | 'rag' | 'dev' | 'workflow' | 'mcp' | 'dbadmin' | 'feishu' | 'pluginupdate' | 'skin'
 
 /** 主面板组件。 */
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
@@ -42,11 +39,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
   const [tab, setTab] = useState<Tab>('profile')
   // 官网账号角色：'admin' 才显示 Coding Plan 页签（辉哥 2026-09-22 定稿，未登录/普通用户隐藏）
   const [siteRole, setSiteRole] = useState<'' | 'admin' | 'user'>('')
-  const [standards, setStandards] = useState<StandardSummary[]>([])
-  const [viewing, setViewing] = useState<StandardDetail | null>(null)
   const [error, setError] = useState('')
-  /** 规范数据是否已返回，避免慢请求期间误报“为空”。 */
-  const [loaded, setLoaded] = useState(false)
   /** 信息密度档位：默认紧凑（一屏多信息不拥挤），偏好写入 localStorage。 */
   const [density, setDensity] = useState<'compact' | 'cozy'>(() => (localStorage.getItem('dsh-devforge-density') === 'cozy' ? 'cozy' : 'compact'))
   /** 插件版本号，标题旁展示。 */
@@ -54,27 +47,10 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
   /** 插件 + DSH 本体更新检查状态：面板打开即检查，聚合驱动「插件更新」页签红点。 */
   const [updateState, setUpdateState] = useState<UpdateCheckState>({ loading: false, enabled: true, items: [], harness: null, error: '' })
 
-  /**
-   * 拉取规范数据。首次慢请求期间维持 loaded=false，不能把未返回的数组误解释为空库；
-   * 失败只显示当前面板错误，不影响主 GUI。
-   */
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      setError('')
-      setStandards(await api.listStandards())
-      void api.getDevforgeMeta().then((meta) => { if (meta.version !== '') setVersion(meta.version) }).catch(() => { /* 版本展示失败不影响面板 */ })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoaded(true)
-    }
-  }, [api])
-
-  // 官方 main 槽位只在面板被选中时挂载本组件，因此挂载即打开：直接拉取规范；
-  // 其它集成页签按各自组件生命周期加载数据。
+  /** 插件版本号，标题旁展示：面板打开即取一次，失败静默（仅影响标题角标）。 */
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    void api.getDevforgeMeta().then((meta) => { if (meta.version !== '') setVersion(meta.version) }).catch(() => { /* 版本展示失败不影响面板 */ })
+  }, [api])
 
   /**
    * 并发检查插件登记源与 DSH 本体；任一路失败只落状态不阻塞另一路。
@@ -107,15 +83,6 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
 
   /** 红点聚合：插件或 DSH 本体任一确认可更新才亮；加载中与检查失败一律不亮。 */
   const updateDot = !updateState.loading && (updateState.items.some((item) => item.status === 'update-available') || updateState.harness?.status === 'update-available')
-  /** 查看规范正文；单项读取失败在面板内呈现，不能抛到宿主 GUI。 */
-  const viewStandard = async (id: string): Promise<void> => {
-    try {
-      setError('')
-      setViewing(await api.getStandard(id))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
 
   /** 切换密度档并持久化；样式侧由 .panel[data-density] 的 token 覆盖生效。 */
   const applyDensity = (next: 'compact' | 'cozy'): void => {
@@ -179,11 +146,8 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {/* 工作流软下线（0.39.0）：按钮移除，恢复时在此处加回 <IconWorkflow />工作流 按钮。 */}
         <button type="button" role="tab" aria-selected={tab === 'mcp'} data-active={tab === 'mcp' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="外部 MCP 服务器接入：工具以 mcp__<命名空间>__<工具名> 注册给模型" onClick={() => { setTab('mcp') }}><IconMcp />MCP</button>
         <button type="button" role="tab" aria-selected={tab === 'dbadmin'} data-active={tab === 'dbadmin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="数据管理：库表数据全透明可查；密钥只显掩码、复制直达剪贴板" onClick={() => { setTab('dbadmin') }}><IconChart />数据管理</button>
-        <button type="button" role="tab" aria-selected={tab === 'standards'} data-active={tab === 'standards' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('standards') }}><IconStandards />开发规范</button>
+        <button type="button" role="tab" aria-selected={tab === 'dev'} data-active={tab === 'dev' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="开发：开发规范 + 项目 + 代码仓库 + 服务器管理（0.40.x 合并页签）" onClick={() => { setTab('dev') }}><IconProject />开发</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}><IconBrowser />浏览器</button>
-        <button type="button" role="tab" aria-selected={tab === 'remote'} data-active={tab === 'remote' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('remote') }}><IconServer />远程运维</button>
-        <button type="button" role="tab" aria-selected={tab === 'projects'} data-active={tab === 'projects' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('projects') }}><IconProject />项目</button>
-        <button type="button" role="tab" aria-selected={tab === 'repos'} data-active={tab === 'repos' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('repos') }}><IconRepo />代码仓库</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
         {skin !== undefined && <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>}
@@ -197,49 +161,16 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
 
         {tab === 'profile' && <ProfileTab api={api} onNavigate={navigateFromProfile} />}
 
-        {tab === 'standards' && (
-          <section className={css['tabBody']}>
-            <div className={css['toolbar']}>
-              <span className={css['sectionHint']}>内置开发规范</span>
-              <span className={css['toolbarSpacer']} />
-              <button type="button" className={css['ghostButton']} onClick={() => { void refresh() }}>刷新</button>
-            </div>
-            {!loaded && <div className={css['empty']} data-loading="">正在加载规范库…</div>}
-            {loaded && standards.length === 0 && <div className={css['empty']}>规范库为空（standards/ 目录无 md 文件）</div>}
-            {loaded && standards.length > 0 && (
-              <div className={css['tableWrap']}>
-                <div className={css['resourceList']}>
-                  {standards.map((standard) => (
-                    <div key={standard.id} className={css['resourceRow']}>
-                      <div className={css['resourceInfo']}>
-                        <strong className={css['resourceTitle']}>{standard.title}</strong>
-                        <span className={css['resourceMeta']}>{standard.id} · {standard.tags.join(', ') || '无标签'}</span>
-                      </div>
-                      <button type="button" className={css['ghostButton']} onClick={() => { void viewStandard(standard.id) }}>查看</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
         {tab === 'browser' && <BrowserTab api={api} />}
 
         {tab === 'codeplan' && <CodingPlanTab api={api} />}
         {tab === 'rag' && <MemoryHubTab api={api} section={memorySection} onSectionChange={setMemorySection} />}
+        {tab === 'dev' && <DevHubTab api={api} />}
         {tab === 'workflow' && <WorkflowTab />}
 
         {tab === 'mcp' && <McpTab api={api} />}
 
         {tab === 'dbadmin' && <DbAdminTab api={api} />}
-
-        {tab === 'remote' && <RemoteOperationsTab api={api} />}
-
-
-        {tab === 'projects' && <ProjectsTab api={api} />}
-
-        {tab === 'repos' && <ReposTab api={api} />}
 
         {tab === 'feishu' && <FeishuTab api={api} />}
 
@@ -248,18 +179,6 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {tab === 'skin' && skin !== undefined && <SkinTab skin={skin} />}
 
       </div>
-
-      {viewing && (
-        <div className={css['modalBackdrop']} onClick={() => { setViewing(null) }}>
-          <div className={css['modal']} role="dialog" aria-modal="true" aria-label={viewing.title} onClick={(event) => { event.stopPropagation() }}>
-            <h3 className={css['modalTitle']}>{viewing.title}</h3>
-            <pre className={css['modalContent']}>{viewing.content}</pre>
-            <div className={css['modalActions']}>
-              <button type="button" className={css['ghostButton']} onClick={() => { setViewing(null) }}>关闭</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
