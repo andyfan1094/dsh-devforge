@@ -356,6 +356,23 @@
 .metricRow strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
 .metricRow strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 
+/* 飞书配置卡美化（0.40.x）：卡头分色图标 + 状态卡跨两列三列小卡网格。 */
+.cardIcon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
+.cardIcon[data-kind="plug"] { color: #2563eb; }
+.cardIcon[data-kind="bot"] { color: #7c3aed; }
+.cardIcon[data-kind="users"] { color: #0891b2; }
+.cardIcon[data-kind="bell"] { color: #d97706; }
+.cardIcon[data-kind="activity"] { color: var(--dsw-alias-state-success-primary, #16a34a); }
+.sectionTitle .sectionHint { margin-left: 8px; font-weight: 400; }
+.feishuWide { grid-column: 1 / -1; }
+.feishuStatGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l1, #e5e7eb); }
+.feishuStat { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 7px 9px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #f9fafb); }
+.feishuStat span { color: var(--dsw-alias-label-secondary, #667085); font-size: 11px; white-space: nowrap; }
+.feishuStat strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.feishuStat strong[data-state="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); font-weight: 600; }
+.feishuStat strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
+.feishuStat strong[data-state="idle"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+
 /* 智谱 Key 池：主/附加徽标与行内操作按钮。 */
 .keyBadge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 1.6; vertical-align: 1px; }
 .keyBadge[data-kind="primary"] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 30%, transparent); }

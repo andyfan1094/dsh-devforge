@@ -4,9 +4,10 @@
  * 安全边界：App Secret 只允许单向提交，读取接口仅返回掩码；保存配置会关闭旧独立
  * Agent 并按新配置重建，避免同一个 chatId 同时绑定两套运行参数。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { FeishuConfigPatch, FeishuModelOptions, FeishuPanelConfig, FeishuStatus } from '../../feishu/protocol.ts'
+import { IconPlug, IconBot, IconUsers, IconBell, IconActivity, IconTerminal } from './icons.tsx'
 import css from './panel.module.css'
 
 /** Host 尚未返回前的飞书安全默认值。 */
@@ -62,6 +63,19 @@ function connectionLabel(status: FeishuStatus): string {
   if (status.state === 'unconfigured') return '未配置'
   if (status.state === 'error') return '错误'
   return '未连接'
+}
+
+/** 卡片标题行：分色图标 + 标题 + 可选说明小字（0.40.x 飞书页美化，与项目卡图标体系一致）。 */
+function cardTitle(kind: 'plug' | 'bot' | 'users' | 'bell' | 'activity', text: string, hint?: string): JSX.Element {
+  const icons = { plug: IconPlug, bot: IconBot, users: IconUsers, bell: IconBell, activity: IconActivity } as const
+  const Icon = icons[kind]
+  return (
+    <h3 className={css['sectionTitle']}>
+      <span className={css['cardIcon']} data-kind={kind} aria-hidden="true"><Icon /></span>
+      {text}
+      {hint !== undefined && <span className={css['sectionHint']}>{hint}</span>}
+    </h3>
+  )
 }
 
 /** 天工造梦飞书控制台。 */
@@ -190,7 +204,10 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         <span className={css['connectionDot']} data-state={status.connected ? 'connected' : status.state} aria-hidden="true" />
         <div className={css['resourceInfo']}>
           <strong className={css['resourceTitle']}>飞书长连接 · {connectionLabel(status)}</strong>
-          <span className={css['resourceMeta']}>{status.connected ? 'WebSocket 正常' : status.lastError || '等待连接'}</span>
+          <span className={css['resourceMeta']}>
+            {status.connected ? 'WebSocket 正常 · ' : status.lastError !== '' && status.lastError !== undefined ? status.lastError + ' · ' : '等待连接 · '}
+            当前模型 <span className={css['monoText']}>{actualProvider}/{actualModel}</span> · 推理 {actualEffort}
+          </span>
         </div>
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void testConnection() }}>测试连接</button>
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void refresh() }}>刷新</button>
@@ -204,7 +221,7 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
 
       <div className={css['feishuGrid']}>
         <section className={css['githubSection']}>
-          <h3 className={css['sectionTitle']}>应用连接</h3>
+          {cardTitle('plug', '应用连接', 'App 凭据与工作目录')}
           <div className={css['form']}>
             <label className={css['checkRow']}><input type="checkbox" checked={config.enabled} onChange={(event) => { setConfig({ ...config, enabled: event.target.checked }) }} />启用飞书长连接</label>
             <label className={css['field']}><span className={css['fieldLabel']}>App ID</span><input className={css['input']} autoComplete="off" value={config.appId} onChange={(event) => { setConfig({ ...config, appId: event.target.value }) }} placeholder="cli_xxxxxxxxxxxxxxxx" /></label>
@@ -215,7 +232,7 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         </section>
 
         <section className={css['githubSection']}>
-          <h3 className={css['sectionTitle']}>Agent 配置</h3>
+          {cardTitle('bot', 'Agent 配置', '会话使用的模型与预设')}
           <div className={css['form']}>
             <label className={css['field']}>
               <span className={css['fieldLabel']}>Provider</span>
@@ -248,7 +265,7 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         </section>
 
         <section className={css['githubSection']}>
-          <h3 className={css['sectionTitle']}>访问与消息</h3>
+          {cardTitle('users', '访问与消息', '谁能用、怎么回应')}
           <div className={css['form']}>
             <label className={css['field']}><span className={css['fieldLabel']}>允许的 open_id</span><textarea className={[css['input'], css['textarea']].filter(Boolean).join(' ')} value={allowUsersText} onChange={(event) => { setAllowUsersText(event.target.value) }} placeholder="每行一个 ou_xxx" /></label>
             <label className={css['checkRow']}><input type="checkbox" checked={config.ack} onChange={(event) => { setConfig({ ...config, ack: event.target.checked }) }} />收到消息后添加确认反应</label>
@@ -259,35 +276,42 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         </section>
 
         <section className={css['githubSection']}>
-          <h3 className={css['sectionTitle']}>完成通知</h3>
+          {cardTitle('bell', '完成通知', '任务完成飞书卡片提醒')}
           <div className={css['form']}>
             <label className={css['checkRow']}><input type="checkbox" checked={config.notifyOnComplete} onChange={(event) => { setConfig({ ...config, notifyOnComplete: event.target.checked }) }} />电脑端任务完成时通过飞书卡片通知</label>
             <label className={css['field']}><span className={css['fieldLabel']}>通知目标 chat_id</span><input className={css['input']} value={config.notifyChatId} onChange={(event) => { setConfig({ ...config, notifyChatId: event.target.value }) }} placeholder="oc_xxx（群）或 on_xxx（个人 open_id）" /></label>
           </div>
         </section>
 
-        <section className={css['githubSection']}>
-          <h3 className={css['sectionTitle']}>运行状态</h3>
-          <div className={css['metricList']}>
-            <div className={css['metricRow']}><span>WebSocket</span><strong>{connectionLabel(status)}</strong></div>
-            <div className={css['metricRow']}><span>Provider</span><strong>{actualProvider}</strong></div>
-            <div className={css['metricRow']}><span>Model</span><strong>{actualModel}</strong></div>
-            <div className={css['metricRow']}><span>推理级别</span><strong>{actualEffort}</strong></div>
-            <div className={css['metricRow']}><span>Agent 预设</span><strong>{actualPreset}</strong></div>
-            <div className={css['metricRow']}><span>独立会话</span><strong>{sessions.length}</strong></div>
+        <section className={[css['githubSection'], css['feishuWide']].join(' ')}>
+          {cardTitle('activity', '运行状态', '实时生效配置 · 每 10 秒自动刷新')}
+          <div className={css['feishuStatGrid']}>
+            <div className={css['feishuStat']}><span>WebSocket</span><strong data-state={status.connected ? 'ok' : status.state === 'connecting' ? 'pending' : 'idle'}>{connectionLabel(status)}</strong></div>
+            <div className={css['feishuStat']}><span>Provider</span><strong className={css['monoText']}>{actualProvider}</strong></div>
+            <div className={css['feishuStat']}><span>Model</span><strong className={css['monoText']}>{actualModel}</strong></div>
+            <div className={css['feishuStat']}><span>推理级别</span><strong>{actualEffort}</strong></div>
+            <div className={css['feishuStat']}><span>Agent 预设</span><strong>{actualPreset}</strong></div>
+            <div className={css['feishuStat']}><span>独立会话</span><strong data-state={sessions.length > 0 ? 'ok' : 'idle'}>{sessions.length}</strong></div>
           </div>
         </section>
       </div>
 
       <section className={css['githubSection']}>
-        <div className={css['toolbar']}><h3 className={css['sectionTitle']}>活动会话</h3><span className={css['toolbarSpacer']} /><button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void save() }}>保存飞书设置</button></div>
+        <div className={css['toolbar']}>
+          <h3 className={css['sectionTitle']}>
+            <span className={css['cardIcon']} data-kind="users" aria-hidden="true"><IconUsers /></span>
+            活动会话
+          </h3>
+          <span className={css['toolbarSpacer']} />
+          <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void save() }}>保存飞书设置</button>
+        </div>
         {sessions.length === 0 ? (
           <div className={css['empty']}>暂无活动飞书会话</div>
         ) : (
           <div className={css['tableScroll']}>
             <table className={css['dataTable']}>
               <thead><tr><th>Chat ID</th><th>会话</th><th>模型</th><th>状态</th></tr></thead>
-              <tbody>{sessions.map((session) => <tr key={session.chatId + '/' + session.sessionId}><td>{session.chatId}</td><td>{session.sessionId}</td><td>{session.provider} / {session.model}<div className={css['resourceMeta']}>{session.effort || '默认'} · {session.preset}</div></td><td><span className={css['badge']} data-status={session.status}>{session.status}</span></td></tr>)}</tbody>
+              <tbody>{sessions.map((session) => <tr key={session.chatId + '/' + session.sessionId}><td className={css['monoText']}>{session.chatId}</td><td className={css['monoText']}>{session.sessionId}</td><td>{session.provider} / {session.model}<div className={css['resourceMeta']}>{session.effort || '默认'} · {session.preset}</div></td><td><span className={css['badge']} data-status={session.status}>{session.status}</span></td></tr>)}</tbody>
             </table>
           </div>
         )}

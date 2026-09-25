@@ -208,3 +208,60 @@ export function IconTerminal({ size }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** 飞书卡·应用连接：插头。 */
+export function IconPlug({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" />
+    </svg>
+  )
+}
+
+/** 飞书卡·Agent 配置：机器人。 */
+export function IconBot({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <rect x="5" y="8" width="14" height="12" rx="2" />
+      <path d="M12 8V4" />
+      <path d="M9 16h.01" />
+      <path d="M15 16h.01" />
+      <path d="M2 14h3" />
+      <path d="M19 14h3" />
+    </svg>
+  )
+}
+
+/** 飞书卡·访问与消息：双人。 */
+export function IconUsers({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+/** 飞书卡·完成通知：铃铛。 */
+export function IconBell({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
+  )
+}
+
+/** 飞书卡·运行状态：活动心电。 */
+export function IconActivity({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
+  )
+}
