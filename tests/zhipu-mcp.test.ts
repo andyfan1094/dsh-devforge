@@ -106,9 +106,13 @@ test('智谱 MCP 客户端：JSON-RPC 错误转中文异常且不含 Key', async
   } finally { server.close() }
 })
 
-test('官方工具定义：5 个工具名与参数齐备', () => {
+test('官方工具定义：3 个工具名与参数齐备（0.40.1 搜索类下架：zhipu_web_search / zhipu_zread_search 不再注册）', () => {
   const clients = makeZhipuMcpClients({ enabled: true, timeoutMs: 1000 }, keyProvider)
   const tools = makeZhipuMcpToolDefinitions(clients)
-  assert.deepEqual(tools.map((tool) => tool.name), ['zhipu_web_search', 'zhipu_web_reader', 'zhipu_zread_search', 'zhipu_zread_read_file', 'zhipu_zread_repo_structure'])
+  assert.deepEqual(tools.map((tool) => tool.name), ['zhipu_web_reader', 'zhipu_zread_read_file', 'zhipu_zread_repo_structure'])
   for (const tool of tools) assert.equal(typeof tool.description, 'string')
+  // 辉哥 2026-09-26 定稿：天工造梦只保留官网搜索渠道，智谱侧任何搜索类工具都必须不存在。
+  const names = tools.map((tool) => tool.name)
+  assert.ok(!names.includes('zhipu_web_search'), 'zhipu_web_search 应已下架')
+  assert.ok(!names.includes('zhipu_zread_search'), 'zhipu_zread_search 应已下架')
 })

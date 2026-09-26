@@ -37,27 +37,10 @@ const TOOL_OUTPUT_SCHEMA = {
   properties: { ok: { type: 'boolean', required: true }, content: { type: 'string' }, error: { type: 'string' } },
 } as const
 
-/** 构造 5 个官方工具定义。 */
+/** 构造官方工具定义（0.40.1 辉哥定稿：搜索类下架——minimax_web_search 不再注册，
+ * 联网搜索一律走天工造梦官网渠道 modagentai_web_search；仅保留图像/语音/视频类工具）。 */
 export function makeMiniMaxToolDefinitions(client: MiniMaxApiClient) {
   return [
-    defineTool({
-      name: 'minimax_web_search',
-      description: '用 MiniMax 官方联网搜索 API（Coding Plan）搜索全网信息，返回网页标题、链接、摘要与相关搜索建议。',
-      parameters: {
-        query: { type: 'string', required: true, description: '搜索内容。' },
-      },
-      output: { schema: TOOL_OUTPUT_SCHEMA, render: (_args, value: ToolOutput) => text(value.ok ? (value.content ?? '') : '调用失败：' + (value.error ?? '未知错误')) },
-      async execute(args: { query?: string }) {
-        const query = typeof args.query === 'string' ? args.query.trim() : ''
-        if (query === '') return { ok: false, error: 'query 不能为空。' }
-        try {
-          const result = await client.search(query)
-          return { ok: true, content: formatSearchResult(result) }
-        } catch (error) {
-          return { ok: false, error: safeApiError(error) }
-        }
-      },
-    }),
     defineTool({
       name: 'minimax_understand_image',
       description: '用 MiniMax 官方视觉 API 分析图片内容并回答问题；支持本机路径、http(s) 或 data URL，仅 JPEG/PNG/WebP。',

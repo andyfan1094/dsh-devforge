@@ -47,20 +47,10 @@ function mcpArgOutput(name: string, description: string, parameters: Record<stri
   })
 }
 
-/** 构造 5 个官方 MCP 工具定义。 */
+/** 构造官方 MCP 工具定义（0.40.1 辉哥定稿：搜索类全部下架——zhipu_web_search / zhipu_zread_search
+ * 不再注册，联网搜索一律走天工造梦官网渠道 modagentai_web_search；仅保留读取类工具）。 */
 export function makeZhipuMcpToolDefinitions(clients: ReturnType<typeof makeZhipuMcpClients>) {
   return [
-    mcpArgOutput('zhipu_web_search', '用智谱官方联网搜索 MCP 搜索全网信息，返回网页标题、链接、摘要等（消耗套餐每月搜索额度）。', {
-      search_query: { type: 'string', required: true, description: '搜索内容，建议不超过 70 字。' },
-      search_recency_filter: { type: 'string', enum: ['oneDay', 'oneWeek', 'oneMonth', 'oneYear', 'noLimit'], description: '时间范围，默认不限。' },
-      content_size: { type: 'string', enum: ['medium', 'high'], description: '摘要篇幅：medium 均衡（默认），high 更全面。' },
-      location: { type: 'string', enum: ['cn', 'us'], description: '地区倾向，默认 cn。' },
-    }, (args) => clients.search.call('web_search_prime', {
-      search_query: args.search_query,
-      ...(typeof args.search_recency_filter === 'string' ? { search_recency_filter: args.search_recency_filter } : {}),
-      ...(typeof args.content_size === 'string' ? { content_size: args.content_size } : {}),
-      ...(typeof args.location === 'string' ? { location: args.location } : {}),
-    })),
     mcpArgOutput('zhipu_web_reader', '用智谱官方网页读取 MCP 抓取指定 URL，返回对大模型友好的正文（Markdown），消耗套餐每月 MCP 额度。', {
       url: { type: 'string', required: true, description: '要读取的 http(s) 网页地址。' },
       return_format: { type: 'string', enum: ['markdown', 'text'], description: '返回格式，默认 markdown。' },
@@ -69,15 +59,6 @@ export function makeZhipuMcpToolDefinitions(clients: ReturnType<typeof makeZhipu
       url: args.url,
       ...(typeof args.return_format === 'string' ? { return_format: args.return_format } : {}),
       ...(typeof args.retain_images === 'boolean' ? { retain_images: args.retain_images } : {}),
-    })),
-    mcpArgOutput('zhipu_zread_search', '用智谱官方 Zread MCP 搜索 GitHub 仓库的文档、issue 与提交记录。', {
-      repo_name: { type: 'string', required: true, description: 'GitHub 仓库，格式 owner/repo（如 vitejs/vite）。' },
-      query: { type: 'string', required: true, description: '搜索关键词或关于该仓库的问题。' },
-      language: { type: 'string', enum: ['zh', 'en'], description: '返回语言，按上下文选择。' },
-    }, (args) => clients.zread.call('search_doc', {
-      repo_name: args.repo_name,
-      query: args.query,
-      ...(typeof args.language === 'string' ? { language: args.language } : {}),
     })),
     mcpArgOutput('zhipu_zread_read_file', '用智谱官方 Zread MCP 读取 GitHub 仓库中指定文件的完整代码内容。', {
       repo_name: { type: 'string', required: true, description: 'GitHub 仓库，格式 owner/repo。' },

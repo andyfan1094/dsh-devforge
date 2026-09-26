@@ -294,7 +294,6 @@ export function MiniMaxCodingPlanTab({ api, apiKeyEnv, section = 'config', embed
 
       <section className={css['usageSection']}>
         <h3 className={css['sectionTitle']}>官方工具</h3>
-        <div className={css['metricRow']}><span>minimax_web_search</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
         <div className={css['metricRow']}><span>minimax_understand_image</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
         <div className={css['metricRow']}><span>minimax_image_generation</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>
         <div className={css['metricRow']}><span>minimax_text_to_speech</span><strong>{status?.tools !== false ? '已启用' : '已关闭'}</strong></div>

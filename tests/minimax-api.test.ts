@@ -96,22 +96,16 @@ test('MiniMax API 客户端：HTTP 401 映射为凭据错误', async () => {
   } finally { mock.close() }
 })
 
-test('MiniMax 工具：搜索与图像工具返回统一契约', async () => {
-  const calls: string[] = []
+test('MiniMax 工具：图像工具返回统一契约（0.40.1 搜索类下架：minimax_web_search 不再注册）', async () => {
   const client = {
-    search: async (query: string) => { calls.push('search:' + query); return { items: [{ title: 'T', link: 'https://a/1', snippet: 'S' }], related: ['R'] } },
-    understandImage: async (prompt: string, image: string) => { calls.push('vlm:' + prompt + '|' + image.slice(0, 15)); return '描述' },
+    search: async () => ({ items: [{ title: 'T', link: 'https://a/1', snippet: 'S' }], related: ['R'] }),
+    understandImage: async () => '描述',
   } as unknown as MiniMaxApiClient
-  const [search, image] = makeMiniMaxToolDefinitions(client)
-  // 必填参数缺失由 DSH 工具运行时的 schema 校验拦截。
-  await assert.rejects(search.execute({}), /missing required property/)
-  // 空白参数通过 schema 但被工具层拒绝。
-  const blank = await search.execute({ query: '   ' })
-  assert.equal(blank.ok, false)
-  const good = await search.execute({ query: '词' })
-  assert.equal(good.ok, true)
-  assert.match(good.content ?? '', /https:\/\/a\/1/)
-  assert.match(good.content ?? '', /相关搜索：R/)
+  const tools = makeMiniMaxToolDefinitions(client)
+  // 辉哥 2026-09-26 定稿：天工造梦只保留官网搜索渠道，MiniMax 侧任何搜索类工具都必须不存在。
+  const names = tools.map((tool) => (tool as unknown as { name: string }).name)
+  assert.ok(!names.includes('minimax_web_search'), 'minimax_web_search 应已下架')
+  const image = tools[0] as unknown as { execute: (args: Record<string, string>) => Promise<{ ok: boolean; error?: string; content?: string }> }
   const emptyImage = await image.execute({ prompt: 'p', image_source: ' ' })
   assert.equal(emptyImage.ok, false)
 })
