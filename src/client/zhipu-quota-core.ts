@@ -186,6 +186,8 @@ export interface PackageRow {
   /** 激活前提示：'首次使用后 N 天内有效'（目录 days 缺失时空串）。 */
   pendingHint: string
   title: string
+  /** 到期时间（官网实例提供时，ISO 文本；个人中心套餐卡显示用）。 */
+  expiresAt?: string
 }
 
 /** 套餐目录条目（官网 GEM_PACKS 子集）。 */
@@ -231,6 +233,7 @@ export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] 
       activated,
       pendingHint: '',
       title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎',
+      ...(typeof m.expiresAt === 'string' && m.expiresAt !== '' ? { expiresAt: m.expiresAt } : {}),
     })
   }
   return rows

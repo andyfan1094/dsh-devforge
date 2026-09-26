@@ -10,7 +10,65 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { MemoryUserProfile } from '../../memory/profile.ts'
 import type { ModagentaiProfile } from '../../modagentai/protocol.ts'
+import { extractPackageRows, type PackageRow } from '../zhipu-quota-core.ts'
 import css from './panel.module.css'
+
+/** 到期时间的紧凑展示：只取日期部分（2026-09-30T... → 2026-09-30）。 */
+function expiryLabel(expiresAt: string | undefined): string {
+  if (expiresAt === undefined || expiresAt === '') return ''
+  return expiresAt.slice(0, 10)
+}
+
+/** 我的套餐卡（辉哥 2026-09-26 定稿）：只显示在用的套餐（已激活且有剩余），不做购买目录；
+ * 每行套餐名 + 剩余/总量 + 进度条（≤15% 红 / ≤40% 琥珀）+ 到期日；底部一行余额与可搜次数。 */
+function MyPackages(): JSX.Element | null {
+  const [rows, setRows] = useState<PackageRow[] | null>(null)
+  const [balance, setBalance] = useState<number | null>(null)
+  const [searchesLeft, setSearchesLeft] = useState<number | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch('/api/dsh-devforge/modagentai/packages')
+        if (!response.ok) throw new Error('HTTP ' + String(response.status))
+        const payload = await response.json() as unknown
+        setRows(extractPackageRows(payload, 12))
+        const view = payload !== null && typeof payload === 'object' ? (payload as { packages?: { balance?: unknown; searchesLeft?: unknown } }).packages : undefined
+        setBalance(view !== undefined && typeof view.balance === 'number' ? view.balance : null)
+        setSearchesLeft(view !== undefined && typeof view.searchesLeft === 'number' ? view.searchesLeft : null)
+      } catch {
+        setRows([])
+      }
+    })()
+  }, [])
+
+  if (rows === null) return null
+  if (rows.length === 0 && balance === null) return null
+  return (
+    <div className={css['identityCard']}>
+      <span className={css['identitySectionTitle']}>我的套餐</span>
+      {rows.map((row) => {
+        const level = row.percent <= 15 ? 'danger' : row.percent <= 40 ? 'warning' : 'normal'
+        const expiry = expiryLabel(row.expiresAt)
+        return (
+          <div key={row.key} className={css['packRow']}>
+            <div className={css['packRowTop']}>
+              <span className={css['packName']} title={row.title}>{row.label}{expiry !== '' ? <span className={css['packExpiry']}> · {expiry} 到期</span> : null}</span>
+              <span className={css['packQuota']}>{row.gemsLeft} / {row.gemsTotal} 💎</span>
+            </div>
+            <div className={css['packBar']}>
+              <div className={css['packBarFill']} data-level={level} style={{ width: Math.max(2, Math.round(row.percent)) + '%' }} />
+            </div>
+          </div>
+        )
+      })}
+      {rows.length === 0 && <span className={css['identityHint']}>暂无在用套餐</span>}
+      {balance !== null && (
+        <span className={css['identityHint']}>当前余额 {balance} 💎{searchesLeft !== null ? ' ≈ ' + searchesLeft + ' 次联网搜索（约 0.01💎/次）' : ''}</span>
+      )}
+    </div>
+  )
+}
 
 /** 个人中心属性：onNavigate 供「编辑身份」跳记忆工作台等页签（CodePlan 仅管理员可达，判断在面板侧）。 */
 export interface ProfileTabProps {
@@ -141,7 +199,7 @@ function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy, searc
   )
 }
 
-/** 个人中心页签（一张身份卡：官网账号身份 + 插件内身份）。 */
+/** 个人中心页签（一张身份卡：官网账号身份 + 插件内身份 + 我的套餐）。 */
 export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
   const [profile, setProfile] = useState<ModagentaiProfile | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -422,6 +480,9 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
           <LocalIdentity userProfile={userProfile} loaded={localLoaded} onToggleEnabled={(next) => { void toggleInject(next) }} toggleBusy={toggleBusy} searchEnabled={searchEnabled} searchBusy={searchBusy} onToggleSearch={(next) => { void toggleSearch(next) }} />
         </div>
       )}
+
+      {/* 我的套餐（已登录才显示；只显示在用的，不做购买目录） */}
+      {loaded && loadErr === '' && loggedIn && <MyPackages />}
     </div>
   )
 }

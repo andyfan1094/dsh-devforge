@@ -385,6 +385,18 @@
 .badge[data-status="error"] { color: var(--dsw-alias-state-error-primary, #dc2626); background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #dc2626) 10%, transparent); }
 .badge[data-status="unknown"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 
+/* 个人中心「我的套餐」卡（0.40.1）：行 + 进度条分色（≤15% 红 / ≤40% 琥珀 / 正常主题色）。 */
+.packRow { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; border-top: 1px solid var(--dsw-alias-border-l1, #eef0f3); }
+.packRow:first-of-type { border-top: none; }
+.packRowTop { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.packName { min-width: 0; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary, #1f2329); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.packExpiry { font-weight: 400; font-size: 11px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+.packQuota { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary, #667085); }
+.packBar { height: 6px; border-radius: 4px; background: var(--dsw-alias-interactive-bg-hover, #f0f1f3); overflow: hidden; }
+.packBarFill { height: 100%; border-radius: 4px; background: var(--dsw-alias-state-business-primary, #2563eb); transition: width .3s ease; }
+.packBarFill[data-level="warning"] { background: var(--dsw-alias-state-warning-primary, #d97706); }
+.packBarFill[data-level="danger"] { background: var(--dsw-alias-state-error-primary, #dc2626); }
+
 /* 智谱 Key 池：主/附加徽标与行内操作按钮。 */
 .keyBadge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 1.6; vertical-align: 1px; }
 .keyBadge[data-kind="primary"] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 30%, transparent); }
