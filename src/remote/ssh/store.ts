@@ -81,7 +81,7 @@ const ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
 
 /** Validate an alias for creation. */
 export function validateAlias(alias: string): string | undefined {
-  if (!ALIAS_RE.test(alias)) return 'alias must be letters, digits, dots, hyphens or underscores'
+  if (!ALIAS_RE.test(alias)) return '别名仅支持字母、数字、点、横线、下划线（不支持中文与空格，可用拼音如 junhui-model）'
   return undefined
 }
 

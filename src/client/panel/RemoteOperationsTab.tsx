@@ -12,6 +12,9 @@ export interface RemoteOperationsTabProps {
   api: DevforgeApi
 }
 
+/** 主机别名字法（与 HostStore 校验一致）：字母数字开头 + 字母数字点横下划线，不支持中文。 */
+const HOST_ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+
 /** 新增主机表单的可控字段。 */
 interface HostFormState {
   transport: 'ssh' | 'winrm'
@@ -32,8 +35,7 @@ const EMPTY_FORM: HostFormState = {
   alias: '',
   host: '',
   port: '22',
-  user: 'root',
-  authKind: 'password',
+  user: 'root',  authKind: 'password',
   password: '',
   keyPath: '',
   passphrase: '',
@@ -71,6 +73,13 @@ export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Elem
     setSubmitting(true)
     setError('')
     setNotice('')
+    // 别名前置校验：DSH 底层只收字母/数字/点/横线/下划线（中文别名会影响命令行引用与编码），给中文可读提示。
+    const alias = form.alias.trim()
+    if (!HOST_ALIAS_RE.test(alias)) {
+      setError('别名仅支持字母、数字、点、横线、下划线（不支持中文与空格）——中文场景请用拼音，如 junhui-model')
+      setSubmitting(false)
+      return
+    }
     try {
       const payload: { transport: 'ssh' | 'winrm' } & Record<string, unknown> = {
         transport: form.transport,
@@ -144,8 +153,8 @@ export function RemoteOperationsTab({ api }: RemoteOperationsTabProps): JSX.Elem
             </select>
           </label>
           <label className={css['field']}>
-            <span>别名 *</span>
-            <input value={form.alias} onChange={event => updateForm({ alias: event.target.value })} placeholder="web1" />
+            <span>别名 *（仅字母/数字/点/横线/下划线，不支持中文）</span>
+            <input value={form.alias} onChange={event => updateForm({ alias: event.target.value })} placeholder="如 junhui-model（中文请用拼音）" data-invalid={form.alias.trim() !== '' && !HOST_ALIAS_RE.test(form.alias.trim()) || undefined} />
           </label>
           <label className={css['field']}>
             <span>主机 *</span>
