@@ -338,7 +338,9 @@ export async function resolveLatest(source: UpdateSource): Promise<LatestInfo> {
       sha256: matched?.sha256,
       date: matched?.date,
       notes: matched?.notes,
-      history: index.versions.slice(0, 3).map((entry) => ({ version: entry.version, date: entry.date, notes: entry.notes })),
+      // 全量透出官网更新说明（0.40.1 辉哥定稿「能抓取也要抓取」）：官网清单全部版本的 notes
+      // 都带回来（40 版约 8KB，不影响检查耗时），前端做展开收起。
+      history: index.versions.map((entry) => ({ version: entry.version, date: entry.date, notes: entry.notes })),
     }
   }
   throw new Error('更新源未登记官网清单地址（GitHub 兜底渠道已移除）')

@@ -73,18 +73,26 @@ function copyText(text: string): boolean {
   return fallback()
 }
 
-/** 更新日志块：最新版说明 + 最近版本列表（0.40.1 辉哥需求「直接显示更新了什么」）。 */
-function changelogBlock(item: UpdateCheckItem): JSX.Element | null {
+/** 更新日志块（0.40.1 辉哥定稿「能抓取也要抓取」）：后端全量透出官网清单更新说明，
+ * 默认显示最近 3 版，点「展开全部」看完整历史。 */
+function ChangelogBlock({ item }: { item: UpdateCheckItem }): JSX.Element | null {
+  const [expanded, setExpanded] = useState(false)
   const entries = (item.history ?? []).filter((entry) => (entry.notes ?? '') !== '')
   if (entries.length === 0) return null
+  const visible = expanded ? entries : entries.slice(0, 3)
   return (
     <div className={css['updateLog']}>
-      {entries.map((entry, index) => (
+      {visible.map((entry, index) => (
         <div key={entry.version} className={css['updateLogRow']}>
           <span className={css['updateLogVersion']}>v{entry.version}{entry.date !== undefined ? ' · ' + entry.date : ''}{index === 0 ? ' · 最新' : ''}</span>
           <span className={css['updateLogNotes']}>{entry.notes}</span>
         </div>
       ))}
+      {entries.length > 3 && (
+        <button type="button" className={css['ghostButton']} onClick={() => { setExpanded(!expanded) }}>
+          {expanded ? '收起更新历史' : '展开全部更新历史（共 ' + entries.length + ' 版）'}
+        </button>
+      )}
     </div>
   )
 }
@@ -345,7 +353,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
               >
                 {busy === item.packageName ? '升级中…' : '一键升级'}
               </button>
-              {changelogBlock(item)}
+              <ChangelogBlock item={item} />
             </div>
           ))}
         </div>
