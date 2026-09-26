@@ -324,7 +324,7 @@ test('resolveLatest：官网清单失败直接抛错，不静默换渠道', asyn
 // apply 与登录制联动：未配置账号 401 引导 / 已配置先登录换 Cookie
 // ---------------------------------------------------------------------------
 
-test('PluginUpdateService.apply：未配置官网账号且下载 401 → 面板配置引导文案', async () => {
+test('PluginUpdateService.apply：下载 401 → 个人中心登录引导（0.40.1 页面不再提供手动账号入口）', async () => {
   const svc = new PluginUpdateService({
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => ({ version: '0.13.0' }),
@@ -332,10 +332,10 @@ test('PluginUpdateService.apply：未配置官网账号且下载 401 → 面板�
     download: async () => { throw new Error('下载失败 HTTP 401') },
     runAdd: async () => 'done',
   })
-  await assert.rejects(svc.apply('dsh-devforge'), /官网下载已启用登录制：请到 天工造梦 → 插件更新 页签配置官网账号/)
+  await assert.rejects(svc.apply('dsh-devforge'), /官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试/)
 })
 
-test('PluginUpdateService.apply：未配置官网账号且下载 403 → 同样给出配置引导', async () => {
+test('PluginUpdateService.apply：下载 403 → 同样给出登录引导', async () => {
   const svc = new PluginUpdateService({
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => ({ version: '0.13.0' }),
@@ -343,7 +343,7 @@ test('PluginUpdateService.apply：未配置官网账号且下载 403 → 同样�
     download: async () => { throw new Error('下载失败 HTTP 403') },
     runAdd: async () => 'done',
   })
-  await assert.rejects(svc.apply('dsh-devforge'), /配置官网账号/)
+  await assert.rejects(svc.apply('dsh-devforge'), /个人中心/)
 })
 
 test('PluginUpdateService.apply：已配置 site → 先登录换 sid，下载带 Cookie', async () => {

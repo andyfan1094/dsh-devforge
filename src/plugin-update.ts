@@ -551,9 +551,9 @@ export class PluginUpdateService {
       tgzPath = await download(latest.tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256, headers: downloadHeaders })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // 未配置官网账号时，401/403 是登录墙拦截而非故障：转译成面板配置引导。
-      if (downloadHeaders === undefined && /HTTP 40[13](\D|$)/.test(message)) {
-        throw new Error('官网下载已启用登录制：请到 天工造梦 → 插件更新 页签配置官网账号（原始错误：' + message + '）')
+      // 登录墙拦截而非故障：转译成个人中心登录引导（0.40.1 辉哥定稿：页面不再提供手动账号入口）。
+      if (/HTTP 40[13](\D|$)/.test(message)) {
+        throw new Error('官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试')
       }
       throw error
     }
