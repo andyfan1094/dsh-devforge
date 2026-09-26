@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '../settings-compat.ts'
+import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import type { ArkStatus, ArkUsageCredentialsResult, ArkUsageDashboard } from './protocol.ts'
 import { ARK_CODING_BASE_URL, ARK_CODING_DEFAULT_MODELS, ARK_CODING_PROVIDER_ID, FIVE_TIER_REASONING, KIMI_REASONING } from './protocol.ts'
@@ -173,7 +173,7 @@ export class ArkCodingPlanService {
       this.ctx.credentials.describe(this.usageAccessReference()),
       this.ctx.credentials.describe(this.usageSecretReference()),
     ])
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }>; baseURL?: unknown }> } | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }>; baseURL?: unknown }> } | undefined
     const provider = section?.providers?.[ARK_PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configuredIds = new Set(liveIds)

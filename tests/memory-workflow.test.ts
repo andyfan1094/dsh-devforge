@@ -203,7 +203,7 @@ describe('会话记忆沉淀', () => {
       { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你拉取我天工造梦的最新代码' }] } },
       ...injections,
       // plugin 来源是后台任务通知：干活的轮次正是这种形状，必须保留（不能一刀切误杀）。
-      { type: 'user/message', data: { source: { kind: 'plugin', plugin: 'tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed].' }] } },
+      { type: 'user/message', data: { source: { kind: 'plugin:tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed].' }] } },
       { type: 'assistant/message', data: { content: [{ type: 'text', text: '已拉取完成并核对远端一致。' }] } },
       { type: 'turn/end', data: { turn: 2 } },
     ]
@@ -444,7 +444,7 @@ describe('记忆主动注入', () => {
   test('buildMemoryQuery：取最后一条用户消息、跳过插件快照并剔除样板段', () => {
     const messages = [
       { role: 'user', content: [{ type: 'text', text: '<system-reminder>技能目录样板</system-reminder>旧问题：上一轮问过部署' }] },
-      { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge' }, content: [{ type: 'text', text: '[记忆中枢自动注入] 检索候选' }] },
+      { role: 'user', source: { kind: 'dsh-devforge' }, content: [{ type: 'text', text: '[记忆中枢自动注入] 检索候选' }] },
       { role: 'user', content: [{ type: 'text', text: '[内置长期记忆] 候选段\n---\n记忆注入的相关性到底怎么判断？' }] },
     ]
     const query = buildMemoryQuery(messages)
@@ -606,8 +606,8 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
       { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: userText }] } },
     ]
     if (injectedSnapshot !== undefined) {
-      // 插件注入快照：宿主契约下 source.kind='plugin'，绝不能被当成用户话术提炼。
-      events.splice(1, 0, { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: injectedSnapshot }] }, content: [{ type: 'text', text: injectedSnapshot }] } })
+      // 插件注入快照：宿主契约下 source.kind='dsh-devforge'，绝不能被当成用户话术提炼。
+      events.splice(1, 0, { type: 'user/message', data: { role: 'user', source: { kind: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: injectedSnapshot }] }, content: [{ type: 'text', text: injectedSnapshot }] } })
     }
     events.push(
       { type: 'assistant/message', data: { turn, step: 1, message: { content: [{ type: 'text', text: assistantText }] } } },
@@ -726,7 +726,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
     sediment.attach(ctx)
     // tool-jobs 通知是 plugin 来源——干活的轮次正是这种形状，不得被误杀。
     const events = [
-      { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed, exit code: 0].' }] } },
+      { type: 'user/message', data: { role: 'user', source: { kind: 'plugin:tool-jobs' }, content: [{ type: 'text', text: 'background job bash-2 finished [status: completed, exit code: 0].' }] } },
       { type: 'assistant/message', data: { turn: 10, step: 1, message: { content: [{ type: 'text', text: '抓捕结果：attempt 1 说明管线已经真实跑通并完成判定，这一段是测试构造的足够长答复内容，用于通过沉淀窗口的最小长度过滤判断，避免被当成短寒暄丢弃处理。' }] } } },
       { type: 'turn/end', data: { turn: 10 } },
     ]
@@ -750,7 +750,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
     const sediment = new MemorySedimentService(rag, () => 'kb1', async (_system, user) => { prompted = user; return '{"items":[{"content":"普通偏好记录","importance":"normal"}]}' }, () => SETTINGS, undefined, undefined, { delayMs: 10 })
     sediment.attach(ctx)
     const events = [
-      { type: 'user/message', data: { role: 'user', source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: '[内置长期记忆] 旧候选 0.17.1' }] }, content: [{ type: 'text', text: '[内置长期记忆] 旧候选 0.17.1' }] } },
+      { type: 'user/message', data: { role: 'user', source: { kind: 'dsh-devforge', form: 'snapshot', sections: [{ name: 'memory', text: '[内置长期记忆] 旧候选 0.17.1' }] }, content: [{ type: 'text', text: '[内置长期记忆] 旧候选 0.17.1' }] } },
       { type: 'assistant/message', data: { turn: 11, step: 1, message: { content: [{ type: 'text', text: '收到，本条记忆快照不应进入提炼窗口；这段是测试构造的足够长答复内容，用于通过沉淀窗口的最小长度过滤判断，避免被当成短寒暄丢弃处理。' }] } } },
       { type: 'turn/end', data: { turn: 11 } },
     ]
@@ -813,7 +813,7 @@ describe('会话记忆沉淀 0.26.4 修复回归', () => {
     injection.attach(ctx)
     const decision = await ctx.emit('agent/pre-step', { messages: [{ role: 'user', content: [{ type: 'text', text: '服务器地址是什么' }] }], step: 1 }, async () => ({ messages: [{ role: 'user', content: [{ type: 'text', text: '服务器地址是什么' }] }] })) as { messages: Array<{ source: { kind?: string; form?: string; sections?: Array<{ name: string; text: string }> } }> }
     const last = decision.messages[decision.messages.length - 1]!
-    assert.equal(last.source.kind, 'plugin')
+    assert.equal(last.source.kind, 'dsh-devforge')
     assert.equal(last.source.form, 'snapshot', '必须按宿主快照协议声明，后续快照才能替代前者')
     assert.equal(last.source.sections?.[0]?.name, 'memory')
     assert.ok(last.source.sections?.[0]?.text.includes('记忆中枢自动注入'))

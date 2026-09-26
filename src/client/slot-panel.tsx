@@ -13,8 +13,11 @@ import type { JSX } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type {} from '@deepseek-ai/dsh-client-ui-slots'
-import { IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+// 图标按宿主 0.1.7-rc.2 的新命名规范取用：`IconXxxRegular`（1px 描边）/`IconXxxMedium`（1.3px）。
+// 旧名 `IconSparkle16` 在该版本已删除；本包对 primitives 走 external，运行时解析宿主冻结模块表，
+// 名字对不上就会拿到 undefined → 侧栏条目 React #130 崩溃（表现为「注入的网页不见了」）。
+import { IconSparkleRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { DevforgeApi } from './api.ts'
 import { DevforgePanel } from './panel/DevforgePanel.tsx'
 import { tt } from './panel/helpers.ts'
@@ -40,12 +43,12 @@ interface DevforgePageShare {
 }
 
 /**
- * 侧栏图标：官方图标集的 16 网格线性图标 + currentColor。
+ * 侧栏图标：官方图标集的 Sparkle 线性图标 + currentColor。
  * 尺寸由壳按行规格传入，颜色跟随壳的导航 token（默认灰、选中蓝），与官方行完全一致。
- * 选 IconSparkle16（造梦/灵感）而非官方插件的风车叶，保持品牌区分度。
+ * 选 Sparkle（造梦/灵感）而非官方插件的风车叶，保持品牌区分度。
  */
-function DevforgePanelIcon({ size }: { size: number }): JSX.Element {
-  return <IconSparkle16 size={size} />
+function DevforgePanelIcon({ size }: PropsRuntime<'sidebar.panellist'>): JSX.Element {
+  return <IconSparkleRegular size={size} />
 }
 
 /** 官方 main 槽位页面：仅在被选中时挂载；「返回会话」把中栏交还官方布局。 */

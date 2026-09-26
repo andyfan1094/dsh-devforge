@@ -16,7 +16,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from './settings-compat.ts'
+import { installSettingsSection, readSettingsSection, settingsNamespace } from './settings-compat.ts'
 import z from 'schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -112,6 +112,7 @@ import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from '
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, applySitePatch, toSiteView, type PluginUpdateSiteConfig, type PluginUpdateSitePatch, type PluginUpdateSiteView } from './plugin-update.ts'
 import { applyHarnessUpdate, checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
+import { DEVFORGE_SOURCE_KIND } from './session-source.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -532,7 +533,7 @@ export function apply(ctx: Context, config?: Config): void {
   // 智谱 Key 池：独立命名列表持久化在 store.db 设置域（随 CNB 备份）；
   // 主 Key 仅是聊天路由 provider.apiKeyEnv 当前指向，切换主 Key 不增删池成员。
   const zhipuKeys = new ZhipuKeyPool(ctx.credentials, async () => {
-    const section = ctx.settings.get(settingsNamespace('llm-pi-ai')) as { providers?: Record<string, { apiKeyEnv?: unknown }> } | undefined
+    const section = readSettingsSection(ctx, settingsNamespace('llm-pi-ai')) as { providers?: Record<string, { apiKeyEnv?: unknown }> } | undefined
     return resolveZhipuPrimaryKeyName(section, zhipuConfig.apiKeyEnv)
   }, {
     load: () => getSettings<{ keys: ZhipuKeyEntry[] }>(getDb(), 'zhipu-key-pool')?.keys,
@@ -742,7 +743,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     for await (const chunk of ctx.llm.stream({
       provider,
       model,
-      messages: [createUserMessage({ content: [{ type: 'text', text: input.user }], source: { kind: 'plugin', plugin: 'dsh-devforge' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: input.user }], source: { kind: DEVFORGE_SOURCE_KIND } })],
       system: input.system,
       maxTokens: input.maxTokens ?? 800,
     })) assembler.push(chunk)

@@ -184,7 +184,8 @@ export function makeRoutes(
         try {
           // 目标版本由 Host 实时拉官方 tags 决定（请求体不参与），包名硬编码 @deepseek-ai/dsh。
           const result = await pluginUpdate.harnessApply()
-          writeJson(res, 200, { ok: true, ...result })
+          // result 自带 ok 字段；展开后强制 ok=true，保证「命令执行成功」与「业务结果」不混淆。
+          writeJson(res, 200, { ...result, ok: true })
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

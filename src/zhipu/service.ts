@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '../settings-compat.ts'
+import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { decodeUpstreamBody, upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { deleteCredential, setCredential } from '../credentials-writer.ts'
@@ -107,7 +107,7 @@ export class ZhipuCodingPlanService {
 
   /** 当前主 Key 引用名（聊天路由实际使用的凭据引用，面板「设为主 Key」的目标位）。 */
   private async primaryName(): Promise<string> {
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
     return resolveZhipuPrimaryKeyName(section, this.config.apiKeyEnv)
   }
 
@@ -115,7 +115,7 @@ export class ZhipuCodingPlanService {
   async status(): Promise<ZhipuStatus> {
     const reference = this.providerReference()
     const credential = await this.ctx.credentials.describe(reference)
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
     const provider = section?.providers?.[PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configuredIds = new Set(liveIds)
@@ -148,7 +148,7 @@ export class ZhipuCodingPlanService {
   /** 读取官方 API 直调（开放平台）的脱敏状态：凭据、provider 与模型清单。 */
   async officialStatus(): Promise<ZhipuOfficialStatus> {
     const credential = await this.ctx.credentials.describe(this.officialReference())
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
     const provider = section?.providers?.[ZHIPU_OFFICIAL_PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configuredIds = new Set(liveIds)
@@ -515,7 +515,7 @@ export class ZhipuCodingPlanService {
 
   /** 校验并构造聊天路由 provider 的凭据引用（主 Key 的脱敏状态仍按它上报）。 */
   private providerReference(): ReturnType<typeof credentialRef> {
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ZhipuProviderSection | undefined
     const name = resolveZhipuPrimaryKeyName(section, this.config.apiKeyEnv)
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new ZhipuServiceError('智谱凭据引用格式无效。', 400)
     return credentialRef(name)

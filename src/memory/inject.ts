@@ -23,6 +23,7 @@ import type { MemoryRecallService } from './recall.ts'
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryStatsStore } from './stats.ts'
 import { normalizeMemoryText } from './sediment.ts'
+import { DEVFORGE_SOURCE_KIND, isDevforgeFamilySource, isLegacyInjectedKind } from '../session-source.ts'
 
 /** 从 user 消息内容块提取纯文本（防御式，未知形状返回空串）。 */
 export function messageText(message: unknown): string {
@@ -65,7 +66,10 @@ export function buildMemoryQuery(messages: readonly unknown[]): string {
     if (message === null || typeof message !== 'object') continue
     if (message.role !== undefined && message.role !== 'user') continue
     const source = message.source as { kind?: unknown } | null
-    if (source !== null && typeof source === 'object' && source.kind === 'plugin') continue
+    // v4 里每个生产者用自己的 kind，通用 'plugin' 已废除：本插件家族（本体 + 内置飞书）
+    // 的注入必须跳过，历史会话里的旧写法（'plugin' / 'plugin:<包名>'）也要跳过，
+    // 否则注入的快照会被误当成用户意图去检索。
+    if (isDevforgeFamilySource(source) || isLegacyInjectedKind(source?.kind)) continue
     const cleaned = stripBoilerplate(messageText(message)).trim()
     if (cleaned === '') continue
     return cleaned.slice(0, 600)
@@ -362,7 +366,9 @@ export class MemoryInjectionService {
             ...decision,
             messages: [...(decision.messages ?? []), createUserMessage({
               content: [{ type: 'text', text }],
-              source: { kind: 'plugin', plugin: 'dsh-devforge', form: 'snapshot', sections },
+              // 会话格式 v4 要求「生产者自有」的 source kind：用本插件在
+              // session-source.ts 里声明的 kind，form='snapshot' 表示本快照可被后续快照取代。
+              source: { kind: DEVFORGE_SOURCE_KIND, form: 'snapshot', sections },
             })],
           }
         } catch { return decision }

@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '../settings-compat.ts'
+import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import type { SiliconFlowStatus } from './protocol.ts'
@@ -145,7 +145,7 @@ export class SiliconFlowService {
   /** 返回凭据与模型目录的脱敏状态。 */
   async status(): Promise<SiliconFlowStatus> {
     const credential = await this.ctx.credentials.describe(this.reference())
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
     const provider = section?.providers?.[SILICONFLOW_PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configured = new Set(liveIds)

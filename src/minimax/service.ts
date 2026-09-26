@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '../settings-compat.ts'
+import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { upstreamRequestHeaders, upstreamResponseText } from '../upstream-fetch.ts'
 import { MiniMaxApiClient } from './api-client.ts'
@@ -80,7 +80,7 @@ export class MiniMaxService {
   async status(): Promise<MiniMaxStatus> {
     const reference = this.reference()
     const credential = await this.ctx.credentials.describe(reference)
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as { providers?: Record<string, { models?: Array<{ id?: string }> }> } | undefined
     const provider = section?.providers?.[MINIMAX_PROVIDER_ID]
     const liveIds = (provider?.models ?? []).map((model) => model.id).filter((id): id is string => typeof id === 'string')
     const configuredIds = new Set(liveIds)

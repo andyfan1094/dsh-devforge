@@ -36,8 +36,9 @@ export function buildUserMessage(text, imageRefs = []) {
       ...(value === '' ? [] : [{ type: 'text', text: value }]),
     ],
     source: {
-      kind: 'plugin',
-      plugin: 'dsh-feishu',
+      // 会话格式 v4：每个生产者声明自己的 kind（见 src/session-source.ts 的声明合并），
+      // 旧写法 { kind: 'plugin', plugin: '...' } 会被 v4 准入直接拒绝。
+      kind: 'dsh-feishu',
       form: 'notice',
       summary: value.slice(0, 120) || (images.length > 0 ? '[图片]' : ''),
     },

@@ -12,6 +12,7 @@ import type { MemorySettings, MemoryEvidence, MemoryScopeContext, NativeMemoryCa
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryStatsStore } from './stats.ts'
 import { appendProjectFact } from '../projects/store.ts'
+import { isDevforgeSource } from '../session-source.ts'
 
 export type MemoryGenerateFn = (system: string, user: string) => Promise<string>
 
@@ -45,8 +46,9 @@ export function sessionEventsOf(session: unknown): readonly unknown[] {
 }
 
 function isMemorySnapshotSource(data: unknown): boolean {
-  const source = (data as { source?: { kind?: unknown; plugin?: unknown } } | undefined)?.source
-  return source !== null && typeof source === 'object' && source.kind === 'plugin' && source.plugin === 'dsh-devforge'
+  // 兼容三种形态：新 kind（'dsh-devforge'）、v3→v4 迁移产物（'plugin:dsh-devforge'）、
+  // 未迁移的 v3 写法（kind='plugin' + plugin='dsh-devforge'）。
+  return isDevforgeSource((data as { source?: unknown } | undefined)?.source)
 }
 
 function contentText(data: unknown): string {

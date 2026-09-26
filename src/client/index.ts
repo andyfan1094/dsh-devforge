@@ -30,8 +30,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** 前置服务（runtime 就绪后再挂 UI）；layout 为官方布局服务（侧栏行选中 + 返回会话）。 */
-export const inject = ['slots', 'locale', 'settingsScope', 'theme', 'layout']
+/**
+ * 前置服务（runtime 就绪后再挂 UI）；layout 为官方布局服务（侧栏行选中 + 返回会话）。
+ * 注：dsh 0.1.7-rc.2 起客户端运行时不再提供 settingsScope（宿主树里已无此符号），
+ * 保留声明会让本插件永久 pending，界面弹 `dsh-devforge: pending (waiting for service: settingsScope)`。
+ * 本插件实际只消费 locale / slots / theme / layout，故移除该遗留声明。
+ */
+export const inject = ['slots', 'locale', 'theme', 'layout']
 
 /** 类型面（导出纪律：client 面只出类型与插件契约）。 */
 export type { DevforgeKey }

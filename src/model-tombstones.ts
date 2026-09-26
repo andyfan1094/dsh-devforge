@@ -17,7 +17,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Context } from '@deepseek-ai/cordis'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from './settings-compat.ts'
+import { readSectionFrom, settingsNamespace } from './settings-compat.ts'
 import { deepEqualJson } from './provider-settings.ts'
 import { getDb, getSettings, putSettings } from './store/db.ts'
 
@@ -137,7 +137,7 @@ export async function deleteProviderModelsWithTombstone(options: {
   const namespace = settingsNamespace('llm-pi-ai')
   const idSet = new Set(ids)
   const readModels = (): Array<Record<string, unknown>> => {
-    const section = ctx.settings.get(namespace) as { providers?: Record<string, { models?: unknown }> } | undefined
+    const section = readSectionFrom(ctx.settings, namespace) as { providers?: Record<string, { models?: unknown }> } | undefined
     const models = section?.providers?.[providerId]?.models
     return Array.isArray(models) ? models as Array<Record<string, unknown>> : []
   }

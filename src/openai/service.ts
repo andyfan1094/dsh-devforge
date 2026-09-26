@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '../settings-compat.ts'
+import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeDeleteIds } from '../model-tombstones.ts'
@@ -237,7 +237,7 @@ export class OpenAiGatewayService {
 
   /** 返回脱敏状态；发现遗留 Sub2API 路由时先执行一次幂等迁移。 */
   async status(): Promise<OpenAiGatewayStatus> {
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const primary = this.endpointConfigs()[0]
     const primaryId = primary === undefined ? OPENAI_PROVIDER_ID : openAiProviderId(primary, 0)
     if (section?.providers?.[primaryId] === undefined && section?.providers?.['sub2api-openai'] !== undefined) return await this.ensureProvider()
@@ -247,7 +247,7 @@ export class OpenAiGatewayService {
   /** 只读取当前状态，不触发迁移；供 ensureProvider 避免递归调用。 */
   private async readStatus(): Promise<OpenAiGatewayStatus> {
     const endpoints = this.endpointConfigs()
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const primary = endpoints[0]
     const primaryApiKeyEnv = primary?.apiKeyEnv ?? normalizeApiKeyEnv(this.config.apiKeyEnv)
     const credentialStatuses = await Promise.all(endpoints.map(async (endpoint) => await this.describeCredential(endpoint.apiKeyEnv)))
@@ -321,7 +321,7 @@ export class OpenAiGatewayService {
     const updates: ProviderUpdate[] = []
     const results: OpenAiGatewayEndpointFetchResult[] = []
     const added: string[] = []; const removed: string[] = []; const kept: string[] = []; let total = 0
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     for (const { endpoint, index } of selected) {
       const providerId = openAiProviderId(endpoint, index)
       const existing = readProviderModels(section?.providers?.[providerId])
@@ -407,7 +407,7 @@ export class OpenAiGatewayService {
       }
       if (patch.maxTokens > patch.contextWindow) throw new OpenAiServiceError('输出上限不能超过上下文窗口。', 400)
     }
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const providerId = openAiProviderId(endpoint, index)
     const models = readProviderModels(section?.providers?.[providerId])
     if (!models.some((model) => model.id === patch.modelId)) throw new OpenAiServiceError('指定模型不在该端点的聊天路由里，请先获取模型。', 404)
@@ -432,7 +432,7 @@ export class OpenAiGatewayService {
     if (index < 0) throw new OpenAiServiceError('指定端点不存在', 404)
     const endpoint = endpoints[index] as OpenAiGatewayEndpointConfig
     const providerId = openAiProviderId(endpoint, index)
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const models = readProviderModels(section?.providers?.[providerId])
     const nextModels = models.filter((model) => !(typeof model.id === 'string' && ids.has(model.id)))
     // 保留保护：端点模型目录不允许被删空。
@@ -446,7 +446,7 @@ export class OpenAiGatewayService {
   async ensureProvider(): Promise<OpenAiGatewayStatus> {
     const migration = this.readLegacyConfig()
     const endpoints = this.endpointConfigs()
-    const section = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const section = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const providers = section?.providers ?? {}
     const legacyProvider = providers['sub2api-openai']
     const legacyModels = readProviderModels(legacyProvider)
@@ -499,8 +499,8 @@ export class OpenAiGatewayService {
 
   /** 把旧 llm-sub2api 或其 llm-pi-ai Provider 映射到天工造梦；不读取或复制 Key 明文。 */
   private readLegacyConfig(): { provider?: Record<string, unknown>; changed: boolean } {
-    const legacy = this.ctx.settings.get(LEGACY_SUB2API_NAMESPACE) as LegacySub2ApiSection | undefined
-    const llm = this.ctx.settings.get(LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
+    const legacy = readSettingsSection(this.ctx, LEGACY_SUB2API_NAMESPACE) as LegacySub2ApiSection | undefined
+    const llm = readSettingsSection(this.ctx, LLM_PI_AI_NAMESPACE) as ProviderSection | undefined
     const legacyProvider = llm?.providers?.['sub2api-openai']
     const hasLegacy = legacy !== undefined || legacyProvider !== undefined
     const currentBaseURL = typeof this.config.baseURL === 'string' ? this.config.baseURL.trim() : ''

@@ -19,15 +19,20 @@ import {
   RETAIN_TOKENS,
   THRESHOLD_RATIO,
 } from './agent-preset-250k-template.ts'
+import { readSectionFrom } from './settings-compat.ts'
 import type { AgentPreset250kSetupResult, AgentPreset250kStatus } from './protocol.ts'
 
 export type { AgentPreset250kSetupResult, AgentPreset250kStatus }
 
 /** 一键配置依赖的宿主服务（均可选：缺失时对应能力降级为仅文件操作）。 */
 export interface AgentPreset250kDeps {
-  /** 宿主 settings 服务：读全局 agent-presets 域 + merge 更新默认预设。 */
+  /**
+   * 宿主 settings 服务：读全局 agent-presets 域 + merge 更新默认预设。
+   * get/describe 双形态可选（0.1.6 有 get；0.1.7 起只有 describe，读取走 readSectionFrom 兼容层）。
+   */
   settings?: {
-    get(ns: string): unknown
+    get?(ns: string): unknown
+    describe?(): ReadonlyArray<{ ns?: unknown; value?: unknown }>
     update(ns: string, patch: object): Promise<void>
   }
   /** agent 预设服务：配置完成后校验预设可解析挂载。 */
@@ -57,7 +62,7 @@ export function readAgentPreset250kStatus(deps: AgentPreset250kDeps, dshHome?: s
   const presetPath = join(resolvePresetRoot(dshHome), PRESET_ID, 'agent.cordis.yml')
   const yaml = existsSync(presetPath) ? readFileSync(presetPath, 'utf8') : ''
   const params = yaml ? parsePresetParams(yaml) : {}
-  const domain = deps.settings?.get('agent-presets') as { default?: unknown } | undefined
+  const domain = readSectionFrom(deps.settings, 'agent-presets') as { default?: unknown } | undefined
   const defaultPreset = typeof domain?.default === 'string' ? domain.default : undefined
   return {
     presetPath,
