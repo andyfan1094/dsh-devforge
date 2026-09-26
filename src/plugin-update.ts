@@ -150,15 +150,15 @@ export interface PluginUpdateConfig {
 export interface SiteReleaseIndex {
   /** 最新版本号。 */
   latest: string
-  /** 最新版 tgz 固定地址。 */
+  /** 最新版 tgz 地址（相对路径已按清单地址补全为绝对 https）。 */
   latestUrl: string
-  /** 版本条目（含 sha256 完整性值）。 */
-  versions: Array<{ version: string; url: string; sha256?: string }>
+  /** 版本条目（含 sha256 完整性值与更新日志）。 */
+  versions: Array<{ version: string; url: string; sha256?: string; date?: string; notes?: string }>
 }
 
 /** 渠道归一后的「最新版」信息。 */
 export interface LatestInfo {
-  /** 最新版本号（纯 semver）。 */
+  /** 最新版本号（semver，可带预发布段）。 */
   version: string
   /** tgz 下载直链。 */
   tgzUrl: string
@@ -166,6 +166,61 @@ export interface LatestInfo {
   via: 'site'
   /** 清单提供的 sha256。 */
   sha256?: string
+  /** 发布日期（清单提供时）。 */
+  date?: string
+  /** 最新版更新日志（清单 notes）。 */
+  notes?: string
+  /** 最近几个版本的更新日志（面板展示用，含最新版，最多 3 条）。 */
+  history?: Array<{ version: string; date?: string; notes?: string }>
+}
+
+/** tgz 地址绝对化：清单允许相对路径（/downloads/...），按清单地址的 origin 补全。 */
+export function absolutizeTgzUrl(url: string, indexUrl: string): string {
+  if (/^https:\/\//.test(url)) return url
+  if (url.startsWith('/')) {
+    const origin = new URL(indexUrl).origin
+    return origin + url
+  }
+  return url
+}
+
+/**
+ * 把官网清单规整成最新版信息；结构不合法返回 undefined。
+ * 兼容相对路径（0.40.1 修复「官网清单结构不合法」：官网 index.json 的 latestUrl/url
+ * 是 /downloads/... 相对路径，旧解析器强要求 https:// 导致整单被拒）；透出 date/notes 供面板显示更新日志。
+ */
+export function parseSiteIndex(payload: unknown, indexUrl?: string): SiteReleaseIndex | undefined {
+  const record = payload as { latest?: unknown; latestUrl?: unknown; versions?: unknown } | null
+  if (record === null || typeof record !== 'object') return undefined
+  if (!isVersionLikeAny(record.latest)) return undefined
+  if (!Array.isArray(record.versions)) return undefined
+  const resolveUrl = (value: string): string => (indexUrl !== undefined ? absolutizeTgzUrl(value, indexUrl) : value)
+  const versions: SiteReleaseIndex['versions'] = []
+  for (const entry of record.versions) {
+    const item = entry as { version?: unknown; url?: unknown; sha256?: unknown; date?: unknown; notes?: unknown }
+    if (typeof item.version !== 'string' || typeof item.url !== 'string') continue
+    if (!/^https:\/\//.test(item.url) && !item.url.startsWith('/')) continue
+    versions.push({
+      version: item.version,
+      url: resolveUrl(item.url),
+      sha256: typeof item.sha256 === 'string' ? item.sha256 : undefined,
+      date: typeof item.date === 'string' ? item.date : undefined,
+      notes: typeof item.notes === 'string' ? item.notes : undefined,
+    })
+  }
+  if (versions.length === 0) return undefined
+  const latest = typeof record.latest === 'string' ? record.latest : ''
+  // latestUrl 允许缺失或相对：优先取与 latest 匹配的版本条目地址，再退 latestUrl 字段。
+  const matched = versions.find((entry) => entry.version === latest)
+  const latestUrlRaw = typeof record.latestUrl === 'string' && (record.latestUrl.startsWith('https://') || record.latestUrl.startsWith('/')) ? record.latestUrl : ''
+  const latestUrl = matched?.url ?? (latestUrlRaw !== '' ? resolveUrl(latestUrlRaw) : '')
+  if (latestUrl === '') return undefined
+  return { latest, latestUrl, versions }
+}
+
+/** 宽松版本号（x.y.z 可带预发布段）：清单 latest 兼容内测版本。 */
+function isVersionLikeAny(value: unknown): value is string {
+  return typeof value === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)
 }
 
 /** 单个插件的检查结果。 */
@@ -179,6 +234,12 @@ export interface UpdateCheckItem {
   status: 'up-to-date' | 'update-available' | 'installed-unknown' | 'error'
   /** 补充说明（错误原因/内测提示），空串 = 无。 */
   reason: string
+  /** 最新版发布日期（清单提供时）。 */
+  latestDate?: string
+  /** 最新版更新内容（清单 notes，0.40.1 辉哥需求「直接显示更新了什么」）。 */
+  latestNotes?: string
+  /** 最近几个版本的更新日志（含最新版，最多 3 条）。 */
+  history?: Array<{ version: string; date?: string; notes?: string }>
 }
 
 /** 一键升级结果。 */
@@ -209,23 +270,6 @@ export function compareSemver(a: string, b: string): number {
     if ((pa[i] ?? 0) < (pb[i] ?? 0)) return -1
   }
   return 0
-}
-
-/** 把官网清单规整成最新版信息；结构不合法返回 undefined。 */
-export function parseSiteIndex(payload: unknown): SiteReleaseIndex | undefined {
-  const record = payload as { latest?: unknown; latestUrl?: unknown; versions?: unknown } | null
-  if (record === null || typeof record !== 'object') return undefined
-  if (typeof record.latest !== 'string' || !isSemver(record.latest)) return undefined
-  if (typeof record.latestUrl !== 'string' || !record.latestUrl.startsWith('https://')) return undefined
-  if (!Array.isArray(record.versions)) return undefined
-  const versions = []
-  for (const entry of record.versions) {
-    const item = entry as { version?: unknown; url?: unknown; sha256?: unknown }
-    if (typeof item.version === 'string' && typeof item.url === 'string' && item.url.startsWith('https://')) {
-      versions.push({ version: item.version, url: item.url, sha256: typeof item.sha256 === 'string' ? item.sha256 : undefined })
-    }
-  }
-  return { latest: record.latest, latestUrl: record.latestUrl, versions }
 }
 
 /**
@@ -276,7 +320,7 @@ export async function fetchSiteIndex(indexUrl: string, timeoutMs = 15000): Promi
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error('官网清单 HTTP ' + String(response.status))
-  const parsed = parseSiteIndex(JSON.parse(await upstreamResponseText(response)))
+  const parsed = parseSiteIndex(JSON.parse(await upstreamResponseText(response)), indexUrl)
   if (!parsed) throw new Error('官网清单结构不合法')
   return parsed
 }
@@ -287,7 +331,15 @@ export async function resolveLatest(source: UpdateSource): Promise<LatestInfo> {
     const index = await fetchSiteIndex(source.indexUrl)
     // 版本条目里优先取与 latest 匹配的版本化地址（保留 sha256），否则退 latest 固定地址。
     const matched = index.versions.find((entry) => entry.version === index.latest)
-    return { version: index.latest, tgzUrl: matched?.url ?? index.latestUrl, via: 'site', sha256: matched?.sha256 }
+    return {
+      version: index.latest,
+      tgzUrl: matched?.url ?? index.latestUrl,
+      via: 'site',
+      sha256: matched?.sha256,
+      date: matched?.date,
+      notes: matched?.notes,
+      history: index.versions.slice(0, 3).map((entry) => ({ version: entry.version, date: entry.date, notes: entry.notes })),
+    }
   }
   throw new Error('更新源未登记官网清单地址（GitHub 兜底渠道已移除）')
 }
@@ -412,6 +464,8 @@ export interface PluginUpdateServiceDeps {
   runAdd?: typeof runPluginAdd
   /** 官网登录（site 配置存在且 apply 走官网渠道时使用；测试可注入）。 */
   loginSite?: typeof loginSite
+  /** 面板官网登录态（个人中心 session token，0.40.1 起下载优先复用，免重复配账号）。 */
+  sessionToken?: () => Promise<string>
 }
 
 /** 单插件检查（纯编排，便于单测）。 */
@@ -426,12 +480,12 @@ export async function checkOne(source: UpdateSource, installedVersion: string, r
     return { ...base, status: 'error', reason: error instanceof Error ? error.message : String(error) }
   }
   if (installedVersion === '') {
-    return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'installed-unknown', reason: '本机未安装该插件' }
+    return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'installed-unknown', reason: '本机未安装该插件', latestDate: latest.date, latestNotes: latest.notes, history: latest.history }
   }
   const cmp = compareSemver(installedVersion, latest.version)
-  if (cmp > 0) return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'up-to-date', reason: '本地版本高于官网最新（内测/暂存环境）' }
-  if (cmp === 0) return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'up-to-date' }
-  return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'update-available', reason: '' }
+  if (cmp > 0) return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'up-to-date', reason: '本地版本高于官网最新（内测/暂存环境）', latestDate: latest.date, latestNotes: latest.notes, history: latest.history }
+  if (cmp === 0) return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'up-to-date', latestDate: latest.date, latestNotes: latest.notes, history: latest.history }
+  return { ...base, latest: latest.version, assetUrl: latest.tgzUrl, status: 'update-available', reason: '', latestDate: latest.date, latestNotes: latest.notes, history: latest.history }
 }
 
 /** 插件更新服务：check 面板数据源 + apply 一键升级。 */
@@ -466,9 +520,9 @@ export class PluginUpdateService {
   }
 
   /**
-   * 一键升级：白名单校验 → 官网清单解析最新 → （配置了官网账号时先登录换 Cookie）
-   * → 下载（清单 sha256 强制校验）→ dsh plugin add。
-   * 官网下载已启用登录制：未配置账号且下载 401/403 时，抛出面板配置引导。
+   * 一键升级：白名单校验 → 官网清单解析最新 → 下载（清单 sha256 强制校验）→ dsh plugin add。
+   * 下载鉴权（0.40.1 辉哥定稿「插件已登录这页就该是登录的」）：优先复用面板官网登录态
+   * （session token，Bearer），无登录态时回退 site 手动账号登录换 sid。
    */
   async apply(packageName: string): Promise<PluginUpdateApplyResult> {
     const config = this.resolveConfig()
@@ -479,9 +533,13 @@ export class PluginUpdateService {
     const resolveLatestFn = this.deps.resolveLatestFn ?? resolveLatest
     const latest = await resolveLatestFn(source)
     const download = this.deps.download ?? downloadTgz
-    // 官网登录墙：site 凭据配置齐全时先登录换 sid；Cookie 只进 Host 内存，不落日志。
+    // 下载鉴权：面板登录态（Bearer session token）优先；无登录态再试 site 手动账号。
     let downloadHeaders: Record<string, string> | undefined
-    if (latest.via === 'site' && config.site !== undefined && config.site.username.trim() !== '' && config.site.password !== '') {
+    if (latest.via === 'site' && this.deps.sessionToken !== undefined) {
+      const token = await this.deps.sessionToken().catch(() => '')
+      if (token !== '') downloadHeaders = { authorization: 'Bearer ' + token }
+    }
+    if (downloadHeaders === undefined && latest.via === 'site' && config.site !== undefined && config.site.username.trim() !== '' && config.site.password !== '') {
       const login = this.deps.loginSite ?? loginSite
       const sid = await login(config.site)
       downloadHeaders = { cookie: sid }

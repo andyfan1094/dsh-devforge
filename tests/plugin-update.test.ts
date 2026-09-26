@@ -78,6 +78,22 @@ test('parseSiteIndex：合法清单解析，结构不合法返回 undefined', ()
   assert.equal(parseSiteIndex(null), undefined)
 })
 
+test('parseSiteIndex：相对路径按清单地址补全，notes/date 透出（0.40.1 修复「官网清单结构不合法」）', () => {
+  const parsed = parseSiteIndex({
+    latest: '0.40.0',
+    latestUrl: '/downloads/dsh-devforge-latest.tgz',
+    updated: '2026-09-24',
+    versions: [{ version: '0.40.0', date: '2026-09-24', url: '/downloads/dsh-devforge-0.40.0.tgz', sha256: 'aa11', notes: '本次更新内容说明' }],
+  }, 'https://modagentai.com/downloads/index.json')
+  assert.ok(parsed)
+  assert.equal(parsed?.latest, '0.40.0')
+  // latestUrl 优先取与 latest 匹配的版本条目地址（版本化 tgz 可校验 sha256），而非可变的 latest 指针。
+  assert.equal(parsed?.latestUrl, 'https://modagentai.com/downloads/dsh-devforge-0.40.0.tgz')
+  assert.equal(parsed?.versions[0]?.url, 'https://modagentai.com/downloads/dsh-devforge-0.40.0.tgz')
+  assert.equal(parsed?.versions[0]?.notes, '本次更新内容说明')
+  assert.equal(parsed?.versions[0]?.date, '2026-09-24')
+})
+
 test('sha256Hex：已知向量', () => {
   assert.equal(sha256Hex(Buffer.from('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
 })
@@ -168,6 +184,24 @@ test('PluginUpdateService.apply：白名单外拒绝，白名单内走完下载�
 
 test('PluginUpdateService.apply：sha256 校验失败时拒绝安装', async () => {
   await assert.rejects(service({ hashFail: true }).apply('dsh-devforge'), /sha256/)
+})
+
+test('PluginUpdateService.apply：面板登录态优先（Bearer session token），未配 site 账号也可下载（0.40.1）', async () => {
+  let seenHeaders: Record<string, string> | undefined
+  const svc = new PluginUpdateService({
+    getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
+    readInstalled: () => ({ version: '0.13.0' }),
+    resolveLatestFn: async () => siteLatest('0.13.1'),
+    download: async (_url, _name, version, options) => {
+      seenHeaders = options?.headers
+      return '/tmp/dsh-devforge-' + version + '.tgz'
+    },
+    runAdd: async () => 'done',
+    sessionToken: async () => 'sess-token-1',
+  })
+  const result = await svc.apply('dsh-devforge')
+  assert.equal(result.ok, true)
+  assert.equal(seenHeaders?.authorization, 'Bearer sess-token-1')
 })
 
 // ---------------------------------------------------------------------------

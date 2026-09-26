@@ -96,6 +96,8 @@ export function makeRoutes(
     apply: (packageName: string) => Promise<PluginUpdateApplyResult>
     /** DSH 本体检查（官方 GitHub Tags，含预发布版本比较与升级命令引导）。 */
     harnessCheck: () => Promise<HarnessUpdateCheckItem>
+    /** DSH 本体一键升级（0.40.1：Host 代跑 npm/pnpm 全局安装，版本实时拉取；完成仍须确认重启）。 */
+    harnessApply: () => Promise<{ ok: boolean; version: string; output: string; needRestart: boolean }>
     /** 官网账号设置读取（脱敏视图：明文密码不出 Host）。 */
     siteGet: () => PluginUpdateSiteView
     /** 官网账号设置写入（校验失败抛中文错误 → 400）。 */
@@ -168,6 +170,21 @@ export function makeRoutes(
         try {
           const harness = await pluginUpdate.harnessCheck()
           writeJson(res, 200, { ok: true, harness })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/plugin-update/harness/apply',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          // 目标版本由 Host 实时拉官方 tags 决定（请求体不参与），包名硬编码 @deepseek-ai/dsh。
+          const result = await pluginUpdate.harnessApply()
+          writeJson(res, 200, { ok: true, ...result })
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }

@@ -370,6 +370,12 @@ export class DevforgeApi {
     return data.harness
   }
 
+  /** 插件更新：DSH 本体一键升级（Host 代跑 npm/pnpm 全局安装，版本实时拉取；完成仍须确认重启）。 */
+  async applyHarnessUpgrade(): Promise<{ ok: boolean; version: string; output: string; needRestart: boolean }> {
+    const data = await readJson<{ ok: boolean; version: string; output: string; needRestart: boolean }>(await fetch(DEVFORGE_API.pluginUpdateHarnessApply, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }))
+    return data
+  }
+
   /** 插件更新：读取官网账号设置（脱敏视图，无明文密码）。 */
   async getPluginUpdateSite(): Promise<PluginUpdateSiteView> {
     const data = await readJson<{ site: PluginUpdateSiteView }>(await fetch(DEVFORGE_API.pluginUpdateSite, { cache: 'no-store' }))

@@ -1,8 +1,10 @@
 /**
- * 天工造梦内的插件更新页：顶部官网账号设置卡（登录制下载凭据，密码脱敏）；
- * 中区检查 dsh-devforge 自身（官网清单，登录制下载）；下区检查 DeepSeek Harness 本体（官方 GitHub Tags）。
- * 本体不做一键升级：官方没有跨安装方式的升级协议，页面只提供「查看官方版本 /
- * 复制升级命令」，由用户在终端执行后点「重启 DSH」生效。
+ * 天工造梦内的插件更新页（0.40.1 辉哥定稿改版）：
+ * - 顶部官网登录态卡：直接复用个人中心的官网登录（session token），下载自动带凭据，
+ *   不再要求单独配置账号密码；手动账号表单保留为折叠的备用通道。
+ * - 插件行直接显示「更新了什么」（官网清单 notes + 最近版本日志）。
+ * - DSH 本体支持一键升级（Host 代跑 npm/pnpm 全局安装，版本由 Host 实时拉官方 tags 决定），
+ *   完成后仍须点「重启」生效；复制命令保留为失败兜底。
  * 红点聚合判定在 DevforgePanel：仅当任一项确认 update-available 才亮。
  */
 import { useEffect, useState } from 'react'
@@ -71,6 +73,22 @@ function copyText(text: string): boolean {
   return fallback()
 }
 
+/** 更新日志块：最新版说明 + 最近版本列表（0.40.1 辉哥需求「直接显示更新了什么」）。 */
+function changelogBlock(item: UpdateCheckItem): JSX.Element | null {
+  const entries = (item.history ?? []).filter((entry) => (entry.notes ?? '') !== '')
+  if (entries.length === 0) return null
+  return (
+    <div className={css['updateLog']}>
+      {entries.map((entry, index) => (
+        <div key={entry.version} className={css['updateLogRow']}>
+          <span className={css['updateLogVersion']}>v{entry.version}{entry.date !== undefined ? ' · ' + entry.date : ''}{index === 0 ? ' · 最新' : ''}</span>
+          <span className={css['updateLogNotes']}>{entry.notes}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** 插件更新页签组件（检查状态由父组件注入；升级动作仍在本页触发）。 */
 export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; state: UpdateCheckState; onRefresh: () => void }): JSX.Element {
   const [busy, setBusy] = useState('')
@@ -79,7 +97,16 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
   const [done, setDone] = useState('')
   const { items, harness, enabled, loading, error } = state
 
-  // —— 官网账号设置卡状态（页签打开即读取；保存走 PUT，密码绝不回显）。 ——
+  // —— 官网登录态（0.40.1：复用个人中心登录，不再强制单独配账号）。 ——
+  const [session, setSession] = useState<{ loggedIn: boolean; username: string; role: '' | 'admin' | 'user'; expired: boolean } | null>(null)
+
+  useEffect(() => {
+    void api.getModagentaiStatus().then((status) => {
+      setSession({ loggedIn: status.loggedIn, username: status.username, role: status.role, expired: status.expired })
+    }).catch(() => { setSession(null) })
+  }, [api])
+
+  // —— 手动账号备用表单（折叠；登录态失效且无法重登时才需要）。 ——
   const [siteState, setSiteState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [site, setSite] = useState<PluginUpdateSiteView | null>(null)
   const [siteLoadError, setSiteLoadError] = useState('')
@@ -108,9 +135,6 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
       }
     })()
   }
-
-  // 页签打开即加载一次官网账号配置。
-  useEffect(loadSite, [api])
 
   /** 保存官网账号：先做前置校验（用户名格式/密码长度/地址协议），通过后 PUT。 */
   const saveSite = (): void => {
@@ -166,6 +190,25 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
     })()
   }
 
+  /** DSH 本体一键升级（0.40.1）：Host 代跑 npm/pnpm 全局安装，完成后提示重启。 */
+  const upgradeHarness = (): void => {
+    if (busy !== '') return
+    void (async () => {
+      try {
+        setBusy('harness')
+        setApplyError('')
+        setDone('')
+        const result = await api.applyHarnessUpgrade()
+        setDone('DSH 本体已升级到 v' + result.version + '：请点左下角「设置」旁的「重启」按钮生效。')
+        onRefresh()
+      } catch (e) {
+        setApplyError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setBusy('')
+      }
+    })()
+  }
+
   /** 复制本体升级命令并短暂回显「已复制」。 */
   const copyUpgradeCommand = (command: string): void => {
     if (copyText(command)) {
@@ -182,57 +225,72 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
     <section className={css['tabBody']}>
       <div className={css['toolbar']}>
         <strong>插件更新</strong>
-        <span className={css['sectionHint']}>插件对比官网清单（登录制下载，账号见下方官网账号卡）；DSH 本体对比官方 GitHub Tags；升级后需重启 DSH 生效</span>
+        <span className={css['sectionHint']}>插件对比官网清单（下载自动复用面板登录态）；DSH 本体对比官方 GitHub Tags，可一键升级；升级后需重启 DSH 生效</span>
         <span className={css['toolbarSpacer']} />
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={onRefresh}>检查更新</button>
       </div>
-      {/* 官网账号设置卡：登录制下载凭据；密码脱敏（仅 hasPassword + 掩码），保存后常驻生效。 */}
+      {/* 官网登录态卡：复用个人中心登录（session token），下载自动带凭据；手动账号收进折叠备用。 */}
       <section className={css['memoryPanel']}>
         <div className={css['panelHeading']}>
           <div>
-            <h3 className={css['sectionTitle']}>官网账号</h3>
-            <p className={css['sectionHint']}>官网下载已启用登录制，配置后插件检查更新与自动升级可用；账号由管理员分配</p>
+            <h3 className={css['sectionTitle']}>官网登录态</h3>
+            <p className={css['sectionHint']}>与个人中心共用同一份登录：已登录时插件下载自动带凭据，无需再配账号密码</p>
           </div>
-          <span className={css['badge']}>{site !== null && site.username !== '' && site.hasPassword ? '已配置' : '未配置'}</span>
+          {session === null ? (
+            <span className={css['badge']} data-status="unknown">状态未知</span>
+          ) : session.loggedIn && !session.expired ? (
+            <span className={css['badge']} data-status="ok">已登录 · {session.username}{session.role === 'admin' ? '（管理员）' : ''}</span>
+          ) : (
+            <span className={css['badge']} data-status="error">未登录或已失效</span>
+          )}
         </div>
-        {siteState === 'loading' && <div className={css['empty']} data-loading="">正在读取官网账号配置…</div>}
-        {siteState === 'error' && (
-          <div className={css['memoryForm']}>
-            <div className={css['banner']} data-kind="error">官网账号配置读取失败：{siteLoadError}</div>
-            <div className={css['formFooter']}><span className={css['sectionHint']}></span><button type="button" className={css['ghostButton']} onClick={loadSite}>重新加载</button></div>
-          </div>
+        {session !== null && session.loggedIn && !session.expired && (
+          <div className={css['sectionHint']}>下载与检查更新将携带此登录态（Bearer 会话令牌）；令牌只存本机 store.db，绝不回显。</div>
         )}
-        {siteState === 'ready' && site !== null && (
-          <div className={css['memoryForm']}>
-            {siteSaveError !== '' && <div className={css['banner']} data-kind="error">{siteSaveError}</div>}
-            {siteSaved !== '' && <div className={css['banner']} data-kind="success">{siteSaved}</div>}
-            <div className={css['compactFields']}>
-              <label className={css['compactField']}>
-                <span className={css['fieldLabel']}>官网地址（留空用默认）</span>
-                <input className={css['input']} value={formApiUrl} placeholder={PLUGIN_UPDATE_DEFAULT_SITE_API} onChange={(e) => { setFormApiUrl(e.target.value); setSiteSaved('') }}/>
-              </label>
-              <label className={css['compactField']}>
-                <span className={css['fieldLabel']}>用户名</span>
-                <input className={css['input']} value={formUsername} placeholder="官网账号（管理员分配）" onChange={(e) => { setFormUsername(e.target.value); setSiteSaved('') }}/>
-              </label>
-              <label className={css['compactField']}>
-                <span className={css['fieldLabel']}>密码{site.hasPassword ? <span className={css['sectionHint']}> {site.passwordMask}</span> : null}</span>
-                <input className={css['input']} type="password" autoComplete="new-password" value={formPassword} placeholder={site.hasPassword ? '已设置——留空表示不修改' : '未设置'} onChange={(e) => { setFormPassword(e.target.value); setSiteSaved('') }}/>
-              </label>
-            </div>
-            <div className={css['formFooter']}>
-              <span className={css['sectionHint']}>密码仅存本机 store.db（随 CNB 加密备份），接口只回传「是否已设置」，不回显明文。</span>
-              <button type="button" className={css['primaryButton']} disabled={siteSaving} onClick={saveSite}>{siteSaving ? '保存中…' : '保存官网账号'}</button>
-            </div>
-          </div>
+        {session !== null && (!session.loggedIn || session.expired) && (
+          <div className={css['banner']} data-kind="error">官网未登录或会话已失效：请到「个人中心」重新登录官网账号后再升级插件；也可在下方展开配置手动账号。</div>
         )}
+        <details className={css['siteFallback']}>
+          <summary className={css['sectionHint']}>备用：手动配置官网账号（一般无需填写）</summary>
+          {siteState === 'loading' && <div className={css['empty']} data-loading="">正在读取官网账号配置…</div>}
+          {siteState === 'error' && (
+            <div className={css['memoryForm']}>
+              <div className={css['banner']} data-kind="error">官网账号配置读取失败：{siteLoadError}</div>
+              <div className={css['formFooter']}><button type="button" className={css['ghostButton']} onClick={loadSite}>重新加载</button></div>
+            </div>
+          )}
+          {siteState === 'ready' && site !== null && (
+            <div className={css['memoryForm']}>
+              {siteSaveError !== '' && <div className={css['banner']} data-kind="error">{siteSaveError}</div>}
+              {siteSaved !== '' && <div className={css['banner']} data-kind="success">{siteSaved}</div>}
+              <div className={css['compactFields']}>
+                <label className={css['compactField']}>
+                  <span className={css['fieldLabel']}>官网地址（留空用默认）</span>
+                  <input className={css['input']} value={formApiUrl} placeholder={PLUGIN_UPDATE_DEFAULT_SITE_API} onChange={(e) => { setFormApiUrl(e.target.value); setSiteSaved('') }}/>
+                </label>
+                <label className={css['compactField']}>
+                  <span className={css['fieldLabel']}>用户名</span>
+                  <input className={css['input']} value={formUsername} placeholder="官网账号（管理员分配）" onChange={(e) => { setFormUsername(e.target.value); setSiteSaved('') }}/>
+                </label>
+                <label className={css['compactField']}>
+                  <span className={css['fieldLabel']}>密码{site.hasPassword ? <span className={css['sectionHint']}> {site.passwordMask}</span> : null}</span>
+                  <input className={css['input']} type="password" autoComplete="new-password" value={formPassword} placeholder={site.hasPassword ? '已设置——留空表示不修改' : '未设置'} onChange={(e) => { setFormPassword(e.target.value); setSiteSaved('') }}/>
+                </label>
+              </div>
+              <div className={css['formFooter']}>
+                <span className={css['sectionHint']}>密码仅存本机 store.db（随 CNB 加密备份），接口只回传「是否已设置」，不回显明文。</span>
+                <button type="button" className={css['primaryButton']} disabled={siteSaving} onClick={saveSite}>{siteSaving ? '保存中…' : '保存官网账号'}</button>
+              </div>
+            </div>
+          )}
+        </details>
       </section>
       {bannerError !== '' && <div className={css['banner']} data-kind="error">{bannerError}</div>}
       {done !== '' && <div className={css['banner']} data-kind="success">{done}</div>}
       {loading && <div className={css['empty']} data-loading="">正在检查更新…</div>}
       {!loading && harness !== null && (
         <div className={css['metricList']}>
-          {/* DSH 本体行：本地版本 / 官方最新 / GitHub 来源 / 可更新状态。 */}
+          {/* DSH 本体行：本地版本 / 官方最新 / GitHub 来源 / 可更新状态 + 一键升级（0.40.1）。 */}
           <div className={css['metricRow']}>
             <span>
               <strong>DeepSeek Harness（DSH 本体）</strong>
@@ -246,9 +304,12 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
             </strong>
             {harness.status === 'update-available' && harness.upgrade !== null && (
               <span className={css['inlineActions']}>
+                <button type="button" className={css['primaryButton']} disabled={busy !== ''} onClick={upgradeHarness}>
+                  {busy === 'harness' ? '升级中…（约 1-3 分钟）' : '一键升级'}
+                </button>
                 <a className={css['link']} href={harness.tagUrl} target="_blank" rel="noopener noreferrer">查看官方版本</a>
                 <button type="button" className={css['ghostButton']} onClick={() => copyUpgradeCommand(harness.upgrade !== null ? harness.upgrade.command : '')}>
-                  {copied === 'harness' ? '已复制 ✓' : '复制升级命令'}
+                  {copied === 'harness' ? '已复制 ✓' : '复制命令兜底'}
                 </button>
               </span>
             )}
@@ -257,7 +318,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
       )}
       {!loading && harness !== null && harness.status === 'update-available' && harness.upgrade !== null && (
         <div className={css['banner']}>
-          DSH 本体有新版：本体是运行中的宿主进程，本插件不自动替换。请在终端执行复制来的命令（当前安装方式：{harness.upgrade.manager === 'npm' ? 'npm 全局' : harness.upgrade.manager === 'pnpm' ? 'pnpm 全局' : '未识别，按官方 npm 渠道'}；{harness.upgrade.evidence}），完成后点左下角「设置」旁的「重启」按钮生效。
+          DSH 本体有新版：点「一键升级」由面板代为执行 npm 升级（当前安装方式：{harness.upgrade.manager === 'npm' ? 'npm 全局' : harness.upgrade.manager === 'pnpm' ? 'pnpm 全局' : '未识别，请用复制命令'}；{harness.upgrade.evidence}），完成后点左下角「设置」旁的「重启」按钮生效。升级失败时用「复制命令兜底」在终端手动执行。
         </div>
       )}
       {!loading && !enabled && <div className={css['empty']}>插件更新能力已关闭（请在设置中开启）；DSH 本体检查不受此开关影响</div>}
@@ -284,6 +345,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
               >
                 {busy === item.packageName ? '升级中…' : '一键升级'}
               </button>
+              {changelogBlock(item)}
             </div>
           ))}
         </div>

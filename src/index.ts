@@ -111,7 +111,7 @@ import { createEffectiveModeResolver, installSandboxEscalationGuard, type Sandbo
 import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, applySitePatch, toSiteView, type PluginUpdateSiteConfig, type PluginUpdateSitePatch, type PluginUpdateSiteView } from './plugin-update.ts'
-import { checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
+import { applyHarnessUpdate, checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -603,7 +603,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     return pluginUpdateSiteGet()
   }
 
-  /** 插件更新服务：check 面板数据源 + apply 一键升级（site 凭据来自 settings 域；重启仍走 devforge_restart 确认红线）。 */
+  /** 插件更新服务：check 面板数据源 + apply 一键升级（下载优先复用面板官网登录态，site 凭据兜底；重启仍走 devforge_restart 确认红线）。 */
   const pluginUpdateService = new PluginUpdateService({
     getConfig: () => {
       const value = resolve().pluginUpdate
@@ -615,15 +615,23 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       }
     },
     readInstalled: createDefaultInstalledReader(),
+    sessionToken: async () => {
+      const token = await modagentaiService.readSessionToken()
+      return token ?? ''
+    },
   })
 
   /**
-   * DSH 本体检查：本机真实安装版本 vs 官方 GitHub Tags（含预发布版本比较）。
-   * 只返回检查结果与升级命令引导，绝不代为升级运行中的宿主本体。
+   * DSH 本体检查 + 一键升级：本机真实安装版本 vs 官方 GitHub Tags（含预发布版本比较）。
+   * 一键升级由 Host 代跑 npm/pnpm 全局安装，目标版本 Host 实时拉取（客户端不可指定）；
+   * 完成后仍须辉哥确认重启（devforge_restart 红线不变）。
    */
   const harnessEntryPath = process.argv[1] ?? ''
   const harnessCheck = (): Promise<HarnessUpdateCheckItem> => {
     return checkHarnessUpdate({ readInstalled: createDefaultHarnessVersionReader(harnessEntryPath), entryPath: harnessEntryPath })
+  }
+  const harnessApply = (): Promise<{ ok: boolean; version: string; output: string; needRestart: boolean }> => {
+    return applyHarnessUpdate({ readInstalled: createDefaultHarnessVersionReader(harnessEntryPath), entryPath: harnessEntryPath })
   }
 
   /** 插件能力总览活表面：sync() 按开关挂/卸，验收路由读取当前注入文本与诊断。 */
@@ -894,6 +902,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       check: () => pluginUpdateService.check(),
       apply: (packageName: string) => pluginUpdateService.apply(packageName),
       harnessCheck: () => harnessCheck(),
+      harnessApply: () => harnessApply(),
       siteGet: pluginUpdateSiteGet,
       sitePut: pluginUpdateSitePut,
     }, {

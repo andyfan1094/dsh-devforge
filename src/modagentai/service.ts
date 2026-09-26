@@ -128,6 +128,11 @@ export class ModagentaiService {
     }
   }
 
+  /** 面板官网登录态出口（0.40.1）：插件更新等能力复用同一份会话令牌，免重复配账号。 */
+  async readSessionToken(): Promise<string> {
+    return await this.readToken()
+  }
+
   /**
    * 套餐用量视图（辉哥 2026-09-23 定稿）：插件采用用户登录后，侧栏看板显示「什么套餐/总量/剩余」。
    * 聚合官网 /api/gems/packs（套餐目录 + 我的实例 + 余额）与 /api/search/quota（搜索折算）；

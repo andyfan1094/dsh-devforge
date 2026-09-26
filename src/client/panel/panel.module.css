@@ -373,6 +373,18 @@
 .feishuStat strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 .feishuStat strong[data-state="idle"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 
+/* 插件更新页（0.40.1）：行内更新日志块 + 手动账号折叠。 */
+.updateLog { display: flex; flex-basis: 100%; flex-direction: column; gap: 4px; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #f9fafb); }
+.updateLogRow { display: flex; min-width: 0; gap: 10px; align-items: baseline; }
+.updateLogVersion { flex: none; color: var(--dsw-alias-state-business-primary, #2563eb); font-size: 11px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.updateLogNotes { min-width: 0; color: var(--dsw-alias-label-secondary, #667085); font-size: 12px; }
+.siteFallback { margin-top: 8px; }
+.siteFallback > summary { cursor: pointer; user-select: none; padding: 4px 0; }
+.siteFallback > summary:hover { color: var(--dsw-alias-label-primary, #1f2329); }
+.badge[data-status="ok"] { color: var(--dsw-alias-state-success-primary, #16a34a); background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #16a34a) 10%, transparent); }
+.badge[data-status="error"] { color: var(--dsw-alias-state-error-primary, #dc2626); background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #dc2626) 10%, transparent); }
+.badge[data-status="unknown"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
+
 /* 智谱 Key 池：主/附加徽标与行内操作按钮。 */
 .keyBadge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 1.6; vertical-align: 1px; }
 .keyBadge[data-kind="primary"] { color: var(--dsw-alias-state-business-primary, #2563eb); background: var(--dsw-alias-interactive-bg-active, #eef2ff); border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 30%, transparent); }

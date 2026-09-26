@@ -19,6 +19,7 @@
  *     数字段在浮点下丢失精度导致误判。
  */
 
+import { execFile } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
@@ -282,4 +283,44 @@ export async function checkHarnessUpdate(deps: HarnessUpdateDeps): Promise<Harne
   if (cmp > 0) return { ...base, latest: latest.version, latestTag: latest.tag, status: 'up-to-date', reason: '本地版本高于官方最新（预发布/内测）', upgrade }
   if (cmp === 0) return { ...base, latest: latest.version, latestTag: latest.tag, status: 'up-to-date', upgrade }
   return { ...base, latest: latest.version, latestTag: latest.tag, status: 'update-available', upgrade }
+}
+
+/**
+ * 执行 npm/pnpm 全局安装（默认实现；测试可注入）。
+ * Windows 走 .cmd 垫片（npm.cmd/pnpm.cmd），与 PATH 是否含 npm 无关（node 自带全局前缀）。
+ */
+export function runHarnessUpgradeDefault(manager: 'npm' | 'pnpm', pkg: string, timeoutMs = 300000): Promise<string> {
+  const bin = process.platform === 'win32' ? manager + '.cmd' : manager
+  return new Promise((resolve, reject) => {
+    execFile(bin, ['install', '-g', pkg], {
+      timeout: timeoutMs,
+      encoding: 'utf8',
+      windowsHide: true,
+      env: { ...process.env, CI: 'true' },
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error('升级命令失败：' + ((stderr || '') + (stdout || '') + error.message).toString().slice(-400)))
+        return
+      }
+      resolve(((stdout || '') + (stderr || '')).slice(-400))
+    })
+  })
+}
+
+/**
+ * 一键升级 DSH 本体（0.40.1 辉哥需求「保存 dsh 的？」）：面板代为执行 npm/pnpm 全局升级。
+ * 安全边界：目标版本由 Host 实时拉 GitHub tags 决定（不接受客户端传版本），包名硬编码
+ * 官方 @deepseek-ai/dsh；升级完成后必须走既有 devforge_restart（辉哥确认红线不变）。
+ * 失败时面板回退「复制升级命令」手动路径；npm 对已装包失败场景保留原安装不半替换。
+ */
+export async function applyHarnessUpdate(deps: HarnessUpdateDeps & { run?: typeof runHarnessUpgradeDefault }): Promise<{ ok: boolean; version: string; output: string; needRestart: boolean }> {
+  const check = await checkHarnessUpdate(deps)
+  if (check.status === 'error') throw new Error('无法确定官方最新版本：' + check.reason)
+  if (check.status !== 'update-available') throw new Error('当前已是最新（本机 ' + (check.installed || '未知') + '），无需升级')
+  const manager = check.upgrade?.manager ?? 'npm'
+  if (manager === 'unknown') throw new Error('未能识别本机安装方式，请使用复制命令在终端手动升级')
+  const pkg = '@deepseek-ai/dsh@' + check.latest
+  const run = deps.run ?? runHarnessUpgradeDefault
+  const output = await run(manager, pkg)
+  return { ok: true, version: check.latest, output, needRestart: true }
 }
