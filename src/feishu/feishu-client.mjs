@@ -228,9 +228,31 @@ export function buildStreamingCard(content = STREAM_INITIAL_TEXT, {
   footer = STREAM_INITIAL_FOOTER,
   status = STREAM_INITIAL_STATUS,
   tools = '',
+  showStop = true,
 } = {}) {
   const footerContent = String(footer ?? '').trim() || STREAM_INITIAL_FOOTER
   const statusContent = String(status ?? '').trim() || STREAM_INITIAL_STATUS
+  const elements = [{
+    tag: 'markdown',
+    element_id: STREAM_STATUS_ELEMENT_ID,
+    content: statusContent,
+  }, buildToolSteps(tools), {
+    tag: 'markdown',
+    element_id: STREAM_ELEMENT_ID,
+    content: String(content ?? '') || STREAM_INITIAL_TEXT,
+  }, { tag: 'hr' }, buildFooter(footerContent)]
+  // 「停止任务」只在进行中有意义：任务完成后保留按钮会让用户点到已结束的任务
+  // （2026-09-27 辉哥反馈卡片回复完成后按钮仍在）。完成/中止态由 showStop=false 摘除。
+  if (showStop) {
+    elements.push({
+      tag: 'button',
+      element_id: STREAM_STOP_ELEMENT_ID,
+      size: 'tiny',
+      type: 'default',
+      text: { tag: 'plain_text', content: '停止任务' },
+      behaviors: [{ type: 'callback', value: { action: CARD_STOP_ACTION } }],
+    })
+  }
   const card = {
     schema: '2.0',
     header: {
@@ -248,24 +270,7 @@ export function buildStreamingCard(content = STREAM_INITIAL_TEXT, {
         },
       } : {}),
     },
-    body: {
-      elements: [{
-        tag: 'markdown',
-        element_id: STREAM_STATUS_ELEMENT_ID,
-        content: statusContent,
-      }, buildToolSteps(tools), {
-        tag: 'markdown',
-        element_id: STREAM_ELEMENT_ID,
-        content: String(content ?? '') || STREAM_INITIAL_TEXT,
-      }, { tag: 'hr' }, buildFooter(footerContent), {
-        tag: 'button',
-        element_id: STREAM_STOP_ELEMENT_ID,
-        size: 'tiny',
-        type: 'default',
-        text: { tag: 'plain_text', content: '停止任务' },
-        behaviors: [{ type: 'callback', value: { action: CARD_STOP_ACTION } }],
-      }],
-    },
+    body: { elements },
   }
   return card
 }
@@ -497,6 +502,34 @@ export function createFeishuClient({
       })
       assertResponseOk(response, operation)
     }
+    let stopElementRemoved = false
+    // 收尾标记：finish 之后到达的迟到 update（降级路径会整卡重建）不得把停止按钮复活。
+    let finished = false
+    /**
+     * 完成态摘掉「停止任务」按钮（CardKit 删除元素接口）。
+     * 容错边界：删除失败绝不抛出——finish 抛错会让调用方判定卡片收尾失败并补发一条纯文本消息，
+     * 用户将同时收到卡片和文本；按钮残留只是观感问题，重复发消息才是真故障。
+     * 老版本 SDK 无 cardElement.delete 时同样静默跳过（记录 warn）。
+     */
+    const removeStopElement = async () => {
+      if (stopElementRemoved) return
+      if (typeof cardElementApi?.delete !== 'function') {
+        warn('Feishu cardElement.delete unavailable, stop button kept on finished card')
+        return
+      }
+      try {
+        const nextSequence = ++sequence
+        const response = await cardElementApi.delete({
+          path: { card_id: cardId, element_id: STREAM_STOP_ELEMENT_ID },
+          // sequence 必须放请求体：实测放 query（params）会被服务端判为缺失（code 99992402）。
+          data: { sequence: nextSequence },
+        })
+        assertResponseOk(response, 'streaming card stop element delete')
+        stopElementRemoved = true
+      } catch (error) {
+        warn('Feishu stop button removal failed: ' + (error instanceof Error ? error.message : String(error)))
+      }
+    }
 
     return {
       messageId,
@@ -532,7 +565,7 @@ export function createFeishuClient({
             return
           }
           if (changed.status || changed.tools || changed.answer || changed.footer) {
-            await patchMessage(buildStreamingCard(snapshot.answer, snapshot))
+            await patchMessage(buildStreamingCard(snapshot.answer, { ...snapshot, showStop: !finished }))
           }
         })
       },
@@ -551,10 +584,12 @@ export function createFeishuClient({
             status: statusContent,
             tools: toolsContent,
             footer: snapshot,
+            showStop: !finished,
           }))
         })
       },
       finish(summary, nextFooter, nextState = {}) {
+        finished = true
         const nextStatusContent = String(nextState?.status ?? statusContent).trim() || STREAM_INITIAL_STATUS
         const nextToolsContent = String(nextState?.tools ?? toolsContent)
         const nextAnswerContent = String(summary ?? content) || '任务已完成，但没有可回传的文本。'
@@ -593,6 +628,8 @@ export function createFeishuClient({
               },
             })
             assertResponseOk(settingsResponse, 'streaming card finish')
+            // 关流式之后再摘按钮：非流式状态下删除元素最稳；失败只 warn 不阻断收尾。
+            await removeStopElement()
             return
           }
           await patchMessage(buildStreamingCard(final.answer, {
@@ -601,6 +638,7 @@ export function createFeishuClient({
             status: final.status,
             tools: final.tools,
             footer: final.footer,
+            showStop: false,
           }))
         })
       },
