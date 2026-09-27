@@ -83,14 +83,19 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-devforge: official slots')
 
   // 侧栏「重启」按钮：克隆壳设置按钮的 DOM 注入（壳暂无对应官方槽位前的最小实现）。
-  ctx.effect(() => {
-    try {
-      return mountRestartEntry(api)
-    } catch (error) {
-      console.warn('[dsh-devforge] restart entry mount failed:', error)
-      return () => {}
-    }
-  }, 'dsh-devforge: restart entry')
+  // 桌面版（Electron 渲染器）不挂载：Host 生命周期由桌面 GUI 管理，devforge_restart
+  // 的「退出后自拉起」会脱离 GUI 管控拉出孤儿进程（2026-09-27 辉哥定稿）。
+  const isDesktopShell = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron')
+  if (!isDesktopShell) {
+    ctx.effect(() => {
+      try {
+        return mountRestartEntry(api)
+      } catch (error) {
+        console.warn('[dsh-devforge] restart entry mount failed:', error)
+        return () => {}
+      }
+    }, 'dsh-devforge: restart entry')
+  }
 
   // 皮肤运行时整体释放（主题注册、监听、恢复定时器）。
   ctx.effect(() => () => { skin?.dispose() }, 'dsh-devforge: skin runtime')
