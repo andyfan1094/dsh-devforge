@@ -10,6 +10,7 @@ import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './f
 import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
+import { selectionIdentity } from './session-identity.mjs'
 import { buildEffortCard, buildHelpCard, buildModelCard, MODEL_PAGE_SIZE, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
@@ -85,16 +86,6 @@ function sessionNotFoundError(error) {
   const code = String(error?.code ?? '').toUpperCase()
   const text = error instanceof Error ? error.message : String(error ?? '')
   return code.includes('NOT_FOUND') || /session.*not found|not found.*session/i.test(text)
-}
-
-function selectionIdentity(selection, agentPreset, cwd) {
-  return JSON.stringify({
-    provider: selection.provider,
-    model: selection.model,
-    reasoningEffort: selection.reasoningEffort ?? '',
-    agentPreset,
-    cwd,
-  })
 }
 
 export function legacySessionIdOf(chatId) {
@@ -468,10 +459,24 @@ export function apply(ctx, config = {}) {
       const effective = await resolveSelection(resolved, { waitForAdapter: true })
       setModelState(effective)
       const chatCwd = cwdFor(key)
-      const identity = selectionIdentity(effective.selection, effective.agentPreset, chatCwd)
+      const identity = selectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
       let sessionId = stableSessionIdOf(key, identity)
       const archivedSessionIds = archivedSessionIdsOf()
       const existing = conversations.get(key)
+      // 身份漂移是"重启就新开会话"的唯一入口：落一行诊断，直接看到选择/预设/目录四项取值，
+      // 下次再遇到"重启断上下文"不必再从会话文件反推（0.41.5 归因用）。
+      if (existing === undefined || existing.identity !== identity) {
+        questionAnswerer.log(
+          existing === undefined ? 'info' : 'warn',
+          'identity ' + (existing === undefined ? 'cold-start' : 'changed')
+            + ' chat=' + key
+            + ' followDefault=' + String(effective.followDefault)
+            + ' selection=' + JSON.stringify(effective.selection)
+            + ' preset=' + String(effective.agentPreset)
+            + ' cwd=' + chatCwd
+            + (existing === undefined ? '' : ' from=' + existing.identity),
+        )
+      }
       const existingArchived = existing !== undefined && archivedSessionIds.has(existing.sessionId)
       if (existing !== undefined && existing.identity === identity && !existingArchived) return existing
       if (existingArchived) info('retiring archived Feishu session ' + existing.sessionId)
