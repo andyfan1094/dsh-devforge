@@ -261,17 +261,6 @@ function base64Url(value: Buffer | string): string {
   return Buffer.from(value).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')
 }
 
-/** 与宿主一致的 authority 计算：Host 头原样归一（缺 Host 返回空串，调用方据此跳过注入）。 */
-function requestAuthorityOf(req: IncomingMessage): string {
-  const host = req.headers.host
-  if (typeof host !== 'string' || host === '') return ''
-  try {
-    return new URL(`http://${host}`).host
-  } catch {
-    return ''
-  }
-}
-
 /**
  * 读取宿主凭据文件里的 client-connection/browser-session secret（base64url 编码的 32 字节）。
  * 针对宿主固定写入结构做行级解析：定位记录键行后，在缩进块内取第一个 secret 字段；
@@ -400,9 +389,15 @@ export function startRemoteGateway(config: RemoteGatewayConfig, log: GatewayLog)
       return
     }
 
-    // ---- 已认证：反代到本机 DSH Web（保留原始 Host/Origin；并注入机器内 DSH 会话 Cookie 过宿主认证栅栏）----
+    // ---- 已认证：反代到本机 DSH Web（注入机器内 DSH 会话 Cookie 过宿主认证栅栏）----
+    // Host 改写为上游回环地址：DSH 的信任围栏以 Host 头为准（非回环 Host 一律 403），
+    // 员工从局域网 IP 访问时原始 Host 是网关地址，必须改写才能过围栏；原始值留 X-Forwarded-Host 备查。
+    const upstreamAuthority = `127.0.0.1:${config.upstreamPort}`
     const headers = forwardHeaders(req)
-    const dshCookie = signer.cookieFor(requestAuthorityOf(req))
+    headers['x-forwarded-host'] = typeof headers.host === 'string' ? headers.host : ''
+    headers.host = upstreamAuthority
+    if (typeof headers.origin === 'string' && headers.origin !== '') headers.origin = `http://${upstreamAuthority}`
+    const dshCookie = signer.cookieFor(upstreamAuthority)
     if (dshCookie !== '') headers.cookie = typeof headers.cookie === 'string' && headers.cookie !== '' ? `${headers.cookie}; ${dshCookie}` : dshCookie
     const upstream = httpRequest({
       host: '127.0.0.1',
@@ -431,7 +426,12 @@ export function startRemoteGateway(config: RemoteGatewayConfig, log: GatewayLog)
       return
     }
     const upgradeHeaders: Record<string, string | string[] | undefined> = { ...req.headers }
-    const upgradeCookie = signer.cookieFor(requestAuthorityOf(req))
+    // 与 handleRequest 同理：Host 改写为上游回环地址过 DSH 信任围栏，签名 authority 跟随改写后的值。
+    const upgradeAuthority = `127.0.0.1:${config.upstreamPort}`
+    upgradeHeaders['x-forwarded-host'] = typeof upgradeHeaders.host === 'string' ? upgradeHeaders.host : ''
+    upgradeHeaders.host = upgradeAuthority
+    if (typeof upgradeHeaders.origin === 'string' && upgradeHeaders.origin !== '') upgradeHeaders.origin = `http://${upgradeAuthority}`
+    const upgradeCookie = signer.cookieFor(upgradeAuthority)
     if (upgradeCookie !== '') {
       const raw = req.headers.cookie
       upgradeHeaders.cookie = typeof raw === 'string' && raw !== '' ? `${raw}; ${upgradeCookie}` : upgradeCookie
