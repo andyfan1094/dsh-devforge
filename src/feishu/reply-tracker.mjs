@@ -77,10 +77,15 @@ function toolLine(tool, now, index) {
   return icon + ' ' + (index + 1) + '. ' + plain(tool.name, 80) + ' · ' + status + elapsed + result
 }
 
-function renderCard(entry, { final = false, text = '', currentTime = Date.now() } = {}) {
-  const phase = final
-    ? (entry.phase === '失败' ? '执行失败' : entry.phase === '已中止' ? '已中止' : '已完成')
-    : entry.phase
+function renderCard(entry, { final = false, text = '', phase: phaseOverride = '', currentTime = Date.now() } = {}) {
+  // phaseOverride：翻页收尾等场景需要自定义状态文案（例如「已收到回答，继续处理」），
+  // 优先于 final 的终态推导；空串时行为与旧版完全一致。
+  const override = String(phaseOverride ?? '').trim()
+  const phase = override !== ''
+    ? override
+    : final
+      ? (entry.phase === '失败' ? '执行失败' : entry.phase === '已中止' ? '已中止' : '已完成')
+      : entry.phase
   let tools = ''
   if (entry.tools.length > 0) {
     const visibleTools = entry.tools.slice(-8)
@@ -170,10 +175,10 @@ export function createReplyTracker({
 
   const STREAM_ROLLOVER_MS = 9 * 60 * 1000
 
-  const rolloverStream = async (entry) => {
+  const rolloverStream = async (entry, renderOptions = {}) => {
     const previous = entry.stream
     if (previous !== undefined && previous !== null && typeof previous.finish === 'function') {
-      const snapshot = snapshotFor(entry)
+      const snapshot = snapshotFor(entry, renderOptions)
       try {
         await previous.finish(snapshot.card.answer, snapshot.footer, { status: snapshot.card.status, tools: snapshot.card.tools })
       } catch (error) {
@@ -319,6 +324,36 @@ export function createReplyTracker({
     hasActive(sessionId) {
       const queue = pending.get(String(sessionId ?? ''))
       return queue !== undefined && queue.some((entry) => entry.ready === true)
+    },
+
+    /**
+     * 问答卡片结算后「翻页」：把该会话当前流式卡片就地收尾，后续输出落到一张新卡片。
+     *
+     * 为什么必须翻页：同一轮内答题不会开启新轮次（提问时 turn 不结束，答案回传后
+     * 原轮继续跑），于是续跑的答复会被写回提问之前那张「DSH Agent 执行过程」卡片。
+     * 飞书对卡片原地更新既不产生新消息也不提醒，而那张卡又停在提问卡片的上方，
+     * 手机端只看得到「已收到你的回答」，用户据此判定模型没回话（2026-09-27 实录：
+     * 事件流 turn/end 与卡片 update_time 六组时间戳逐一吻合，全程零新消息）。
+     */
+    rolloverChat(chatId, { status = '已收到回答，继续处理' } = {}) {
+      const chat = String(chatId ?? '').trim()
+      if (chat === '') return Promise.resolve(false)
+      const jobs = []
+      for (const queue of pending.values()) {
+        for (const entry of queue) {
+          if (entry.chatId !== chat || entry.ready !== true) continue
+          jobs.push(enqueue(entry, async () => {
+            // 心跳不在这里停：翻页后下一次心跳就会为新卡片开卡（≤1s），
+            // 用户随即在提问卡片下方看到「继续处理」的新卡片，而不是一片沉默。
+            const carried = entry.answer !== '' ? entry.answer : '（提问期间没有文字输出，继续处理的答复见下方新卡片）'
+            await rolloverStream(entry, { final: true, text: carried, phase: status })
+            // 已产出的正文留在旧卡上，新卡从零开始：否则续跑会把旧正文再带一遍，
+            // 两张卡出现重复内容。工具步骤保留，续跑卡仍有完整上下文。
+            entry.answer = ''
+          }))
+        }
+      }
+      return Promise.all(jobs).then(() => jobs.length > 0, () => false)
     },
 
     // Finalize every live ticket for one agent after a stop request so no

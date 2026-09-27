@@ -128,6 +128,9 @@ export function createQuestionAnswerer({
   getClient,
   sendText,
   deliverCard,
+  // 结算回调：答案交给模型之前先「翻页」，让续跑的答复落到一张新卡片上
+  // （不翻页会写回提问卡片上方那张执行过程卡，手机端看不到任何新消息）。
+  onAnswered,
   logFile = '',
   warn = () => {},
   info = () => {},
@@ -225,6 +228,15 @@ export function createQuestionAnswerer({
         warn('飞书答题确认发送失败：' + (error instanceof Error ? error.message : String(error)))
       }
     })()
+    // 先翻页再交答案：翻页请求在 resolve 之前提交，续跑首个事件只会更新新卡片。
+    // 失败只 warn：翻页纯属呈现优化，绝不允许阻断答题主链路。
+    try {
+      void Promise.resolve(onAnswered?.(record.chatId)).catch((error) => {
+        warn('飞书答题翻页失败：' + (error instanceof Error ? error.message : String(error)))
+      })
+    } catch (error) {
+      warn('飞书答题翻页失败：' + (error instanceof Error ? error.message : String(error)))
+    }
     record.resolve({ answers })
   }
 

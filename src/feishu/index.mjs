@@ -223,6 +223,9 @@ export function apply(ctx, config = {}) {
     // 此处若误写裸标识符 sendText 会在 apply 同步段抛 ReferenceError，
     // 被 safeActivate 静默吞掉（ctx.logger 不进 stdout），飞书桥整体无声死亡（0.38.4 实录）。
     sendText: send,
+    // 答完卡片立刻翻页：当前执行过程卡就地收尾，续跑的答复落到一张新卡片上，
+    // 手机端才能在提问卡片下方看到「继续处理 → 已完成」的新消息（0.41.6）。
+    onAnswered: (chatId) => tracker.rolloverChat(chatId),
     // 答题器诊断日志落固定文件：认领 miss、注册映射、投递失败都要有据可查；
     // homedir() 跟随 HOME 环境变量，隔离 HOME 暂存实例自然落自己的 logs。
     logFile: join(homedir(), '.dsh', 'logs', 'feishu-questions.log'),
