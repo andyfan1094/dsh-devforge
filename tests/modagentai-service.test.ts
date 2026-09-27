@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
-import { tiangongEffortsOutdated, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
+import { tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
 import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
@@ -61,6 +61,54 @@ test('档位判定：旧三档落后，五档不落后，未注册不触发', ()
   assert.equal(tiangongEffortsOutdated({}), false)
   assert.equal(tiangongEffortsOutdated({ models: [{ id: 'Other' }] }), false)
   assert.equal(tiangongEffortsOutdated({ models: [{ id: 'GLM-Flash', reasoningEfforts: false }] }), true)
+})
+
+test('声明判定：五档但缺 DeepSeek V4.1 Flash 视为落后；完整声明不触发', () => {
+  const fiveTierNoDeepseek = {
+    models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
+  }
+  assert.equal(tiangongEffortsOutdated(fiveTierNoDeepseek), false, '档位判定不看 DeepSeek')
+  assert.equal(tiangongDeclarationOutdated(fiveTierNoDeepseek), true, '缺 DeepSeek 条目应判落后')
+  assert.equal(tiangongDeclarationOutdated({
+    models: [
+      { id: 'GLM-Flash', reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+    ],
+  }), false, '完整声明不落后')
+  assert.equal(tiangongDeclarationOutdated(undefined), false)
+  assert.equal(tiangongDeclarationOutdated({}), false)
+})
+
+test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下文按辉哥定稿压 200 多 K）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    const fiveTierNoDeepseek = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
+    }
+    const { service, state } = makeCtx({ tiangong: fiveTierNoDeepseek })
+    await service.migrateLegacyGateway()
+    const setMutation = state.mutations.find((m) => m.op === 'set' && m.path[1] === 'tiangong')
+    assert.ok(setMutation, '应产生 tiangong set 变更')
+    const models = (state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number; reasoningEfforts?: Record<string, string> }> }).models
+    const deepseek = models.find((m) => m.id === TIANGONG_DEEPSEEK_MODEL_ID)
+    assert.ok(deepseek, '应写入 DeepSeek V4.1 Flash 模型条目')
+    assert.equal(deepseek.contextWindow, 262144, '上下文 262144（200 多 K，不声明 1M）')
+    assert.equal(deepseek.reasoningEfforts?.low, 'low')
+    assert.equal(deepseek.reasoningEfforts?.high, 'high')
+    assert.equal(deepseek.reasoningEfforts?.max, 'max')
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('启动自愈：旧三档声明自动刷新为五档（含 xhigh/max）', async () => {

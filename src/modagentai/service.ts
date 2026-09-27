@@ -12,7 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { TIANGONG_REASONING_EFFORTS, tiangongEffortsOutdated } from './provider-declaration.ts'
+import { TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -34,6 +34,13 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
     contextWindow: 262144,
     input: ['text', 'image'],
     reasoningEfforts: TIANGONG_REASONING_EFFORTS,
+  }, {
+    // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿压到 200 多 K（不声明 1M，防长上下文高消耗）。
+    id: TIANGONG_DEEPSEEK_MODEL_ID,
+    name: TIANGONG_DEEPSEEK_MODEL_ID,
+    contextWindow: 262144,
+    input: ['text'],
+    reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
   }],
   defaultContextWindow: 262144,
   defaultMaxTokens: 32768,
@@ -490,14 +497,14 @@ export class ModagentaiService {
     if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
     const section = descriptor.value as { providers?: Record<string, unknown> } | undefined
     const providers = section?.providers ?? {}
-    // 旧中转残留需要迁移；已注册的 tiangong 声明若档位落后（缺 xhigh/max）同样要刷新。
+    // 旧中转残留需要迁移；已注册的 tiangong 声明若落后（档位缺 xhigh/max 或缺 DeepSeek 模型条目）同样要刷新。
     const hasLegacy = providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined
-    if (!hasLegacy && !tiangongEffortsOutdated(providers[TIANGONG_PROVIDER_ID])) return
+    if (!hasLegacy && !tiangongDeclarationOutdated(providers[TIANGONG_PROVIDER_ID])) return
     const token = await this.readToken()
     if (token === '') return
     this.ctx.logger?.info?.(hasLegacy
       ? '[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider'
-      : '[dsh-devforge] 天工造梦模型声明档位落后，自动刷新为五档（含 xhigh/max）')
+      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash）')
     await this.applyGateway()
   }
 
