@@ -29,7 +29,7 @@ import { activateGithub, type GithubCapabilityConfig } from './github/activate.t
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
 import { startRemoteGateway, type RemoteGateway } from './remote-gateway.ts'
-import { makeGatewayRoutes } from './remote/gateway-routes.ts'
+import { makeGatewayRoutes, gatewayAccessUrls } from './remote/gateway-routes.ts'
 import { getDb, getSettings, putSettings } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
@@ -961,10 +961,15 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
           sessionHours: gateway?.sessionHours ?? 12,
         }
       },
-      readRuntime: () => ({
-        running: activeRemoteGateway?.running === true,
-        listeningPort: activeRemoteGateway?.listeningPort,
-      }),
+      readRuntime: () => {
+        const gateway = activeRemoteGateway
+        const port = gateway?.listeningPort
+        return {
+          running: gateway?.running === true,
+          listeningPort: port,
+          urls: gateway?.running === true && port !== undefined ? gatewayAccessUrls(resolve().remoteAccess?.host ?? '0.0.0.0', port) : [],
+        }
+      },
       save: (next) => {
         putSettings(getDb(), 'gateway.settings', next)
         ctx.logger.info('[dsh-devforge] 远程访问网关配置已保存，热重建中（端口 %d，%s）', next.port, next.enabled ? '已启用' : '已停用')

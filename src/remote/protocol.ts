@@ -31,6 +31,8 @@ export interface GatewayRuntimeView {
   running: boolean
   /** 实际监听端口（与配置端口一致；未运行为 undefined）。 */
   listeningPort?: number
+  /** 员工可用的完整访问链接（网关运行中才有；监听所有网卡时枚举本机内网 IPv4）。 */
+  urls: string[]
 }
 
 /** 面板保存请求：password 留空 = 保留旧值。 */

@@ -8,8 +8,33 @@
  * 密码原文只落本机 store.db，GET 永不回传，日志不打印。
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import { networkInterfaces } from 'node:os'
 import { isLoopbackRequest } from '../loopback.ts'
 import { GATEWAY_API, type GatewayRuntimeView, type GatewaySettingsInput, type GatewaySettingsPatch, type GatewaySettingsView } from './protocol.ts'
+
+/**
+ * 拼员工可用的完整访问链接（面板直接显示）。
+ * 监听所有网卡（0.0.0.0/::）时枚举本机内网 IPv4（排除回环与 169.254 链路本地）；
+ * 监听具体地址时只给那一个。
+ */
+export function gatewayAccessUrls(host: string, port: number): string[] {
+  const normalized = host.trim() === '' ? '0.0.0.0' : host.trim()
+  if (normalized === '0.0.0.0' || normalized === '::') {
+    const urls: string[] = []
+    const seen = new Set<string>()
+    for (const list of Object.values(networkInterfaces())) {
+      for (const net of list ?? []) {
+        if (net.family !== 'IPv4' || net.internal) continue
+        if (net.address.startsWith('169.254.')) continue
+        if (seen.has(net.address)) continue
+        seen.add(net.address)
+        urls.push(`http://${net.address}:${port}`)
+      }
+    }
+    return urls
+  }
+  return [`http://${normalized}:${port}`]
+}
 
 /** 写入无缓存 JSON 响应。 */
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {

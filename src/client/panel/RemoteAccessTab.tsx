@@ -61,6 +61,16 @@ export function RemoteAccessTab({ api }: { api: DevforgeApi }): JSX.Element {
         <div className={css['metricRow']}><span>网关状态</span><strong>{runtime === null ? '正在检查' : runtime.running ? `运行中（端口 ${runtime.listeningPort ?? config?.port ?? '-'}）` : config?.enabled === true ? '已启用但未运行' : '已停用'}</strong></div>
         <div className={css['metricRow']}><span>访问密码</span><strong>{config === null ? '-' : config.hasPassword ? '已设置（保存时留空 = 不修改）' : '未设置'}</strong></div>
       </div>
+      {runtime?.running === true && runtime.urls.length > 0 && (
+        <div className={css['metricList']}>
+          <div className={css['metricRow']}><span>员工访问链接</span><strong>点击即复制，发给员工就行</strong></div>
+          {runtime.urls.map((url) => (
+            <div className={css['metricRow']} key={url}>
+              <code style={{ cursor: 'pointer' }} title="点击复制" onClick={() => { void navigator.clipboard.writeText(url).then(() => { setNotice('已复制：' + url) }).catch(() => { setNotice('复制失败，请手动选择复制：' + url) }) }}>{url}</code>
+            </div>
+          ))}
+        </div>
+      )}
       <div className={css['formRow']}>
         <label className={css['sectionHint']}><input type="checkbox" checked={draft.enabled} onChange={(event) => { setDraft((d) => ({ ...d, enabled: event.target.checked })) }} /> 启用网关</label>
       </div>
