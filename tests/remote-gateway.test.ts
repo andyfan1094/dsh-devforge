@@ -1,8 +1,11 @@
 /** 远程访问网关交付验证：认证、限速、反代、WS 拦截与生命周期（0.41.0）。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer as createHttpServer, request as httpRequest, type Server } from 'node:http'
-import { startRemoteGateway, type GatewayLog } from '../src/remote-gateway.ts'
+import { startRemoteGateway, loadDshSessionSecret, type GatewayLog } from '../src/remote-gateway.ts'
 
 /** 静默日志（收集不打印；断言期可检查是否产生告警）。 */
 function makeLog(): GatewayLog & { warnings: string[] } {
@@ -27,13 +30,14 @@ async function startFakeUpstream(): Promise<{ port: number; close: () => Promise
 }
 
 /** 起网关（port=0 系统分配），测试结束自动回收。 */
-function startGateway(t: test.TestContext, overrides?: Partial<{ password: string; upstreamPort: number }>) {
+function startGateway(t: test.TestContext, overrides?: Partial<{ password: string; upstreamPort: number; credentialsFile: string }>) {
   const config = {
     port: 0,
     host: '127.0.0.1',
     password: '测试密码-123',
     upstreamPort: overrides?.upstreamPort ?? 0,
     sessionHours: 12,
+    credentialsFile: overrides?.credentialsFile ?? join(tmpdir(), '不存在-网关测试凭据.yaml'),
   }
   const log = makeLog()
   const gateway = startRemoteGateway({ ...config, upstreamPort: overrides?.upstreamPort ?? 0 }, log)
@@ -48,6 +52,47 @@ function startGateway(t: test.TestContext, overrides?: Partial<{ password: strin
     throw new Error('网关未能在 1 秒内进入监听状态')
   } }
 }
+
+test('loadDshSessionSecret：合法记录解析出 32 字节 secret；缺失/短 secret 返回 undefined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-cred-'))
+  const secret = 'A'.repeat(42) + 'B' // 43 字符 base64url ≈ 32 字节
+  const valid = join(dir, 'ok.yaml')
+  writeFileSync(valid, `version: 1\nrecords:\n  client-connection/browser-session:\n    kind: grant\n    payload:\n      version: 1\n      secret: ${secret}\nrefs:\n  X: y\n`, 'utf8')
+  assert.equal(loadDshSessionSecret(valid)?.byteLength, 32)
+  const missing = join(dir, 'missing.yaml')
+  writeFileSync(missing, 'records:\n  other/record:\n    payload:\n      secret: ' + secret + '\n', 'utf8')
+  assert.equal(loadDshSessionSecret(missing), undefined)
+  const short = join(dir, 'short.yaml')
+  writeFileSync(short, 'records:\n  client-connection/browser-session:\n    payload:\n      secret: tooshort\n', 'utf8')
+  assert.equal(loadDshSessionSecret(short), undefined)
+  assert.equal(loadDshSessionSecret(join(dir, '不存在.yaml')), undefined)
+})
+
+test('转发请求自动携带机器内 DSH 会话 Cookie（凭据文件可用时），且不发给浏览器', async (t) => {
+  const seen: string[] = []
+  const upstream = createHttpServer((req, res) => {
+    seen.push(req.headers.cookie ?? '')
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end('upstream-ok')
+  })
+  await new Promise<void>((resolvePromise) => { upstream.listen(0, '127.0.0.1', () => resolvePromise()) })
+  t.after(() => new Promise<void>((resolvePromise) => { upstream.close(() => resolvePromise()) }))
+  const upstreamPort = (upstream.address() as { port: number }).port
+  const dir = mkdtempSync(join(tmpdir(), 'gw-cred-'))
+  const credentialsFile = join(dir, 'credentials.yaml')
+  writeFileSync(credentialsFile, 'records:\n  client-connection/browser-session:\n    payload:\n      secret: ' + 'A'.repeat(42) + 'B\n', 'utf8')
+  const { base } = startGateway(t, { upstreamPort, credentialsFile })
+  const root = await base()
+  const login = await fetch(root + '/__gateway/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: '测试密码-123' }),
+  })
+  const gwCookie = login.headers.getSetCookie().find((line) => line.startsWith('devforge_gw_session='))?.split(';')[0] ?? ''
+  const res = await fetch(root + '/', { headers: { cookie: gwCookie } })
+  assert.equal(await res.text(), 'upstream-ok')
+  assert.equal(seen.length, 1)
+  assert.match(seen[0], /dsh-auth-[A-Za-z0-9_-]+=v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/, '上游必须收到 v1 格式的 DSH 会话 Cookie')
+  assert.match(seen[0], /devforge_gw_session=/, '网关自身会话同样透传')
+})
 
 test('未认证访问任何路径 → 302 到登录页；登录页可访问且含密码表单', async (t) => {
   const upstream = await startFakeUpstream()

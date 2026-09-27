@@ -499,6 +499,15 @@ export function apply(ctx: Context, config?: Config): void {
         syncChatModels: value.siliconflow?.syncChatModels ?? true,
       },
       mcp: { enabled: value.mcp?.enabled ?? true },
+      // 远程访问网关（0.41.0）：未配置一律关闭 + 默认端口，安全默认。
+      remoteAccess: {
+        enabled: value.remoteAccess?.enabled ?? false,
+        port: value.remoteAccess?.port ?? 19390,
+        host: value.remoteAccess?.host ?? '0.0.0.0',
+        password: value.remoteAccess?.password ?? '',
+        upstreamPort: value.remoteAccess?.upstreamPort ?? 3080,
+        sessionHours: value.remoteAccess?.sessionHours ?? 12,
+      },
     }
   }
 
