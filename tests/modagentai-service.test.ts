@@ -74,7 +74,13 @@ test('声明判定：五档但缺 DeepSeek V4.1 Flash 视为落后；完整声�
       { id: 'GLM-Flash', reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
       { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
     ],
-  }), false, '完整声明不落后')
+  }), true, 'DeepSeek 旧声明缺 image（2026-09-27 实测支持看图）应判落后')
+  assert.equal(tiangongDeclarationOutdated({
+    models: [
+      { id: 'GLM-Flash', reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+    ],
+  }), false, '完整声明（含 image）不落后')
   assert.equal(tiangongDeclarationOutdated(undefined), false)
   assert.equal(tiangongDeclarationOutdated({}), false)
 })
@@ -98,9 +104,42 @@ test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下�
     const deepseek = models.find((m) => m.id === TIANGONG_DEEPSEEK_MODEL_ID)
     assert.ok(deepseek, '应写入 DeepSeek V4.1 Flash 模型条目')
     assert.equal(deepseek.contextWindow, 262144, '上下文 262144（200 多 K，不声明 1M）')
+    assert.deepEqual(deepseek.input, ['text', 'image'], 'input 必须带 image（2026-09-27 实测上游支持看图）')
     assert.equal(deepseek.reasoningEfforts?.low, 'low')
     assert.equal(deepseek.reasoningEfforts?.high, 'high')
     assert.equal(deepseek.reasoningEfforts?.max, 'max')
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：DeepSeek 旧声明缺 image 时自动刷新补齐看图能力', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    const deepseekTextOnly = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      ],
+    }
+    const { service, state } = makeCtx({ tiangong: deepseekTextOnly })
+    await service.migrateLegacyGateway()
+    const setMutation = state.mutations.find((m) => m.op === 'set' && m.path[1] === 'tiangong')
+    assert.ok(setMutation, '旧声明缺 image 应触发自愈刷新')
+    const models = (state.providers.tiangong as { models: Array<{ id: string; input?: string[] }> }).models
+    const deepseek = models.find((m) => m.id === TIANGONG_DEEPSEEK_MODEL_ID)
+    assert.ok(deepseek, '刷新后 DeepSeek 条目仍在')
+    assert.deepEqual(deepseek.input, ['text', 'image'], '刷新后 input 应补齐 image')
     state.mutations.length = 0
     await service.migrateLegacyGateway()
     assert.equal(state.mutations.length, 0, '第二轮幂等不写入')

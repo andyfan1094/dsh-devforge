@@ -36,10 +36,11 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
     reasoningEfforts: TIANGONG_REASONING_EFFORTS,
   }, {
     // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿压到 200 多 K（不声明 1M，防长上下文高消耗）。
+    // 2026-09-27 实测上游支持图像输入（发图识别颜色正常），input 必须带 image，否则 DSH 发送前剥图。
     id: TIANGONG_DEEPSEEK_MODEL_ID,
     name: TIANGONG_DEEPSEEK_MODEL_ID,
     contextWindow: 262144,
-    input: ['text'],
+    input: ['text', 'image'],
     reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
   }],
   defaultContextWindow: 262144,

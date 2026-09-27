@@ -26,7 +26,8 @@ export function tiangongEffortsOutdated(provider: unknown): boolean {
 
 /**
  * 判断已注册的 tiangong provider 声明是否落后于插件内置声明：
- * GLM-Flash 档位落后，或缺少 DeepSeek V4.1 Flash 模型条目（旧安装升级后需启动自愈补齐）。
+ * GLM-Flash 档位落后，或 DeepSeek V4.1 Flash 条目缺失/看图声明缺失
+ * （旧安装升级后需启动自愈补齐；2026-09-27 实测上游支持图像输入）。
  * 未注册或结构异常返回 false（交给迁移/注册流程处理）。
  */
 export function tiangongDeclarationOutdated(provider: unknown): boolean {
@@ -34,5 +35,10 @@ export function tiangongDeclarationOutdated(provider: unknown): boolean {
   const models = (provider as { models?: unknown }).models
   if (!Array.isArray(models)) return false
   if (tiangongEffortsOutdated(provider)) return true
-  return !models.some((m) => m !== null && typeof m === 'object' && (m as { id?: unknown }).id === TIANGONG_DEEPSEEK_MODEL_ID)
+  const deepseek = models.find((m) => m !== null && typeof m === 'object' && (m as { id?: unknown }).id === TIANGONG_DEEPSEEK_MODEL_ID)
+  if (deepseek === undefined) return true
+  // 旧声明只写 ['text'] 会令 DSH 发送前剥图，缺 image 视为落后并触发自愈刷新。
+  const input = (deepseek as { input?: unknown }).input
+  if (!Array.isArray(input) || !input.includes('image')) return true
+  return false
 }
