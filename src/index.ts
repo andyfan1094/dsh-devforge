@@ -28,7 +28,8 @@ import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.t
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
-import { startRemoteGateway } from './remote-gateway.ts'
+import { startRemoteGateway, type RemoteGateway } from './remote-gateway.ts'
+import { makeGatewayRoutes } from './remote/gateway-routes.ts'
 import { getDb, getSettings, putSettings } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
@@ -500,14 +501,19 @@ export function apply(ctx: Context, config?: Config): void {
       },
       mcp: { enabled: value.mcp?.enabled ?? true },
       // 远程访问网关（0.41.0）：未配置一律关闭 + 默认端口，安全默认。
-      remoteAccess: {
-        enabled: value.remoteAccess?.enabled ?? false,
-        port: value.remoteAccess?.port ?? 19390,
-        host: value.remoteAccess?.host ?? '0.0.0.0',
-        password: value.remoteAccess?.password ?? '',
-        upstreamPort: value.remoteAccess?.upstreamPort ?? 3080,
-        sessionHours: value.remoteAccess?.sessionHours ?? 12,
-      },
+      remoteAccess: (() => {
+        // 面板接管语义：store.db 的 gateway.settings 一旦有值即优先于组合配置（patch/settings RAW），
+        // 用面板改过一次后以面板为准，重启不丢；存储缺失字段逐项回落到组合配置默认。
+        const stored = (() => { try { return getSettings<{ enabled?: boolean; port?: number; host?: string; password?: string; upstreamPort?: number; sessionHours?: number }>(getDb(), 'gateway.settings') } catch { return undefined } })()
+        return {
+          enabled: stored?.enabled ?? value.remoteAccess?.enabled ?? false,
+          port: stored?.port ?? value.remoteAccess?.port ?? 19390,
+          host: stored?.host ?? value.remoteAccess?.host ?? '0.0.0.0',
+          password: stored?.password ?? value.remoteAccess?.password ?? '',
+          upstreamPort: stored?.upstreamPort ?? value.remoteAccess?.upstreamPort ?? 3080,
+          sessionHours: stored?.sessionHours ?? value.remoteAccess?.sessionHours ?? 12,
+        }
+      })(),
     }
   }
 
@@ -942,6 +948,29 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       setup: (options) => setupAgentPreset250k(agentPreset250kDeps(), options),
     }),
     ...makeRemoteRoutes(remoteRegistry, new SshHostStore(), new WinrmHostStore()),
+    // 远程访问网关（0.41.0）面板路由：GET 脱敏配置+运行状态，PUT 保存并热重建（存储优先于组合配置）。
+    ...makeGatewayRoutes({
+      readConfig: () => {
+        const gateway = resolve().remoteAccess
+        return {
+          enabled: gateway?.enabled ?? false,
+          port: gateway?.port ?? 19390,
+          host: gateway?.host ?? '0.0.0.0',
+          password: gateway?.password ?? '',
+          upstreamPort: gateway?.upstreamPort ?? 3080,
+          sessionHours: gateway?.sessionHours ?? 12,
+        }
+      },
+      readRuntime: () => ({
+        running: activeRemoteGateway?.running === true,
+        listeningPort: activeRemoteGateway?.listeningPort,
+      }),
+      save: (next) => {
+        putSettings(getDb(), 'gateway.settings', next)
+        ctx.logger.info('[dsh-devforge] 远程访问网关配置已保存，热重建中（端口 %d，%s）', next.port, next.enabled ? '已启用' : '已停用')
+        requestGatewaySync()
+      },
+    }),
     // 智谱、MiniMax、火山方舟与运营浏览器的面板路由常驻基础路由组；未启用的能力返回明确 JSON 提示。
     ...makeZhipuRoutes(zhipuService),
     ...makeMiniMaxRoutes(minimaxService),
@@ -986,6 +1015,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   let disposeCredentialSync: (() => void) | undefined
   /** 远程访问网关（0.41.0）：面板配置开关+端口+密码，员工浏览器访问本机 DSH Web。 */
   let disposeRemoteGateway: (() => void) | undefined
+  /** 网关运行实例句柄（面板「远程访问」页读运行状态用）。 */
+  let activeRemoteGateway: RemoteGateway | undefined
+  /** 面板保存网关配置后触发 sync() 热重建；sync 定义前路由先构造，运行时已赋值。 */
+  let requestGatewaySync: () => void = () => {}
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
@@ -1191,7 +1224,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         ctx.logger.warn('[dsh-devforge] 远程访问网关已开启但未配置密码，网关未启动')
         return
       }
-      disposeRemoteGateway = startRemoteGateway({
+      activeRemoteGateway = startRemoteGateway({
         port: gateway.port ?? 19390,
         host: gateway.host ?? '0.0.0.0',
         password,
@@ -1200,7 +1233,11 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       }, {
         info: (message, ...args) => { try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响网关 */ } },
         warn: (message, ...args) => { try { ctx.logger.warn(message, ...args) } catch { /* 日志失败不影响网关 */ } },
-      }).dispose
+      })
+      disposeRemoteGateway = () => {
+        activeRemoteGateway?.dispose()
+        activeRemoteGateway = undefined
+      }
     })
     // 本地浏览器：独立于远程运维，启用即注册 browser_* 工具。
     safeActivate(ctx, '本地浏览器', () => {
@@ -1322,6 +1359,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     const offInject = injection.attach(ctx)
     ctx.effect(() => () => { sediment.dispose(); offInject() }, 'dsh-devforge: memory')
   })
+
+  // 面板保存网关配置 → sync 热重建（sync 已定义，接通面板路由的保存触发）。
+  requestGatewaySync = sync
 
   // 首次挂载
   sync()

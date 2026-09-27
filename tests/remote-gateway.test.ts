@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createHttpServer, request as httpRequest, type Server } from 'node:http'
 import { startRemoteGateway, loadDshSessionSecret, type GatewayLog } from '../src/remote-gateway.ts'
+import { mergeGatewaySettings } from '../src/remote/gateway-routes.ts'
 
 /** 静默日志（收集不打印；断言期可检查是否产生告警）。 */
 function makeLog(): GatewayLog & { warnings: string[] } {
@@ -191,4 +192,27 @@ test('登录成功日志不含密码原文', async (t) => {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: '测试密码-123' }),
   })
   for (const message of log.warnings) assert.ok(!message.includes('测试密码-123'), '日志不得出现密码')
+})
+
+test('面板配置合并：显式字段覆盖、密码留空保留旧值、越界报中文错', async () => {
+  const current = { enabled: false, port: 19390, host: '0.0.0.0', password: '旧密码', upstreamPort: 3080, sessionHours: 12 }
+  // 空补丁 = 原样保留
+  assert.deepEqual(mergeGatewaySettings(current, {}), current)
+  // 密码空串 = 保留旧密码
+  const keep = mergeGatewaySettings(current, { password: '' })
+  assert.equal(keep.password, '旧密码')
+  // 显式字段覆盖 + 启用
+  const next = mergeGatewaySettings(current, { enabled: true, port: 19391, password: '新密码', sessionHours: 24 })
+  assert.equal(next.enabled, true)
+  assert.equal(next.port, 19391)
+  assert.equal(next.password, '新密码')
+  assert.equal(next.sessionHours, 24)
+  assert.equal(next.upstreamPort, 3080, '未给出的字段保留现值')
+  // 越界：中文报错
+  assert.throws(() => mergeGatewaySettings(current, { port: 0 }), /端口必须/)
+  assert.throws(() => mergeGatewaySettings(current, { port: 70000 }), /端口必须/)
+  assert.throws(() => mergeGatewaySettings(current, { upstreamPort: 19390 }), /上游端口不能与网关端口相同/)
+  assert.throws(() => mergeGatewaySettings(current, { sessionHours: 0 }), /会话时长必须/)
+  assert.throws(() => mergeGatewaySettings(current, { host: '  ' }), /监听地址不能为空/)
+  // 开启但无密码的守卫在路由层（save 前），合并层不阻止
 })

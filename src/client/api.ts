@@ -19,6 +19,7 @@ import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEp
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
 import { DB_ADMIN_API, type DbAdminConfigFilesResult, type DbAdminConfigName, type DbAdminCredentialRefsResult, type DbAdminRowsResult, type DbAdminTablesResult } from '../store/dbadmin-protocol.ts'
 import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiProfile, type ModagentaiStatus } from '../modagentai/protocol.ts'
+import { GATEWAY_API, type GatewayRuntimeView, type GatewaySettingsPatch, type GatewaySettingsView } from '../remote/protocol.ts'
 import { MODEL_CATALOG_API, type ModelCatalogProvider } from '../model-catalog.ts'
 import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
@@ -416,6 +417,20 @@ export class DevforgeApi {
   /** 停止本地浏览器会话；用户档案保留，登录状态不丢失。 */
   async browserStop(): Promise<void> {
     await readJson(await fetch(BROWSER_API.stop, { method: 'POST' }))
+  }
+
+  /** 远程访问网关：读脱敏配置与运行状态（密码原文永不出 Host）。 */
+  async getGatewaySettings(): Promise<{ config: GatewaySettingsView; runtime: GatewayRuntimeView }> {
+    return await readJson(await fetch(GATEWAY_API.settings))
+  }
+
+  /** 远程访问网关：保存配置并热重建；password 留空 = 保留已存密码。 */
+  async putGatewaySettings(patch: GatewaySettingsPatch): Promise<{ config: GatewaySettingsView; runtime: GatewayRuntimeView }> {
+    return await readJson(await fetch(GATEWAY_API.settings, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }))
   }
 
   /** GitHub 账号摘要；Host 只返回 tokenConfigured，不返回 Token 原文。 */
