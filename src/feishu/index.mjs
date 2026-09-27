@@ -622,7 +622,10 @@ export function apply(ctx, config = {}) {
       if (entry === undefined) return '当前还没有独立飞书会话。'
       try {
         const running = entry.agent.status === 'running'
-        entry.agent.cancel('feishu-stop')
+        // cancel 的 cause 必须是 { kind: ... } 对象（DSH AgentCancelCause 契约）。
+        // 传字符串会让 agent-loop 的 abortedCancelCause 走 assertNever 分支抛错，
+        // catch 块暴毙后 finally 把初始值 null 写进 turn/end，GUI 前端读 reason.kind 直接崩溃。
+        entry.agent.cancel({ kind: 'user' })
         void tracker.cancelAgent(entry.agent.id, entry.agent.session)
         return running ? '已停止当前独立飞书会话的任务。' : '当前没有正在运行的飞书任务。'
       }
@@ -639,7 +642,8 @@ export function apply(ctx, config = {}) {
     }
     try {
       const running = entry.agent.status === 'running'
-      entry.agent.cancel('feishu-card-stop')
+      // 同上：cause 必须是 { kind: 'user' }，字符串 cause 会产生 reason:null 的毒 turn/end 事件。
+      entry.agent.cancel({ kind: 'user' })
       void tracker.cancelAgent(entry.agent.id, entry.agent.session)
       await send(chatId, running ? '已停止当前任务，正在收尾回复卡片。' : '当前没有正在运行的飞书任务。')
     } catch {
