@@ -246,3 +246,62 @@ test('答题器：未传 logFile 时不产生文件写入且功能不受影响',
   await answerer.answer({ agent: { id: 'unknown' }, questions: QUESTIONS }, async () => { delegated = true })
   assert.ok(delegated)
 })
+
+test('答题器：桥重启 cancelAll 只结算挂起问题，答题器仍可用（0.41.5 修永久 closed）', async () => {
+  const cards: any[] = []
+  let notify: (() => void) | null = null
+  const answerer = createQuestionAnswerer({
+    getClient: () => ({}),
+    sendText: async () => {},
+    deliverCard: async (chatId: string, card: any) => {
+      cards.push({ chatId, card })
+      notify?.()
+      return 'om_card_' + cards.length
+    },
+    warn: () => {},
+    info: () => {},
+  })
+  const waitCards = (n: number) => new Promise<void>((resolve) => {
+    if (cards.length >= n) { resolve(); return }
+    notify = () => { if (cards.length >= n) resolve() }
+  })
+  answerer.registerAgent('agent-1', 'oc_chat1')
+
+  // 第一次提问挂起后，模拟「配置更新导致桥重启」
+  const first = answerer.answer({ agent: { id: 'agent-1' }, questions: QUESTIONS }, async () => {})
+  await waitCards(1)
+  answerer.cancelAll('飞书桥正在重建，该问题已取消')
+  const firstError: any = await first.then(() => null, (error: any) => error)
+  assert.equal(firstError.code, 'ASK_ABORTED')
+  assert.ok(firstError.message.includes('桥正在重建'), '应把桥重启原因带给模型，便于改走文字')
+
+  // 关键回归：桥重启后必须还能认领新问题（旧实现在这里立刻抛「飞书插件正在关闭」）
+  const second = answerer.answer({ agent: { id: 'agent-1' }, questions: [{ id: 'q9', question: '还继续吗？', options: [{ label: '继续' }] }] }, async () => {})
+  await waitCards(2)
+  assert.equal(cards.length, 2, '取消挂起后应仍能投递新卡片')
+  const askId = cards[1].card.body.elements
+    .flatMap((element: any) => element?.behaviors?.[0]?.value ?? [])
+    .find((value: any) => value?.askId)?.askId
+  answerer.handleCardValue({ action: 'feishu_question', askId, questionId: 'q9', label: '继续' })
+  const answer = await second
+  assert.deepEqual(answer.answers[0], { id: 'q9', selected: ['继续'] })
+})
+
+test('答题器：dispose 结算挂起问题并清空会话映射，与桥重启语义区分开', async () => {
+  const { answerer } = fakeAnswerer()
+  answerer.registerAgent('agent-1', 'oc_chat1')
+  // 挂起中的问题必须被结算，不能让 waterfall 调用方永远等待
+  const settled = answerer.answer({ agent: { id: 'agent-1' }, questions: QUESTIONS }, async () => {}).then(
+    () => null,
+    (error) => error,
+  )
+  answerer.dispose()
+  const error: any = await settled
+  assert.equal(error.name, 'UserQuestionError')
+  assert.equal(error.code, 'ASK_ABORTED')
+  assert.ok(error.message.includes('正在关闭'), 'dispose 的文案应说明插件正在关闭')
+  // 与 cancelAll 的关键区别：dispose 清空会话映射，插件卸载中不再认领、放行给其他答题器
+  let delegated = false
+  await answerer.answer({ agent: { id: 'agent-1' }, questions: QUESTIONS }, async () => { delegated = true })
+  assert.ok(delegated, 'dispose 后不应再认领，应放行')
+})

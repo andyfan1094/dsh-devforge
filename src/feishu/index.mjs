@@ -762,7 +762,11 @@ export function apply(ctx, config = {}) {
 
   async function stopBridgeAndSessions() {
     tracker.dispose()
-    questionAnswerer.dispose()
+    // 桥重启（配置更新）只取消挂起提问，绝不能 dispose 答题器：startBridge 只重建 bridge、
+    // 不重建答题器实例，一旦 dispose 就永久 closed，之后所有卡片提问都在入口被拒
+    // （0.41.4 实录）。只有插件真正卸载（closing）才走不可逆的 dispose。
+    if (closing) questionAnswerer.dispose()
+    else questionAnswerer.cancelAll('飞书桥正在重建，该问题已取消；请直接用文字继续沟通')
     const currentBridge = bridge
     bridge = null
     const handles = [...conversations.values()].map((entry) => entry.handle)

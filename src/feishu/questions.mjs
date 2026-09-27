@@ -395,17 +395,33 @@ export function createQuestionAnswerer({
     return null
   }
 
-  /** 关停：拒绝全部挂起问题（含等待中的自由作答），并拒绝后续一切新问题。 */
-  const dispose = () => {
-    closed = true
+  /**
+   * 取消全部挂起问题，但保留答题器可用状态（桥重启专用）。
+   * 飞书桥因配置更新重建时（performConfigUpdate → stopBridgeAndSessions → startBridge），
+   * 只有 bridge 被重建，答题器实例不重建、getClient 是懒取新 bridge 的，因此这里
+   * 绝不能置 closed：一旦置位，之后所有提问都在入口被拒（0.41.4 实录——辉哥连点两次
+   * 卡片，两次都立刻收到「飞书插件正在关闭，问题已被取消」，手机上表现为点了完全没反应）。
+   * 会话注册映射（agentChat）与桥无关，同样必须保留，否则重启后旧会话提问全被当成
+   * 非飞书会话 miss 掉、放行给电脑端答题器。
+   */
+  const cancelAll = (reason) => {
+    const message = String(reason ?? '').trim() !== ''
+      ? String(reason)
+      : '飞书桥正在重启，该问题已取消；请直接用文字继续沟通'
     for (const record of [...pending.values()]) {
-      failRecord(record, questionError('飞书插件正在关闭，问题已被取消', 'ASK_ABORTED'))
+      failRecord(record, questionError(message, 'ASK_ABORTED'))
     }
     pending.clear()
     pendingByChat.clear()
-    agentChat.clear()
     chatChains.clear()
   }
 
-  return { answer, registerAgent, forgetAgent, forgetAll, hasPendingCustom, recordCustomAnswer, handleCardValue, dispose, log: fileLog }
+  /** 关停：拒绝全部挂起问题（含等待中的自由作答），并拒绝后续一切新问题。仅插件卸载时调用，不可逆。 */
+  const dispose = () => {
+    closed = true
+    cancelAll('飞书插件正在关闭，问题已被取消')
+    agentChat.clear()
+  }
+
+  return { answer, registerAgent, forgetAgent, forgetAll, hasPendingCustom, recordCustomAnswer, handleCardValue, cancelAll, dispose, log: fileLog }
 }
