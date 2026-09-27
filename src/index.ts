@@ -28,6 +28,7 @@ import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.t
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
+import { startRemoteGateway } from './remote-gateway.ts'
 import { getDb, getSettings, putSettings } from './store/db.ts'
 import { migrateFromLegacyFiles } from './store/migrate.ts'
 import { LegacyRemoteRegistry } from './remote/legacy-registry.ts'
@@ -198,6 +199,8 @@ export interface Config {
   siliconflow?: { enabled?: boolean; apiKeyEnv?: string; timeoutMs?: number; syncChatModels?: boolean }
   /** MCP 服务器接入子配置（服务器明细存 store.db 面板管理，此处仅总开关）。 */
   mcp?: { enabled?: boolean }
+  /** 远程访问网关子配置（0.41.0）：面板配置开关+端口+密码，员工浏览器即可访问本机 DSH Web。 */
+  remoteAccess?: { enabled?: boolean; port?: number; host?: string; password?: string; upstreamPort?: number; sessionHours?: number }
 }
 
 /** 配置默认值。 */
@@ -280,6 +283,14 @@ export const Config = z.object({
   mcp: z.object({
     enabled: z.boolean().default(true).description('MCP 服务器接入总开关：按 store.db 配置把外部 MCP 服务器的工具注册给模型（明细在天工造梦「MCP」页管理）'),
   }).description('MCP 服务器接入配置'),
+  remoteAccess: z.object({
+    enabled: z.boolean().default(false).description('远程访问网关开关（默认关：关闭时外部完全不可达）'),
+    port: z.number().min(1024).max(65535).default(19390).description('网关对外端口（员工浏览器访问端口）'),
+    host: z.string().default('0.0.0.0').description('网关监听地址（0.0.0.0=��有网卡；127.0.0.1=仅本机调试）'),
+    password: z.string().default('').description('访问密码（留空视为未配置，网关不会启动）'),
+    upstreamPort: z.number().min(1024).max(65535).default(3080).description('转发目标：本机 DSH Web 端口'),
+    sessionHours: z.number().min(1).max(168).default(12).description('登录会话有效期（小时）'),
+  }).description('远程访问网关：员工浏览器输密码即可访问本机 DSH Web（密码连错 5 次锁 1 分钟）'),
   pluginUpdate: z.object({
     enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
     profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
@@ -964,6 +975,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   /** 凭据双向同步服务（yaml 主存 ↔ store.db credential 镜像；0.39.0）。 */
   let credentialSyncService: CredentialSyncService | undefined
   let disposeCredentialSync: (() => void) | undefined
+  /** 远程访问网关（0.41.0）：面板配置开关+端口+密码，员工浏览器访问本机 DSH Web。 */
+  let disposeRemoteGateway: (() => void) | undefined
   /** CNB 备份定时调度器（配置保存时经 restart() 重载节拍）。 */
   const backupScheduler = new BackupScheduler({ log: ctx.logger })
 
@@ -986,6 +999,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     disposeSandboxDiscipline?.(); disposeSandboxDiscipline = undefined
     disposeUserProfile?.(); disposeUserProfile = undefined
     disposeCredentialSync?.(); disposeCredentialSync = undefined; credentialSyncService = undefined
+    disposeRemoteGateway?.(); disposeRemoteGateway = undefined
     pluginBriefSurface.dispose()
     pluginBriefSurface = {
       dispose: () => {},
@@ -1159,6 +1173,26 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       remoteActivation = activateRemote(ctx, value.remote ?? { enabled: false })
       disposeRemote = remoteActivation.dispose
     })
+    // 远程访问网关（0.41.0）：enabled 且密码非空才启动；配置热更新随 sync 重建（换端口/密码即时生效）。
+    safeActivate(ctx, '远程访问网关', () => {
+      const gateway = value.remoteAccess
+      if (gateway?.enabled !== true) return
+      const password = (gateway.password ?? '').trim()
+      if (password === '') {
+        ctx.logger.warn('[dsh-devforge] 远程访问网关已开启但未配置密码，网关未启动')
+        return
+      }
+      disposeRemoteGateway = startRemoteGateway({
+        port: gateway.port ?? 19390,
+        host: gateway.host ?? '0.0.0.0',
+        password,
+        upstreamPort: gateway.upstreamPort ?? 3080,
+        sessionHours: gateway.sessionHours ?? 12,
+      }, {
+        info: (message, ...args) => { try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响网关 */ } },
+        warn: (message, ...args) => { try { ctx.logger.warn(message, ...args) } catch { /* 日志失败不影响网关 */ } },
+      }).dispose
+    })
     // 本地浏览器：独立于远程运维，启用即注册 browser_* 工具。
     safeActivate(ctx, '本地浏览器', () => {
       const browserActivation = activateBrowser(ctx, {
@@ -1255,6 +1289,15 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
             apiKeyEnv: value.siliconflow?.apiKeyEnv ?? 'SILICONFLOW_API_KEY',
             timeoutMs: value.siliconflow?.timeoutMs ?? 15000,
             syncChatModels: value.siliconflow?.syncChatModels !== false,
+          },
+          // 远程访问网关（0.41.0）：未配置一律关闭 + 默认端口，安全默认。
+          remoteAccess: {
+            enabled: value.remoteAccess?.enabled === true,
+            port: value.remoteAccess?.port ?? 19390,
+            host: value.remoteAccess?.host ?? '0.0.0.0',
+            password: value.remoteAccess?.password ?? '',
+            upstreamPort: value.remoteAccess?.upstreamPort ?? 3080,
+            sessionHours: value.remoteAccess?.sessionHours ?? 12,
           },
         }
       }
