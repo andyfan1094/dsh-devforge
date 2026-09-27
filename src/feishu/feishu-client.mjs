@@ -311,10 +311,18 @@ export function buildImagePrompt({ text = '', imagePath = '', imageMeta = null }
  * 的用户既看不到也无法操作（0.36.2 实测踩坑）。
  * 因此每轮普通消息前注入本提示，约束模型只用飞书可达的方式与用户交互。
  * 注意：ask_user_question 已由飞书答题器接管（0.36.3），问题会以互动卡片送达用户。
+ * 0.41.5 补坑：卡片答案经 run_code 内的子调用返回，模型若不把返回值输出（return/console.log）
+ * 就看不到用户的选择。0.41.4 实录：用户在手机点了「只做 B」，22:24:38 答案已回到宿主，
+ * 但 run_code 结果是 "(run_code completed with no output)"，模型当作用户没作答、白点一次。
  */
 const FEISHU_CHANNEL_HINT = [
   '【通道提示】本会话经飞书通道接入：用户正在手机飞书上对话，看不到电脑端 Web 面板。',
-  '需要向用户提问或让用户做选择时，正常调用 ask_user_question——问题会以飞书互动卡片送达用户手机，用户点选后答案会自动返回给你；除该工具外，不要依赖其他只存在于电脑端 GUI 的交互方式。',
+  '需要向用户提问或让用户做选择时，正常调用 ask_user_question——问题会以飞书互动卡片送达用户手机；除该工具外，不要依赖其他只存在于电脑端 GUI 的交互方式。',
+  '⚠️ 铁律：ask_user_question 只能写在 run_code 程序里，调用后【必须把返回值输出】（return 或 console.log），否则答案不会进入你的上下文——用户在手机上点了卡片你也看不到，等于白问。唯一正确写法：',
+  '  const r = await tools.ask_user_question({ questions: [...] })',
+  '  console.log(JSON.stringify(r))',
+  '  return r',
+  '错误写法：await tools.ask_user_question({ ... }) —— 返回值被丢弃，你永远等不到用户的选择。',
   '生成的文件、图片等产出直接以文字说明路径，或调用飞书发送工具（如 dsh_feishu_send_file / dsh_feishu_send_image）发给用户，不要依赖网页 GUI 展示。',
 ].join('\n')
 

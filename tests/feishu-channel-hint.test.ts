@@ -21,6 +21,14 @@ test('通道提示：说明 ask_user_question 由飞书卡片接管，可正常�
   assert.ok(result.includes('互动卡片'), '应说明问题以飞书互动卡片送达')
 })
 
+test('通道提示：强制要求把 ask_user_question 返回值输出（0.41.5 补坑）', () => {
+  const result = withFeishuChannelHint('测试')
+  assert.ok(result.includes('tools.ask_user_question'), '必须给出 tools.ask_user_question 的正确写法')
+  assert.ok(result.includes('console.log'), '必须要求 console.log 输出答案')
+  assert.ok(result.includes('return r'), '必须要求 return 返回答案')
+  assert.ok(result.includes('返回值被丢弃'), '必须警示丢弃返回值的后果')
+})
+
 test('通道提示：禁止依赖电脑端 GUI 的其他交互', () => {
   const result = withFeishuChannelHint('帮我查一下')
   assert.ok(result.includes('电脑端'), '应说明电脑端 GUI 不可见')
