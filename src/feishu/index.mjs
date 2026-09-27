@@ -1078,9 +1078,14 @@ export function apply(ctx, config = {}) {
   // 飞书答题器挂上宿主 user-questions waterfall：飞书会话由卡片认领，其余放行。
   // 注册失败绝不静默：0.38.4 的教训是 try/catch 空吞让整条链路无声失效，
   // 这里失败要同时进 ctx 日志与答题器落盘日志，认领全 miss 时可据此归因。
+  // prepend 必须保留：内置 api-remotes 在宿主启动时就注册了同一事件的转发监听
+  // （排在一切后装插件之前），而 Web 面板答题器对"认识会话"的问题一律认领且
+  // 无人转交——普通挂载会让飞书答题器永远轮空（0.41.0 实锤：认领日志三天零
+  // 记录、四次真实提问全部 ASK_ABORTED，手机收不到卡片）。插队到队首后飞书
+  // 会话先被卡片认领，非飞书会话照常 next() 放行给面板，行为不变。
   try {
-    disposers.push(ctx.on('user-questions/request', (request, next) => questionAnswerer.answer(request, next)))
-    questionAnswerer.log('info', 'waterfall listener registered: user-questions/request')
+    disposers.push(ctx.on('user-questions/request', (request, next) => questionAnswerer.answer(request, next), { prepend: true }))
+    questionAnswerer.log('info', 'waterfall listener registered (prepend): user-questions/request')
   } catch (error) {
     warn('user-questions/request 监听注册失败，问题卡片将无法认领：' + (error instanceof Error ? error.message : String(error)))
     questionAnswerer.log('warn', 'waterfall listener register FAILED: ' + (error instanceof Error ? error.message : String(error)))

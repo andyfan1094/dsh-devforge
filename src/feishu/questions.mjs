@@ -1,8 +1,10 @@
 // 飞书答题器：把 ask_user_question 的交互弹框接到飞书互动卡片上。
 // 背景（0.36.2 实测踩坑）：飞书桥创建的独立会话里，模型调用 ask_user_question 时
 // 弹框只出现在电脑端 Web 面板，手机飞书用户看不到也无法作答，任务会一直挂起。
-// 机制依据：DSH 事件目录登记的 waterfall 通道 user-questions/request（agent 作用域），
-// Web 面板答题器同样挂在该通道；本答题器并列挂载，只认领飞书会话，其余 next() 放行。
+// 机制依据：DSH 事件目录登记的 waterfall 通道 user-questions/request（agent 作用域）。
+// 内置 api-remotes 会把该事件转发给 Web 面板，而面板答题器"认识会话"就认领且不主动
+// 转交，普通挂载会让本答题器永远轮空（0.41.0 实锤：手机永远收不到卡片）——因此
+// index.mjs 以 { prepend: true } 把本答题器插到监听队首；只认领飞书会话，其余 next() 放行。
 // 答题契约（照抄 dsh-client-ui-user-questions 的返回形状）：
 //   resolve { answers: [{ id, selected: string[], custom? }] }
 //   取消/超时 reject Error{ name:'UserQuestionError', code:'ASK_CANCELLED'|'ASK_ABORTED' }
