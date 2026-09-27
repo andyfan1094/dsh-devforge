@@ -374,8 +374,13 @@ export function startRemoteGateway(config: RemoteGatewayConfig, log: GatewayLog)
       return
     }
 
-    // ---- 登录页本身无需会话；错误码经查询参数展示提示 ----
+    // ---- 登录页本身无需会话；已登录访问直接回主页（登录成功 reload 时不再停留登录页）；错误码经查询参数展示提示 ----
     if (url === LOGIN_PATH || url.startsWith(LOGIN_PATH + '?')) {
+      if (sessionValid(readCookie(req, SESSION_COOKIE), config.sessionHours)) {
+        res.writeHead(302, { location: '/' })
+        res.end()
+        return
+      }
       const reason = new URL(url, 'http://gateway').searchParams.get('e') ?? ''
       const message = reason === 'locked' ? '尝试过多，请 1 分钟后再试' : reason === 'bad' ? '密码不正确' : ''
       sendHtml(res, 200, renderLoginPage(message))
