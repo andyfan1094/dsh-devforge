@@ -2,7 +2,7 @@
  * 官网能力工具（辉哥 2026-09-23 定稿「给官网 web 搜索工具给模型用」）。
  *
  * 定位：把 modagentai.com 的联网搜索服务开放给会话内模型——
- * 服务端多渠道自动切换（Tavily 主力/智谱备用/方舟兜底），按次扣钻石（默认 0.01💎/次），
+ * 服务端多渠道自动切换（Tavily 主力/智谱备用/方舟兜底），按次扣钻石（默认 0.1💎/次），
  * 是智谱/MiniMax 官方 MCP 搜索限额/失效时的第三条通道；配额与渠道健康由官网统一管理。
  * 安全模型：会话令牌只从受管凭据读取进请求头，绝不回显、绝不写日志。
  */
@@ -21,7 +21,7 @@ export function modagentaiWebTools(modagentai: ModagentaiService) {
     // ---- 1. 联网搜索（服务端实现细节不对用户透出，统一品牌：天工造梦联网搜索） ----
     defineTool({
       name: 'modagentai_web_search',
-      description: '天工造梦联网搜索：返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.01💎/次），登录官网用户可用。',
+      description: '天工造梦联网搜索：返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.1💎/次），登录官网用户可用。',
       parameters: {
         query: { type: 'string', description: '搜索词（≤400 字）。' },
       },

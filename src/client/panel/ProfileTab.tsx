@@ -64,7 +64,7 @@ function MyPackages(): JSX.Element | null {
       })}
       {rows.length === 0 && <span className={css['identityHint']}>暂无在用套餐</span>}
       {balance !== null && (
-        <span className={css['identityHint']}>当前余额 {balance} 💎{searchesLeft !== null ? ' ≈ ' + searchesLeft + ' 次联网搜索（约 0.01💎/次）' : ''}</span>
+        <span className={css['identityHint']}>当前余额 {balance} 💎{searchesLeft !== null ? ' ≈ ' + searchesLeft + ' 次联网搜索（约 0.1💎/次）' : ''}</span>
       )}
     </div>
   )
@@ -186,7 +186,7 @@ function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy, searc
             <span>
               <strong>官网搜索工具</strong>
               <small>
-                模型可用的联网搜索（modagentai_web_search），按次扣钻石约 0.01💎 ·{' '}
+                模型可用的联网搜索（modagentai_web_search），按次扣钻石约 0.1💎 ·{' '}
                 <span className={css['identityInject']} data-on={searchEnabled === true ? 'true' : undefined}>
                   {searchEnabled === null ? '读取中…' : searchEnabled ? '● 已启用' : '○ 已停用'}
                 </span>
