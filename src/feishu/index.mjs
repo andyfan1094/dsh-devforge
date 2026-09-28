@@ -12,6 +12,7 @@ import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
 import { legacySelectionIdentity, selectionIdentity } from './session-identity.mjs'
+import { collectPersistedSessions, orderByRecentActivity } from './session-store-view.mjs'
 import { buildEffortCard, buildHelpCard, buildModelCard, MODEL_PAGE_SIZE, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
@@ -519,29 +520,37 @@ export function apply(ctx, config = {}) {
       }
       let handle = null
       let createSessionId = sessionId
-      let persistedIds = new Set()
-      let hasPersistedListing = false
-      try {
-        const headers = await ctx.sessionPersistence?.list?.()
-        if (Array.isArray(headers)) {
-          hasPersistedListing = true
-          persistedIds = new Set(headers.map((header) => String(header?.id ?? '').trim()).filter(Boolean))
-        }
-      } catch {}
+      // sessionPersistence.list() 返回快照数组 { header, revision, sizeBytes }，身份在
+      // snapshot.header.id 上。0.41.6 及以前误读成 snapshot.id（恒为 undefined），于是：
+      //   persistedIds 恒为空 → resumeCandidates 被清空（resume 永远不执行）
+      //   → createCandidates 放行全部候选 → create 从稳定号开始撞车、靠 already-exists
+      //   兜底一路退到下一个空号。
+      // 这就是「每次重启都新开会话」的根因（实测兜底号 0→4 严格递增，与此完全吻合）。
+      // 快照形状的解析与排序统一放在 session-store-view.mjs，由单测锁死防回归。
+      let persisted = { ids: new Set(), byId: new Map(), listed: false }
+      try { persisted = collectPersistedSessions(await ctx.sessionPersistence?.list?.()) } catch {}
+      const persistedIds = persisted.ids
+      const hasPersistedListing = persisted.listed
       const runtimeCollisionIds = Array.from({ length: 64 }, (_, index) => {
         const suffix = index === 0 ? ':runtime-collision' : ':runtime-collision-' + (index + 1)
         return stableSessionIdOf(key, identity + suffix)
       })
       const metadataMigratedId = stableSessionIdOf(key, identity + ':metadata-migrated')
       const metadataRebuiltId = stableSessionIdOf(key, identity + ':metadata-rebuilt')
-      // 候选顺序即复用优先级：新身份号（模型无关）→ 老身份号（兼容继承）→ 元数据迁移号 → 冲突兜底号。
-      const allSessionCandidates = [...new Set([
-        sessionId,
+      // 候选顺序即复用优先级：新身份号（模型无关）永远第一；其余历史号按"最后活动时间"倒序。
+      // 这一点很关键：同一条飞书聊天在磁盘上会积累多代会话号，按固定顺序取会接回**最早**那条，
+      // 用户最近几轮对话照样整段丢掉（实测这条聊天下同时存在 19:24 与 23:27 两代）。
+      const historyCandidates = orderByRecentActivity([...new Set([
         ...(legacyIdentityId === '' ? [] : [legacyIdentityId]),
         ...runtimeCollisionIds,
         metadataMigratedId,
         metadataRebuiltId,
-      ])]
+      ])], persisted.byId)
+      const allSessionCandidates = [...new Set([sessionId, ...historyCandidates])]
+      sessionLog('info', 'candidates chat=' + key
+        + ' persisted=' + persistedIds.size
+        + ' hasListing=' + String(hasPersistedListing)
+        + ' order=' + allSessionCandidates.slice(0, 6).join(','))
       const resumeCandidates = allSessionCandidates.filter((candidateId) => !archivedSessionIds.has(candidateId) && (!hasPersistedListing || persistedIds.has(candidateId)))
       // resume 失败原因必须留痕：占用类错误（例如"已被电脑端写句柄占用"）既不是 not-found、
       // 也不是元数据不匹配，旧代码把它们静默吞掉后一路退到"新建一个兜底号"，
