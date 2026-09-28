@@ -238,8 +238,10 @@ export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] 
     const days = typeof entry?.days === 'number' && Number.isFinite(entry.days) && entry.days > 0 ? entry.days : 0
     // 未激活：有效期从第一次消费起算（官网 activated_at 为空、expires_at 为 infinity）。
     const pendingHint = activated ? '' : days > 0 ? '首次使用后 ' + days + ' 天内有效' : '首次使用后开始计时'
-    // 行键：官网 id 唯一；缺失时退回「目录键@序号」，保证同目录多实例不撞 React key。
-    const rowKey = typeof m.id === 'number' ? m.packKey + '#' + m.id : m.packKey + '@' + (activeRows.length + pendingRows.length)
+    // 行键：官网 id 唯一（PG bigint，实测以字符串到达，数值形态也接住）；
+    // 缺失时退回「目录键@序号」，保证同目录多实例不撞 React key。
+    const rawId = typeof m.id === 'number' || typeof m.id === 'string' ? String(m.id) : ''
+    const rowKey = rawId !== '' ? m.packKey + '#' + rawId : m.packKey + '@' + (activeRows.length + pendingRows.length)
     const row: PackageRow = {
       rowKey,
       key: m.packKey,

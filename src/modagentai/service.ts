@@ -168,8 +168,10 @@ export class ModagentaiService {
                 const m = raw as Record<string, unknown>
                 // expires_at 未激活/永不过期时官网是 timestamptz 'infinity'，别当日期透传给面板。
                 const expires = typeof m.expiresAt === 'string' && m.expiresAt !== '' && m.expiresAt !== 'infinity' ? m.expiresAt : undefined
+                // id 是 PG bigint：官网实测返回字符串（'17'），数值形态也一并接住，统一转字符串。
+                const packId = typeof m.id === 'number' || typeof m.id === 'string' ? String(m.id) : ''
                 return {
-                  id: typeof m.id === 'number' ? m.id : undefined,
+                  ...(packId === '' ? {} : { id: packId }),
                   packKey: typeof m.packKey === 'string' ? m.packKey : '',
                   gemsTotal: typeof m.gemsTotal === 'number' ? m.gemsTotal : 0,
                   gemsLeft: typeof m.gemsLeft === 'number' ? m.gemsLeft : 0,

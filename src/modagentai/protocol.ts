@@ -38,8 +38,8 @@ export interface ModagentaiStatus {
 
 /** 套餐实例行（官网 gem_packs 视角）：剩余/总量/激活态。 */
 export interface ModagentaiPackRow {
-  /** 官网 gem_packs.id：同一目录可有多张实例（在用 + 未激活），前端据此生成唯一行键。 */
-  id?: number
+  /** 官网 gem_packs.id：PG 侧是 bigint，经 JSON 到插件是字符串，统一按字符串处理。 */
+  id?: string
   packKey: string
   gemsTotal: number
   gemsLeft: number

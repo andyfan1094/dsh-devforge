@@ -178,27 +178,29 @@ test('套餐行规整：已耗尽剔除；未激活保留并给「首次使用�
 })
 
 test('套餐行规整：同目录多实例的行键必须唯一（在用的和未激活的都可能是同一 packKey）', () => {
-  const dup = {
-    packages: {
-      loggedIn: true,
-      catalog: [{ key: 'burger', name: '香辣鸡腿堡套餐', ico: '🍔', days: 30 }],
-      mine: [
-        { id: 14, packKey: 'burger', gemsTotal: 35, gemsLeft: 35, active: true, activatedAt: null, expiresAt: null },
-        { id: 12, packKey: 'burger', gemsTotal: 35, gemsLeft: 6.98, active: true, activatedAt: '2026-09-27T14:55:09Z', expiresAt: '2026-10-27T14:55:09Z' },
-      ],
-    },
-  }
-  const rows = extractPackageRows(dup)
+  const catalog = [{ key: 'burger', name: '香辣鸡腿堡套餐', ico: '🍔', days: 30 }]
+  // 官网实测 id 是 PG bigint 经 JSON 变来的字符串（'12'），不是数字。
+  const mine = [
+    { id: '14', packKey: 'burger', gemsTotal: 35, gemsLeft: 35, active: true, activatedAt: null, expiresAt: null },
+    { id: '12', packKey: 'burger', gemsTotal: 35, gemsLeft: 6.98, active: true, activatedAt: '2026-09-27T14:55:09Z', expiresAt: '2026-10-27T14:55:09Z' },
+  ]
+  const rows = extractPackageRows({ packages: { loggedIn: true, catalog, mine } })
   assert.equal(rows.length, 2)
   assert.equal(rows[0].activated, true, '在用的排前')
   assert.equal(rows[1].activated, false)
-  assert.notEqual(rows[0].rowKey, rows[1].rowKey, '同 packKey 的两张实例不能撞 React key')
   assert.equal(rows[0].rowKey, 'burger#12')
-  assert.equal(rows[1].rowKey, 'burger#14')
+  assert.equal(rows[1].rowKey, 'burger#14', '字符串 id 必须认（曾按 number 判断导致退回序号键）')
+
+  // 数值形态一并接住（官网若哪天 cast 成 int 也不炸）
+  const numeric = extractPackageRows({ packages: { loggedIn: true, catalog, mine: mine.map((m) => ({ ...m, id: Number(m.id) })) } })
+  assert.equal(numeric[0].rowKey, 'burger#12')
+  assert.equal(numeric[1].rowKey, 'burger#14')
+
   // 官网没给 id 时退回「目录键@序号」，仍然唯一
-  const noId = { packages: { ...dup.packages, mine: dup.packages.mine.map(({ id, ...rest }) => rest) } }
-  const fallback = extractPackageRows(noId)
-  assert.notEqual(fallback[0].rowKey, fallback[1].rowKey)
+  const stripped = mine.map(({ packKey, gemsTotal, gemsLeft, active, activatedAt, expiresAt }) => ({ packKey, gemsTotal, gemsLeft, active, activatedAt, expiresAt }))
+  const noId = extractPackageRows({ packages: { loggedIn: true, catalog, mine: stripped } })
+  assert.notEqual(noId[0].rowKey, noId[1].rowKey)
+  assert.ok(noId[0].rowKey.startsWith('burger@'), '无 id 时退回序号键')
 })
 
 test('套餐行规整：expires_at 是 infinity 时不当作到期日', () => {
