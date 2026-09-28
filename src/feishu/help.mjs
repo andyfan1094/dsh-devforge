@@ -93,7 +93,7 @@ export function buildModelCard(current, models, { page = 0, pageSize = MODEL_PAG
   const effortLabel = current?.reasoningEffort ? clip(String(current.reasoningEffort), 40) : '默认'
   const elements = [
     md('**当前选中**：' + currentLabel + '（思考强度：' + effortLabel + '）'),
-    md('点击模型进入思考强度选择；切换会**重建当前会话**（上下文清空），任务运行中请先 /stop。'),
+    md('点击模型进入思考强度选择；切换后当前会话继续沿用，**历史上下文保留**，任务运行中请先 /stop。'),
     { tag: 'hr' },
   ]
   let lastProvider = ''

@@ -2,15 +2,16 @@
 // dsh-devforge consolidation modification: module folded into dsh-devforge;
 // runtime behavior preserved. See THIRD_PARTY_NOTICES.md.
 import { createHash } from 'node:crypto'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, extname, join, resolve as resolvePath } from 'node:path'
+import { basename, dirname, extname, join, resolve as resolvePath } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
 import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
-import { selectionIdentity } from './session-identity.mjs'
+import { legacySelectionIdentity, selectionIdentity } from './session-identity.mjs'
 import { buildEffortCard, buildHelpCard, buildModelCard, MODEL_PAGE_SIZE, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
 import { FeishuStore } from './store.mjs'
@@ -212,6 +213,20 @@ export function apply(ctx, config = {}) {
   const info = (message) => {
     try { ctx?.logger?.info?.('[dsh-feishu]', message) } catch {}
     try { console.info('[dsh-feishu]', message) } catch {}
+  }
+  // 会话复用诊断落固定文件：宿主 stdout 不落盘，而"重启后换了新会话"这类静默失效
+  // 只发生在 resume 阶段（错误被 catch 吞掉），没有留痕就无从归因。这里记录身份取值、
+  // 每个候选的 resume 结果与最终决定（0.41.7 起）。
+  const sessionLogPath = join(homedir(), '.dsh', 'logs', 'feishu-session.log')
+  let sessionLogDirReady = false
+  const sessionLog = (level, message) => {
+    try {
+      if (!sessionLogDirReady) {
+        mkdirSync(dirname(sessionLogPath), { recursive: true })
+        sessionLogDirReady = true
+      }
+      appendFileSync(sessionLogPath, '[' + new Date().toISOString() + '] [' + level + '] ' + message + '\n', 'utf8')
+    } catch {}
   }
   const send = async (chatId, text) => bridge === null ? false : bridge.sendText(chatId, text)
   const createStream = async (chatId, options) => bridge === null ? null : bridge.createStreamingCard?.(chatId, options)
@@ -462,23 +477,30 @@ export function apply(ctx, config = {}) {
       const effective = await resolveSelection(resolved, { waitForAdapter: true })
       setModelState(effective)
       const chatCwd = cwdFor(key)
+      // 0.41.7 定稿：模型不参与会话身份 → 在飞书里换模型/换思考强度不再换会话，上下文保留。
+      // 模型切换走 createHandle 里的 installModelSelection，注入到既有会话即可。
       const identity = selectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
+      // 兼容候选：0.41.6 及以前的老会话按「含模型」的旧算法建号；升级后先用旧号 resume，
+      // 把历史上下文继承过来，避免"升级本身"又造成一次断上下文。
+      const legacyIdentity = legacySelectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
+      const legacyIdentityId = legacyIdentity === identity ? '' : stableSessionIdOf(key, legacyIdentity)
       let sessionId = stableSessionIdOf(key, identity)
       const archivedSessionIds = archivedSessionIdsOf()
       const existing = conversations.get(key)
       // 身份漂移是"重启就新开会话"的唯一入口：落一行诊断，直接看到选择/预设/目录四项取值，
       // 下次再遇到"重启断上下文"不必再从会话文件反推（0.41.5 归因用）。
       if (existing === undefined || existing.identity !== identity) {
-        questionAnswerer.log(
-          existing === undefined ? 'info' : 'warn',
-          'identity ' + (existing === undefined ? 'cold-start' : 'changed')
-            + ' chat=' + key
-            + ' followDefault=' + String(effective.followDefault)
-            + ' selection=' + JSON.stringify(effective.selection)
-            + ' preset=' + String(effective.agentPreset)
-            + ' cwd=' + chatCwd
-            + (existing === undefined ? '' : ' from=' + existing.identity),
-        )
+        const identityDetail = 'identity ' + (existing === undefined ? 'cold-start' : 'changed')
+          + ' chat=' + key
+          + ' identityId=' + sessionId
+          + (legacyIdentityId === '' ? '' : ' legacyIdentityId=' + legacyIdentityId)
+          + ' followDefault=' + String(effective.followDefault)
+          + ' selection=' + JSON.stringify(effective.selection)
+          + ' preset=' + String(effective.agentPreset)
+          + ' cwd=' + chatCwd
+          + (existing === undefined ? '' : ' from=' + existing.identity)
+        questionAnswerer.log(existing === undefined ? 'info' : 'warn', identityDetail)
+        sessionLog(existing === undefined ? 'info' : 'warn', identityDetail)
       }
       const existingArchived = existing !== undefined && archivedSessionIds.has(existing.sessionId)
       if (existing !== undefined && existing.identity === identity && !existingArchived) return existing
@@ -512,33 +534,75 @@ export function apply(ctx, config = {}) {
       })
       const metadataMigratedId = stableSessionIdOf(key, identity + ':metadata-migrated')
       const metadataRebuiltId = stableSessionIdOf(key, identity + ':metadata-rebuilt')
-      const allSessionCandidates = [...new Set([sessionId, ...runtimeCollisionIds, metadataMigratedId, metadataRebuiltId])]
+      // 候选顺序即复用优先级：新身份号（模型无关）→ 老身份号（兼容继承）→ 元数据迁移号 → 冲突兜底号。
+      const allSessionCandidates = [...new Set([
+        sessionId,
+        ...(legacyIdentityId === '' ? [] : [legacyIdentityId]),
+        ...runtimeCollisionIds,
+        metadataMigratedId,
+        metadataRebuiltId,
+      ])]
       const resumeCandidates = allSessionCandidates.filter((candidateId) => !archivedSessionIds.has(candidateId) && (!hasPersistedListing || persistedIds.has(candidateId)))
+      // resume 失败原因必须留痕：占用类错误（例如"已被电脑端写句柄占用"）既不是 not-found、
+      // 也不是元数据不匹配，旧代码把它们静默吞掉后一路退到"新建一个兜底号"，
+      // 表现就是「每次重启都丢上下文」而毫无线索（0.41.7 归因用）。
+      const resumeFailures = []
       if (typeof ctx.agents.resume === 'function') {
         for (const candidateId of resumeCandidates) {
-          try {
-            handle = await createHandle(candidateId, effective, 'resume', chatCwd)
-            sessionId = candidateId
-            resumedExisting = true
-            info('resumed independent Feishu session ' + sessionId)
-            break
-          } catch (error) {
-            if (sessionNotFoundError(error)) continue
-            if (error?.code === 'FEISHU_SESSION_METADATA_MISMATCH') {
-              if (candidateId === metadataRebuiltId) {
-                const migrationError = new Error('飞书迁移会话元数据仍不一致，请检查持久化会话')
-                migrationError.code = 'FEISHU_MIGRATION_METADATA_INCONSISTENT'
-                throw migrationError
+          // 主身份与兼容身份值得重试：宿主刚起来时电脑端可能正打开着这条会话，
+          // 短暂占用会在几百毫秒内释放，重试救回来的正是用户的历史上下文。
+          const attempts = candidateId === sessionId || candidateId === legacyIdentityId ? 3 : 1
+          for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            try {
+              handle = await createHandle(candidateId, effective, 'resume', chatCwd)
+              sessionId = candidateId
+              resumedExisting = true
+              info('resumed independent Feishu session ' + sessionId)
+              sessionLog('info', 'resume ok chat=' + key + ' candidate=' + candidateId + ' attempt=' + attempt)
+              break
+            } catch (error) {
+              if (sessionNotFoundError(error)) {
+                sessionLog('info', 'resume not-found chat=' + key + ' candidate=' + candidateId)
+                break
               }
-              createSessionId = candidateId === metadataMigratedId ? metadataRebuiltId : metadataMigratedId
-              info('migrating Feishu session metadata to ' + createSessionId)
+              if (error?.code === 'FEISHU_SESSION_METADATA_MISMATCH') {
+                if (candidateId === metadataRebuiltId) {
+                  const migrationError = new Error('飞书迁移会话元数据仍不一致，请检查持久化会话')
+                  migrationError.code = 'FEISHU_MIGRATION_METADATA_INCONSISTENT'
+                  throw migrationError
+                }
+                createSessionId = candidateId === metadataMigratedId ? metadataRebuiltId : metadataMigratedId
+                info('migrating Feishu session metadata to ' + createSessionId)
+                break
+              }
+              const failureCode = String(error?.code ?? error?.name ?? '')
+              const failureDetail = error instanceof Error ? error.message : String(error)
+              resumeFailures.push({ candidateId, code: failureCode, detail: failureDetail })
+              sessionLog('warn', 'resume failed chat=' + key + ' candidate=' + candidateId
+                + ' attempt=' + attempt + '/' + attempts + ' code=' + failureCode + ' message=' + failureDetail)
+              if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 300 * attempt))
             }
           }
+          if (handle !== null) break
         }
       }
       if (handle === null) sessionId = createSessionId
+      // 会话确实存在（resume 报的不是 not-found）却打不开时，宁可报错也不静默新建：
+      // 静默新建 = 丢掉用户全部历史上下文，且每重启一次就多一条孤儿会话（实测兜底号严格递增）。
       if (handle === null) {
-        const createCandidates = allSessionCandidates.filter((candidateId) => !archivedSessionIds.has(candidateId) && (!hasPersistedListing || !persistedIds.has(candidateId)))
+        const blocked = resumeFailures.find((failure) => failure.candidateId === sessionId || (legacyIdentityId !== '' && failure.candidateId === legacyIdentityId))
+        if (blocked !== undefined) {
+          const busyError = new Error('飞书会话已存在但暂时打不开（' + (blocked.code === '' ? '' : blocked.code + '：') + blocked.detail
+            + '）；常见原因是这条会话正被电脑端 GUI 打开占用，关掉该会话再发一次即可，历史上下文不会丢')
+          busyError.code = 'FEISHU_SESSION_BUSY'
+          sessionLog('error', 'session blocked chat=' + key + ' candidate=' + blocked.candidateId + ' code=' + blocked.code + ' message=' + blocked.detail)
+          throw busyError
+        }
+      }
+      if (handle === null) {
+        // 只有"磁盘上还不存在的号"才允许新建；兼容用的老身份号绝不新建，
+        // 否则会造出一条没人认领的孤儿会话，下次又要重新挑号。
+        const createCandidates = allSessionCandidates.filter((candidateId) => candidateId !== legacyIdentityId && !archivedSessionIds.has(candidateId) && (!hasPersistedListing || !persistedIds.has(candidateId)))
         let createError = null
         for (const candidateId of createCandidates) {
           try {
@@ -788,7 +852,8 @@ export function apply(ctx, config = {}) {
   /**
    * 卡片回调统一路由：问答卡片归答题器；帮助/模型卡片的快捷动作在这里执行。
    * chatId 取自回调 context（p2p 会话为 open_chat_id）；模型切换复用面板同款
-   * updateConfig 链路（会重建会话），任务运行中直接拒绝并提示。
+   * updateConfig 链路（会话身份已与模型解耦，切换后台重建流程会 resume 回同一条会话，
+   * 上下文保留），任务运行中直接拒绝并提示。
    */
   const chatIdOfCardAction = (data) => String(data?.context?.open_chat_id ?? data?.open_chat_id ?? '').trim()
 
@@ -806,7 +871,7 @@ export function apply(ctx, config = {}) {
         // 翻页缓存同步新选中值，翻页后「当前」高亮不漂移。
         const cached = modelCardCache.get(chatId)
         if (cached !== undefined) modelCardCache.set(chatId, { ...cached, current: { provider, model, ...(effort === '' ? {} : { reasoningEffort: effort }) }, at: Date.now() })
-        return send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话已重建，直接发消息即可开始。')
+        return send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话继续沿用，历史上下文保留，直接发消息即可。')
       })
       .catch((error) => send(chatId, '模型切换失败：' + (error instanceof Error ? error.message : String(error))))
     return { toast: { content: '正在切换模型…' } }
