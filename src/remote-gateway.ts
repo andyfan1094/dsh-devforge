@@ -10,6 +10,7 @@
  *   直接转发会被 DSH 以 401 拒绝。因此网关在启动时读取宿主凭据文件里的
  *   client-connection/browser-session secret，转发时自动签发机器内会话 Cookie（v1.payload.hmac），
  *   与宿主 isAuthenticated 的校验规则完全对齐（authority 绑定 Host 头、7 天有效期）。
+ *   凭据路径跟随 DSH_HOME（resolveDshHome）：非默认 DSH_HOME 的部署（例如服务器把数据放 D 盘）同样命中。
  *   该 Cookie 只存在于网关→DSH 的本机回环请求里，绝不发给员工浏览器。
  *
  * 安全边界（为什么这样做）：
@@ -24,10 +25,10 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import type { Socket } from 'node:net'
+import { dshHome } from './remote/shared/dsh-home.ts'
 
 /** 网关日志出口（由调用方用 ctx.logger 包装，避免日志异常影响业务）。 */
 export interface GatewayLog {
@@ -323,7 +324,7 @@ export function startRemoteGateway(config: RemoteGatewayConfig, log: GatewayLog)
   const password = config.password
   const sessionMs = Math.min(config.sessionHours, MAX_SESSION_HOURS) * 3_600_000
   // DSH 会话签名器：读宿主凭据 secret，转发时自动签 dsh-auth-* 机器内会话 Cookie（见类注释）。
-  const signer = new DshSessionSigner(config.credentialsFile ?? join(homedir(), '.dsh', '.credentials.yaml'), log)
+  const signer = new DshSessionSigner(config.credentialsFile ?? join(dshHome(), '.credentials.yaml'), log)
 
   /** 处理普通 HTTP 请求：网关自身路由之外，全部反代上游。 */
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
