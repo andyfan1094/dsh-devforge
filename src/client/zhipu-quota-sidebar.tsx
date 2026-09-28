@@ -122,7 +122,7 @@ function ZhipuQuotaCard({ timer }: { timer: TimerFace }): React.ReactNode {
         createElement('span', null, headLeft),
         headAmount !== '' && createElement('span', { className: 'dzq-pct' }, headAmount),
       ),
-      pkgRows.map((row) => renderPackageRow(row, row.key)),
+      pkgRows.map((row) => renderPackageRow(row, row.rowKey)),
       pkgRows.length === 0 && createElement('span', { className: 'dzq-pkg-hint' }, state.pkgExpired ? '重新登录后显示套餐' : '暂无套餐，赞助后开始使用'),
     ),
   )

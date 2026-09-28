@@ -391,6 +391,9 @@
 .packRowTop { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
 .packName { min-width: 0; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary, #1f2329); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .packExpiry { font-weight: 400; font-size: 11px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
+/* 未激活徽章与激活前提示（辉哥 2026-09-28：没使用的套餐也要显示）。 */
+.packPending { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; font-weight: 500; font-size: 10px; line-height: 16px; color: var(--dsw-alias-label-secondary, #667085); background: var(--dsw-alias-interactive-bg-hover, #f0f1f3); vertical-align: 1px; }
+.packHint { font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-tertiary, #98a2b3); }
 .packQuota { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary, #667085); }
 .packBar { height: 6px; border-radius: 4px; background: var(--dsw-alias-interactive-bg-hover, #f0f1f3); overflow: hidden; }
 .packBarFill { height: 100%; border-radius: 4px; background: var(--dsw-alias-state-business-primary, #2563eb); transition: width .3s ease; }

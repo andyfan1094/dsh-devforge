@@ -19,7 +19,8 @@ function expiryLabel(expiresAt: string | undefined): string {
   return expiresAt.slice(0, 10)
 }
 
-/** 我的套餐卡（辉哥 2026-09-26 定稿）：只显示在用的套餐（已激活且有剩余），不做购买目录；
+/** 我的套餐卡（辉哥 2026-09-26 定稿；2026-09-28 改口径：还没用过的也要显示）：
+ * 在用的 + 未激活的（带「未激活」徽章与「首次使用后 N 天内有效」）都列；已耗尽的仍不显示，不做购买目录；
  * 每行套餐名 + 剩余/总量 + 进度条（≤15% 红 / ≤40% 琥珀）+ 到期日；底部一行余额与可搜次数。 */
 function MyPackages(): JSX.Element | null {
   const [rows, setRows] = useState<PackageRow[] | null>(null)
@@ -51,18 +52,23 @@ function MyPackages(): JSX.Element | null {
         const level = row.percent <= 15 ? 'danger' : row.percent <= 40 ? 'warning' : 'normal'
         const expiry = expiryLabel(row.expiresAt)
         return (
-          <div key={row.key} className={css['packRow']}>
+          <div key={row.rowKey} className={css['packRow']}>
             <div className={css['packRowTop']}>
-              <span className={css['packName']} title={row.title}>{row.label}{expiry !== '' ? <span className={css['packExpiry']}> · {expiry} 到期</span> : null}</span>
+              <span className={css['packName']} title={row.title}>
+                {row.label}
+                {!row.activated && <span className={css['packPending']}>未激活</span>}
+                {expiry !== '' ? <span className={css['packExpiry']}> · {expiry} 到期</span> : null}
+              </span>
               <span className={css['packQuota']}>{row.gemsLeft} / {row.gemsTotal} 💎</span>
             </div>
             <div className={css['packBar']}>
               <div className={css['packBarFill']} data-level={level} style={{ width: Math.max(2, Math.round(row.percent)) + '%' }} />
             </div>
+            {row.pendingHint !== '' && <span className={css['packHint']}>{row.pendingHint}</span>}
           </div>
         )
       })}
-      {rows.length === 0 && <span className={css['identityHint']}>暂无在用套餐</span>}
+      {rows.length === 0 && <span className={css['identityHint']}>暂无套餐</span>}
       {balance !== null && (
         <span className={css['identityHint']}>当前余额 {balance} 💎{searchesLeft !== null ? ' ≈ ' + searchesLeft + ' 次联网搜索（约 0.1💎/次）' : ''}</span>
       )}
@@ -481,7 +487,7 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
         </div>
       )}
 
-      {/* 我的套餐（已登录才显示；只显示在用的，不做购买目录） */}
+      {/* 我的套餐（已登录才显示；在用的 + 未激活的都列，已耗尽的不列，不做购买目录） */}
       {loaded && loadErr === '' && loggedIn && <MyPackages />}
     </div>
   )

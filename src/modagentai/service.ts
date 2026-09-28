@@ -166,13 +166,16 @@ export class ModagentaiService {
           out.mine = Array.isArray(data.mine)
             ? data.mine.map((raw) => {
                 const m = raw as Record<string, unknown>
+                // expires_at 未激活/永不过期时官网是 timestamptz 'infinity'，别当日期透传给面板。
+                const expires = typeof m.expiresAt === 'string' && m.expiresAt !== '' && m.expiresAt !== 'infinity' ? m.expiresAt : undefined
                 return {
+                  id: typeof m.id === 'number' ? m.id : undefined,
                   packKey: typeof m.packKey === 'string' ? m.packKey : '',
                   gemsTotal: typeof m.gemsTotal === 'number' ? m.gemsTotal : 0,
                   gemsLeft: typeof m.gemsLeft === 'number' ? m.gemsLeft : 0,
                   active: m.active === true,
                   activatedAt: typeof m.activatedAt === 'string' ? m.activatedAt : undefined,
-                  expiresAt: typeof m.expiresAt === 'string' ? m.expiresAt : undefined,
+                  ...(expires === undefined ? {} : { expiresAt: expires }),
                 }
               }).filter((m) => m.packKey !== '')
             : []

@@ -174,6 +174,9 @@ export function extractArkRows(dashboard: unknown): ArkQuotaRow[] {
 
 /** 套餐行展示模型（辉哥 2026-09-23 定稿：侧栏看板显示「什么套餐/总量/剩余」）。 */
 export interface PackageRow {
+  /** React 行键：同一目录可有多张实例（在用 + 未激活），packKey 会重复，展示层必须用它。 */
+  rowKey: string
+  /** 目录键（packKey，同目录多实例相同；仅作分组/调试用）。 */
   key: string
   label: string
   /** 剩余占总量百分比（0-100，总量 0 时 0）。 */
@@ -202,39 +205,56 @@ export interface PackageCatalogEntry {
 const FALLBACK_NAMES: Record<string, string> = { legacy: '初始余额', chicken: '鸡腿套餐', fries: '薯条套餐' }
 const FALLBACK_ICONS: Record<string, string> = { legacy: '🪙', chicken: '🍗', fries: '🍟' }
 
-/** 从 /api/dsh-devforge/modagentai/packages 载荷规整套餐行：只保留已激活且 gemsLeft > 0 的实例（辉哥定稿：还没用的不显示）。 */
+/**
+ * 从 /api/dsh-devforge/modagentai/packages 载荷规整套餐行。
+ *
+ * 辉哥 2026-09-28 改口径：**还没用过的（未激活）也要显示**——官网余额口径本来就把未激活实例算进去
+ * （`SUM(gems_left) WHERE gems_left > 0 AND expires_at > now()`，未激活的 expires_at 是 infinity），
+ * 藏着会让「套餐行剩 6.98 / 余额 246.98」账目对不上。仍然剔除已耗尽的（gemsLeft <= 0，不再提供信息）。
+ *
+ * 排序：已激活在前、未激活垫底——侧栏头部按 rows[0] 显示「当前套餐额度」（FIFO 正在扣的那张），
+ * 未激活的排前面会把真实在扣的套餐挤掉。
+ */
 export function extractPackageRows(payload: unknown, maxRows = 4): PackageRow[] {
   const data = payload !== null && typeof payload === 'object' ? (payload as { packages?: unknown }).packages : undefined
   if (data === null || typeof data !== 'object') return []
   const view = data as { loggedIn?: unknown; mine?: unknown; catalog?: unknown }
   if (view.loggedIn !== true || !Array.isArray(view.mine)) return []
   const catalog = Array.isArray(view.catalog) ? view.catalog : []
-  const rows: PackageRow[] = []
+  const activeRows: PackageRow[] = []
+  const pendingRows: PackageRow[] = []
   for (const raw of view.mine) {
-    if (rows.length >= maxRows) break
     if (raw === null || typeof raw !== 'object') continue
-    const m = raw as { packKey?: unknown; gemsTotal?: unknown; gemsLeft?: unknown; activatedAt?: unknown; expiresAt?: unknown }
+    const m = raw as { id?: unknown; packKey?: unknown; gemsTotal?: unknown; gemsLeft?: unknown; activatedAt?: unknown; expiresAt?: unknown }
     if (typeof m.packKey !== 'string' || m.packKey === '') continue
     const gemsTotal = typeof m.gemsTotal === 'number' && Number.isFinite(m.gemsTotal) ? m.gemsTotal : 0
     const gemsLeft = typeof m.gemsLeft === 'number' && Number.isFinite(m.gemsLeft) ? m.gemsLeft : 0
+    // 已耗尽的不占行（与未激活不同：用完的实例不再提供任何信息）。
     if (gemsLeft <= 0) continue
     const activated = typeof m.activatedAt === 'string' && m.activatedAt !== ''
-    // 辉哥定稿：还没用的（未激活）不显示，只显示用着的。
-    if (!activated) continue
     const entry = catalog.find((c) => c !== null && typeof c === 'object' && (c as PackageCatalogEntry).key === m.packKey) as PackageCatalogEntry | undefined
     const name = entry?.name ?? FALLBACK_NAMES[m.packKey] ?? m.packKey
     const ico = entry?.ico ?? FALLBACK_ICONS[m.packKey] ?? '🪙'
-    rows.push({
+    const days = typeof entry?.days === 'number' && Number.isFinite(entry.days) && entry.days > 0 ? entry.days : 0
+    // 未激活：有效期从第一次消费起算（官网 activated_at 为空、expires_at 为 infinity）。
+    const pendingHint = activated ? '' : days > 0 ? '首次使用后 ' + days + ' 天内有效' : '首次使用后开始计时'
+    // 行键：官网 id 唯一；缺失时退回「目录键@序号」，保证同目录多实例不撞 React key。
+    const rowKey = typeof m.id === 'number' ? m.packKey + '#' + m.id : m.packKey + '@' + (activeRows.length + pendingRows.length)
+    const row: PackageRow = {
+      rowKey,
       key: m.packKey,
       label: ico + ' ' + name,
       percent: gemsTotal > 0 ? Math.max(0, Math.min(100, (gemsLeft / gemsTotal) * 100)) : 0,
       gemsLeft,
       gemsTotal,
       activated,
-      pendingHint: '',
-      title: name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎',
-      ...(typeof m.expiresAt === 'string' && m.expiresAt !== '' ? { expiresAt: m.expiresAt } : {}),
-    })
+      pendingHint,
+      title: activated
+        ? name + '：剩余 ' + gemsLeft + ' / 总量 ' + gemsTotal + ' 💎'
+        : name + '：未激活，共 ' + gemsTotal + ' 💎（' + pendingHint + '）',
+      ...(typeof m.expiresAt === 'string' && m.expiresAt !== '' && m.expiresAt !== 'infinity' ? { expiresAt: m.expiresAt } : {}),
+    }
+    ;(activated ? activeRows : pendingRows).push(row)
   }
-  return rows
+  return activeRows.concat(pendingRows).slice(0, maxRows)
 }

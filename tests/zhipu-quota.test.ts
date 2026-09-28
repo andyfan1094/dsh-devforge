@@ -153,17 +153,64 @@ const payload = {
   },
 }
 
-test('套餐行规整：目录名称/图标映射、剩余占比；耗尽与未激活实例剔除（辉哥 2026-09-23 定稿：还没用的不显示）', () => {
+test('套餐行规整：已耗尽剔除；未激活保留并给「首次使用后 N 天内有效」（辉哥 2026-09-28 改口径：没使用的也要显示）', () => {
   const rows = extractPackageRows(payload)
-  assert.equal(rows.length, 2, '耗尽 empty 与未激活 chicken 都不显示')
+  assert.equal(rows.length, 3, '耗尽 empty 不显示；未激活 chicken 要显示')
+  // 排序：已激活在前、未激活垫底——侧栏头部按 rows[0] 显示「当前套餐」，不能把在扣的挤掉。
   assert.equal(rows[0].label, '🪙 初始余额', '目录缺失时名册兜底 legacy→初始余额')
+  assert.equal(rows[0].activated, true)
   assert.ok(rows[0].percent > 70 && rows[0].percent < 71)
   assert.equal(rows[0].gemsLeft, 9.32)
   assert.equal(rows[0].gemsTotal, 13.29)
-  assert.equal(rows[0].activated, true)
+  assert.equal(rows[0].pendingHint, '', '已激活不给激活前提示')
   assert.equal(rows[1].label, '🍟 薯条套餐')
   assert.equal(rows[1].gemsLeft, 14.99)
   assert.ok(rows[1].percent > 99.9 && rows[1].percent < 100, '薯条 14.99/15')
+  // 未激活：垫底 + 提示 + 进度条满格（钻石一分没动）
+  assert.equal(rows[2].label, '🍗 鸡腿套餐', '未激活的必须垫底')
+  assert.equal(rows[2].activated, false)
+  assert.equal(rows[2].gemsLeft, 3)
+  assert.equal(rows[2].gemsTotal, 3)
+  assert.equal(rows[2].percent, 100)
+  assert.equal(rows[2].pendingHint, '首次使用后 2 天内有效', '提示按目录 days 生成')
+  assert.ok(rows[2].title.includes('未激活'), '未激活行 title 要说明状态')
+  assert.equal(rows[2].expiresAt, undefined, '未激活没有到期日')
+})
+
+test('套餐行规整：同目录多实例的行键必须唯一（在用的和未激活的都可能是同一 packKey）', () => {
+  const dup = {
+    packages: {
+      loggedIn: true,
+      catalog: [{ key: 'burger', name: '香辣鸡腿堡套餐', ico: '🍔', days: 30 }],
+      mine: [
+        { id: 14, packKey: 'burger', gemsTotal: 35, gemsLeft: 35, active: true, activatedAt: null, expiresAt: null },
+        { id: 12, packKey: 'burger', gemsTotal: 35, gemsLeft: 6.98, active: true, activatedAt: '2026-09-27T14:55:09Z', expiresAt: '2026-10-27T14:55:09Z' },
+      ],
+    },
+  }
+  const rows = extractPackageRows(dup)
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].activated, true, '在用的排前')
+  assert.equal(rows[1].activated, false)
+  assert.notEqual(rows[0].rowKey, rows[1].rowKey, '同 packKey 的两张实例不能撞 React key')
+  assert.equal(rows[0].rowKey, 'burger#12')
+  assert.equal(rows[1].rowKey, 'burger#14')
+  // 官网没给 id 时退回「目录键@序号」，仍然唯一
+  const noId = { packages: { ...dup.packages, mine: dup.packages.mine.map(({ id, ...rest }) => rest) } }
+  const fallback = extractPackageRows(noId)
+  assert.notEqual(fallback[0].rowKey, fallback[1].rowKey)
+})
+
+test('套餐行规整：expires_at 是 infinity 时不当作到期日', () => {
+  const rows = extractPackageRows({
+    packages: {
+      loggedIn: true,
+      catalog: [{ key: 'legacy', name: '初始余额', ico: '🪙', days: 0 }],
+      mine: [{ id: 1, packKey: 'legacy', gemsTotal: 5, gemsLeft: 5, active: true, activatedAt: '2026-09-01T00:00:00Z', expiresAt: 'infinity' }],
+    },
+  })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].expiresAt, undefined, 'infinity 不是日期，不能显示成「infinity 到期」')
 })
 
 test('套餐行规整：未登录 / 异常载荷返回空数组不炸', () => {
@@ -173,6 +220,9 @@ test('套餐行规整：未登录 / 异常载荷返回空数组不炸', () => {
   assert.deepEqual(extractPackageRows({ packages: { loggedIn: true, mine: 'bad' } }), [])
 })
 
-test('套餐行规整：maxRows 截断', () => {
+test('套餐行规整：maxRows 截断且截的是末尾（未激活垫底，先被截）', () => {
   assert.equal(extractPackageRows(payload, 2).length, 2)
+  const rows = extractPackageRows(payload, 2)
+  assert.equal(rows[0].activated, true)
+  assert.equal(rows[1].activated, true, '截断发生在排序之后：先丢未激活的')
 })
