@@ -7,9 +7,11 @@
  * 设计边界：
  *   - 更新源登记表：包名 → 官网清单地址（downloads/index.json，含 sha256）。
  *     GitHub 兜底渠道已移除（0.35.0）：官网清单失败直接抛错，不再静默换渠道。
- *   - 官网登录墙（0.35.0）：/downloads/*.tgz 下载需要登录；apply 时若配置了
- *     官网账号（site），先 POST /api/auth/login 换 sid Cookie 再带 Cookie 下载；
- *     未配置账号且下载 401/403 时给出面板配置引导。清单 downloads/index.json 保持公开。
+ *   - 官网下载鉴权（0.41.11 修回归）：nginx 已把 /downloads/*.tgz 直连改成一律 404（历史版本
+ *     对外隐藏），旧的「带 sid Cookie 直连 /downloads/...」必然 404。apply 时先用官网会话令牌
+ *     （面板登录态优先，无登录态回退 site 账号 POST /api/auth/login 换 sid）调
+ *     POST /api/download-token 换票，再把清单里的 /downloads/<file> 映射到 /dl/<file>?token=<票>；
+ *     无登录态、换票 401 或下载 401/403 时给出个人中心登录引导。清单 downloads/index.json 保持公开。
  *   - check：读已装版本（复用 plugin-brief 的包读取器）→ 官网清单 latest 与已装比较。
  *   - apply：登录（可选）→ 下载 tgz → sha256 与清单比对（清单提供时强制校验，防下载被篡改）→
  *     spawn `dsh plugin --profile <profile> add <tgz>`（与手工升级同一条受验证路径）→
@@ -313,6 +315,100 @@ export async function loginSite(site: PluginUpdateSiteConfig, options?: { fetchI
   return sid
 }
 
+/** 官网会话令牌端点：用会话令牌换下载票（返回值即显式令牌，也是中转 API Key）。 */
+export const PLUGIN_UPDATE_DOWNLOAD_TOKEN_PATH = '/api/download-token'
+
+/** 官网下载鉴权通道前缀：tgz 只能经 /dl/<file>?token=<票> 下载。 */
+export const PLUGIN_UPDATE_GATED_DOWNLOAD_PREFIX = '/dl/'
+
+/** 官网站点 API 根地址（site 配置缺省或留空 → 官方官网），去掉尾部斜杠。 */
+export function siteApiRoot(site?: PluginUpdateSiteConfig): string {
+  const raw = site?.apiUrl.trim() ?? ''
+  return (raw === '' ? PLUGIN_UPDATE_DEFAULT_SITE_API : raw).replace(/\/+$/, '')
+}
+
+/** tgz 地址是否与官网同源（只有同源才需要走 /dl/ 登录鉴权通道）。 */
+export function sameOrigin(url: string, apiRoot: string): boolean {
+  try {
+    return new URL(url).origin === new URL(apiRoot).origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 归一化官网会话令牌。
+ * loginSite 返回的是 `sid=xxx` 形态的 Cookie 值，而换票接口要的是裸令牌；
+ * 面板登录态本身就是裸令牌，原样返回。
+ */
+export function normalizeSessionToken(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed === '') return ''
+  const match = /(?:^|;\s*)sid=([^;]+)/.exec(trimmed)
+  return match?.[1]?.trim() ?? trimmed
+}
+
+/**
+ * 用官网会话令牌换下载票（POST /api/download-token）。
+ *
+ * 0.41.11 修回归：nginx 把 /downloads/*.tgz 直连改成一律 404 后，插件的
+ * 「带 sid Cookie 直连 /downloads/...」必然报「下载失败 HTTP 404」；下载凭据只能经本接口取得。
+ * 401 说明会话已失效，转成个人中心登录引导。
+ */
+export async function fetchDownloadTicket(apiUrl: string, sessionToken: string, options?: { fetchImpl?: typeof fetch; timeoutMs?: number }): Promise<string> {
+  const url = apiUrl.replace(/\/+$/, '') + PLUGIN_UPDATE_DOWNLOAD_TOKEN_PATH
+  const token = normalizeSessionToken(sessionToken)
+  if (token === '') throw new Error('官网会话令牌为空，无法换取下载票')
+  let response: Response
+  try {
+    response = await (options?.fetchImpl ?? fetch)(url, {
+      method: 'POST',
+      headers: upstreamRequestHeaders({ 'content-type': 'application/json', authorization: 'Bearer ' + token }),
+      body: '{}',
+      signal: AbortSignal.timeout(options?.timeoutMs ?? 15000),
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error('官网换取下载票失败（' + url + '）：' + detail)
+  }
+  if (response.status === 401) throw new Error('官网会话已失效：请到 天工造梦 → 个人中心 重新登录官网账号后重试')
+  if (!response.ok) throw new Error('官网换取下载票失败：HTTP ' + String(response.status))
+  let payload: { token?: unknown } | null = null
+  try {
+    payload = JSON.parse(await upstreamResponseText(response)) as { token?: unknown } | null
+  } catch {
+    payload = null
+  }
+  const ticket = typeof payload?.token === 'string' ? payload.token.trim() : ''
+  if (ticket === '') throw new Error('官网未返回下载票，无法下载')
+  return ticket
+}
+
+/**
+ * 把清单里的 tgz 地址映射到官网登录鉴权通道 /dl/<file>?token=<票>。
+ *
+ * 清单的 latestUrl / versions[].url 是 /downloads/<file>（0.41.11 起直连一律 404）；
+ * 同源地址统一重建为 /dl/<file> 再挂票；非同源地址原样返回，保留将来接入其他发布渠道的能力。
+ */
+export function buildGatedDownloadUrl(tgzUrl: string, ticket: string, apiUrl: string): string {
+  let source: URL
+  let origin: string
+  try {
+    source = new URL(tgzUrl)
+    origin = new URL(apiUrl).origin
+  } catch {
+    return tgzUrl
+  }
+  if (source.origin !== origin) return tgzUrl
+  // 只处理 .tgz 直链：目录地址或其他形态不猜，原样返回（避免把 /downloads/ 拼成 /dl/downloads）。
+  if (!source.pathname.endsWith('.tgz')) return tgzUrl
+  const file = source.pathname.split('/').pop() ?? ''
+  if (file === '') return tgzUrl
+  const gated = new URL(PLUGIN_UPDATE_GATED_DOWNLOAD_PREFIX + encodeURIComponent(file), origin)
+  gated.searchParams.set('token', ticket)
+  return gated.toString()
+}
+
 /** 带超时的官网清单拉取（主渠道；测试可注入）。 */
 export async function fetchSiteIndex(indexUrl: string, timeoutMs = 15000): Promise<SiteReleaseIndex> {
   const response = await fetch(indexUrl, {
@@ -468,6 +564,8 @@ export interface PluginUpdateServiceDeps {
   loginSite?: typeof loginSite
   /** 面板官网登录态（个人中心 session token，0.40.1 起下载优先复用，免重复配账号）。 */
   sessionToken?: () => Promise<string>
+  /** 换下载票（0.41.11 起下载走 /dl/ 鉴权通道；测试可注入，默认零网络）。 */
+  fetchTicket?: typeof fetchDownloadTicket
 }
 
 /** 单插件检查（纯编排，便于单测）。 */
@@ -535,20 +633,28 @@ export class PluginUpdateService {
     const resolveLatestFn = this.deps.resolveLatestFn ?? resolveLatest
     const latest = await resolveLatestFn(source)
     const download = this.deps.download ?? downloadTgz
-    // 下载鉴权：面板登录态（Bearer session token）优先；无登录态再试 site 手动账号。
-    let downloadHeaders: Record<string, string> | undefined
-    if (latest.via === 'site' && this.deps.sessionToken !== undefined) {
-      const token = await this.deps.sessionToken().catch(() => '')
-      if (token !== '') downloadHeaders = { authorization: 'Bearer ' + token }
-    }
-    if (downloadHeaders === undefined && latest.via === 'site' && config.site !== undefined && config.site.username.trim() !== '' && config.site.password !== '') {
-      const login = this.deps.loginSite ?? loginSite
-      const sid = await login(config.site)
-      downloadHeaders = { cookie: sid }
+    // 下载鉴权（0.41.11 修回归）：/downloads/*.tgz 直连已被 nginx 改成一律 404，下载只能走
+    // /dl/<file>?token=<票>。先取官网会话令牌（面板登录态优先，无登录态回退 site 手动账号），
+    // 再用它换下载票，最后把清单地址映射到鉴权通道；非同源地址原样下载（保留扩展渠道）。
+    const apiRoot = siteApiRoot(config.site)
+    let tgzUrl = latest.tgzUrl
+    if (latest.via === 'site' && sameOrigin(latest.tgzUrl, apiRoot)) {
+      let sessionToken = ''
+      if (this.deps.sessionToken !== undefined) {
+        sessionToken = normalizeSessionToken(await this.deps.sessionToken().catch(() => ''))
+      }
+      if (sessionToken === '' && config.site !== undefined && config.site.username.trim() !== '' && config.site.password !== '') {
+        const login = this.deps.loginSite ?? loginSite
+        sessionToken = normalizeSessionToken(await login(config.site))
+      }
+      // 没有官网登录态时不发下载请求：直连必然 404，直接给可执行的登录引导。
+      if (sessionToken === '') throw new Error('官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试')
+      const fetchTicket = this.deps.fetchTicket ?? fetchDownloadTicket
+      tgzUrl = buildGatedDownloadUrl(latest.tgzUrl, await fetchTicket(apiRoot, sessionToken), apiRoot)
     }
     let tgzPath: string
     try {
-      tgzPath = await download(latest.tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256, headers: downloadHeaders })
+      tgzPath = await download(tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256 })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // 登录墙拦截而非故障：转译成个人中心登录引导（0.40.1 辉哥定稿：页面不再提供手动账号入口）。

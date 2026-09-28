@@ -6,14 +6,19 @@ import {
   PluginUpdateService,
   applySitePatch,
   buildDshPluginAddCommand,
+  buildGatedDownloadUrl,
   checkOne,
   compareSemver,
   downloadTgz,
+  fetchDownloadTicket,
   loginSite,
+  normalizeSessionToken,
   parseSidFromSetCookie,
   parseSiteIndex,
   resolveLatest,
+  sameOrigin,
   sha256Hex,
+  siteApiRoot,
   toSiteView,
   type LatestInfo,
   type PluginUpdateSiteConfig,
@@ -139,8 +144,12 @@ function service(overrides?: { latest?: LatestInfo; installed?: { version?: stri
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => overrides?.installed ?? { version: '0.13.0' },
     resolveLatestFn: async () => overrides?.latest !== undefined ? overrides.latest : siteLatest('0.13.1'),
+    // 0.41.11 起下载必须走 /dl/ 鉴权通道：装置补齐登录态与换票，断言下载地址已映射到 /dl/。
+    sessionToken: async () => 'sess-token-1',
+    fetchTicket: async () => 'ticket-1',
     download: async (url, name, version, options) => {
-      assert.ok(url.startsWith('https://modagentai.com/'))
+      assert.ok(url.startsWith('https://modagentai.com/dl/'), '下载地址必须走 /dl/ 鉴权通道，不得直连 /downloads/')
+      assert.ok(url.includes('token=ticket-1'))
       assert.equal(name, 'dsh-devforge')
       // 官网渠道必须把清单 sha256 传进来做完整性校验。
       assert.equal(options?.expectedSha256, 'fedcba')
@@ -186,22 +195,28 @@ test('PluginUpdateService.apply：sha256 校验失败时拒绝安装', async () 
   await assert.rejects(service({ hashFail: true }).apply('dsh-devforge'), /sha256/)
 })
 
-test('PluginUpdateService.apply：面板登录态优先（Bearer session token），未配 site 账号也可下载（0.40.1）', async () => {
-  let seenHeaders: Record<string, string> | undefined
+test('PluginUpdateService.apply：面板登录态换票后走 /dl/ 带票下载（未配 site 账号也可升级）', async () => {
+  let seenUrl = ''
+  let seenTicketArgs = ''
   const svc = new PluginUpdateService({
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => ({ version: '0.13.0' }),
     resolveLatestFn: async () => siteLatest('0.13.1'),
-    download: async (_url, _name, version, options) => {
-      seenHeaders = options?.headers
+    download: async (url, _name, version) => {
+      seenUrl = url
       return '/tmp/dsh-devforge-' + version + '.tgz'
     },
     runAdd: async () => 'done',
     sessionToken: async () => 'sess-token-1',
+    fetchTicket: async (apiUrl, sessionToken) => {
+      seenTicketArgs = apiUrl + '|' + sessionToken
+      return 'ticket-9'
+    },
   })
   const result = await svc.apply('dsh-devforge')
   assert.equal(result.ok, true)
-  assert.equal(seenHeaders?.authorization, 'Bearer sess-token-1')
+  assert.equal(seenTicketArgs, 'https://modagentai.com|sess-token-1')
+  assert.equal(seenUrl, 'https://modagentai.com/dl/dsh-devforge-0.13.1.tgz?token=ticket-9')
 })
 
 // ---------------------------------------------------------------------------
@@ -273,7 +288,7 @@ test('loginSite：200 但缺会话 Cookie → 明确报错', async () => {
 // 下载与渠道：downloadTgz headers 透传 / resolveLatest 无 GitHub 兜底
 // ---------------------------------------------------------------------------
 
-test('downloadTgz：headers 透传（登录墙 Cookie 通道）；401 明确报错', async () => {
+test('downloadTgz：按传入地址下载且 headers 透传；401 明确报错', async () => {
   const original = globalThis.fetch
   const calls: Array<{ url: string; init?: RequestInit }> = []
   globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
@@ -281,13 +296,14 @@ test('downloadTgz：headers 透传（登录墙 Cookie 通道）；401 明确报�
     return new Response('tgz-bytes', { status: 200 })
   }) as typeof fetch
   try {
-    const target = await downloadTgz('https://modagentai.com/downloads/x.tgz', 'dsh-devforge', '0.13.1', { headers: { cookie: 'sid=abc' } })
+    const gated = buildGatedDownloadUrl('https://modagentai.com/downloads/dsh-devforge-0.13.1.tgz', 'tk', PLUGIN_UPDATE_DEFAULT_SITE_API)
+    const target = await downloadTgz(gated, 'dsh-devforge', '0.13.1', { headers: { 'x-trace': '1' } })
     assert.equal(calls.length, 1)
-    assert.equal(calls[0]?.url, 'https://modagentai.com/downloads/x.tgz')
-    assert.deepEqual(calls[0]?.init?.headers, { cookie: 'sid=abc' })
+    assert.equal(calls[0]?.url, 'https://modagentai.com/dl/dsh-devforge-0.13.1.tgz?token=tk')
+    assert.deepEqual(calls[0]?.init?.headers, { 'x-trace': '1' })
     assert.ok(target.endsWith('dsh-devforge-0.13.1.tgz'))
     globalThis.fetch = (async () => new Response('no', { status: 401 })) as typeof fetch
-    await assert.rejects(downloadTgz('https://modagentai.com/downloads/x.tgz', 'dsh-devforge', '0.13.1'), /HTTP 401/)
+    await assert.rejects(downloadTgz(gated, 'dsh-devforge', '0.13.1'), /HTTP 401/)
   } finally {
     globalThis.fetch = original
   }
@@ -304,6 +320,60 @@ test('downloadTgz：sha256 完整性校验（清单提供时强制）', async ()
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('buildGatedDownloadUrl：清单的 /downloads/ 地址映射到 /dl/ 带票通道（本次 404 回归的修法）', () => {
+  assert.equal(
+    buildGatedDownloadUrl('https://modagentai.com/downloads/dsh-devforge-0.41.10.tgz', 'tk', 'https://modagentai.com'),
+    'https://modagentai.com/dl/dsh-devforge-0.41.10.tgz?token=tk',
+  )
+  // 清单若本来就是 /dl/ 形态，同样重建并补票（旧票不叠加）
+  assert.equal(
+    buildGatedDownloadUrl('https://modagentai.com/dl/dsh-devforge-0.41.10.tgz?token=old', 'tk', 'https://modagentai.com'),
+    'https://modagentai.com/dl/dsh-devforge-0.41.10.tgz?token=tk',
+  )
+  // 非同源地址原样返回：保留将来接入其他发布渠道的能力
+  assert.equal(buildGatedDownloadUrl('https://cdn.example.com/x.tgz', 'tk', 'https://modagentai.com'), 'https://cdn.example.com/x.tgz')
+  // 目录地址（无文件名）不猜，原样返回
+  assert.equal(buildGatedDownloadUrl('https://modagentai.com/downloads/', 'tk', 'https://modagentai.com'), 'https://modagentai.com/downloads/')
+})
+
+test('normalizeSessionToken：Cookie 形态取裸令牌，裸令牌原样返回', () => {
+  assert.equal(normalizeSessionToken('sid=xyz'), 'xyz')
+  assert.equal(normalizeSessionToken('sid=xyz; Path=/'), 'xyz')
+  assert.equal(normalizeSessionToken('  bare-token-1  '), 'bare-token-1')
+  assert.equal(normalizeSessionToken('other=1; sid=tk; a=b'), 'tk')
+  assert.equal(normalizeSessionToken(''), '')
+})
+
+test('siteApiRoot / sameOrigin：缺省官网根地址、去尾斜杠、同源判定', () => {
+  assert.equal(siteApiRoot(), 'https://modagentai.com')
+  assert.equal(siteApiRoot({ apiUrl: '', username: '', password: '' }), 'https://modagentai.com')
+  assert.equal(siteApiRoot({ apiUrl: 'https://mod.example.com///', username: '', password: '' }), 'https://mod.example.com')
+  assert.equal(sameOrigin('https://modagentai.com/downloads/x.tgz', 'https://modagentai.com'), true)
+  assert.equal(sameOrigin('https://cdn.example.com/x.tgz', 'https://modagentai.com'), false)
+  assert.equal(sameOrigin('not-a-url', 'https://modagentai.com'), false)
+})
+
+test('fetchDownloadTicket：POST /api/download-token 用 Bearer 换票；401 转登录引导', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const fakeFetch = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init })
+    return new Response(JSON.stringify({ ok: true, token: 'tk-1' }), { status: 200 })
+  }) as typeof fetch
+  const ticket = await fetchDownloadTicket('https://modagentai.com', 'sid=abc', { fetchImpl: fakeFetch })
+  assert.equal(ticket, 'tk-1')
+  assert.equal(calls[0]?.url, 'https://modagentai.com/api/download-token')
+  assert.equal(calls[0]?.init?.method, 'POST')
+  assert.equal((calls[0]?.init?.headers as Record<string, string> | undefined)?.authorization, 'Bearer abc')
+
+  const unauthorized = (async () => new Response('{}', { status: 401 })) as typeof fetch
+  await assert.rejects(fetchDownloadTicket('https://modagentai.com', 'abc', { fetchImpl: unauthorized }), /个人中心/)
+
+  const noToken = (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch
+  await assert.rejects(fetchDownloadTicket('https://modagentai.com', 'abc', { fetchImpl: noToken }), /未返回下载票/)
+
+  await assert.rejects(fetchDownloadTicket('https://modagentai.com', '   ', { fetchImpl: fakeFetch }), /令牌为空/)
 })
 
 test('resolveLatest：GitHub 兜底已移除——未登记清单地址直接报错', async () => {
@@ -324,11 +394,26 @@ test('resolveLatest：官网清单失败直接抛错，不静默换渠道', asyn
 // apply 与登录制联动：未配置账号 401 引导 / 已配置先登录换 Cookie
 // ---------------------------------------------------------------------------
 
-test('PluginUpdateService.apply：下载 401 → 个人中心登录引导（0.40.1 页面不再提供手动账号入口）', async () => {
+test('PluginUpdateService.apply：无官网登录态 → 直接给个人中心登录引导，且不发下载请求', async () => {
+  let downloadCalled = 0
   const svc = new PluginUpdateService({
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => ({ version: '0.13.0' }),
     resolveLatestFn: async () => siteLatest('0.13.1'),
+    download: async () => { downloadCalled += 1; return '/tmp/x.tgz' },
+    runAdd: async () => 'done',
+  })
+  await assert.rejects(svc.apply('dsh-devforge'), /官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试/)
+  assert.equal(downloadCalled, 0, '无登录态时直连必然 404，不应再发下载请求')
+})
+
+test('PluginUpdateService.apply：下载 401 → 个人中心登录引导（会话中途失效）', async () => {
+  const svc = new PluginUpdateService({
+    getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
+    readInstalled: () => ({ version: '0.13.0' }),
+    resolveLatestFn: async () => siteLatest('0.13.1'),
+    sessionToken: async () => 'sess-token-1',
+    fetchTicket: async () => 'ticket-1',
     download: async () => { throw new Error('下载失败 HTTP 401') },
     runAdd: async () => 'done',
   })
@@ -340,27 +425,32 @@ test('PluginUpdateService.apply：下载 403 → 同样给出登录引导', asyn
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource] }),
     readInstalled: () => ({ version: '0.13.0' }),
     resolveLatestFn: async () => siteLatest('0.13.1'),
+    sessionToken: async () => 'sess-token-1',
+    fetchTicket: async () => 'ticket-1',
     download: async () => { throw new Error('下载失败 HTTP 403') },
     runAdd: async () => 'done',
   })
   await assert.rejects(svc.apply('dsh-devforge'), /个人中心/)
 })
 
-test('PluginUpdateService.apply：已配置 site → 先登录换 sid，下载带 Cookie', async () => {
+test('PluginUpdateService.apply：无面板登录态时回退 site 账号登录，sid 归一化后换票下载', async () => {
   let loginCalled = 0
-  let seenHeaders: Record<string, string> | undefined
+  let seenTokenArg = ''
+  let seenUrl = ''
   const svc = new PluginUpdateService({
     getConfig: () => ({ enabled: true, profile: 'web', sources: [siteSource], site: { apiUrl: '', username: 'u1', password: 'p1' } }),
     readInstalled: () => ({ version: '0.13.0' }),
     resolveLatestFn: async () => siteLatest('0.13.1'),
     loginSite: async () => { loginCalled += 1; return 'sid=xyz' },
-    download: async (_url, _name, _version, options) => { seenHeaders = options?.headers; return '/tmp/x.tgz' },
+    fetchTicket: async (_apiUrl, sessionToken) => { seenTokenArg = sessionToken; return 'ticket-2' },
+    download: async (url) => { seenUrl = url; return '/tmp/x.tgz' },
     runAdd: async () => 'done',
   })
   const result = await svc.apply('dsh-devforge')
   assert.equal(result.ok, true)
   assert.equal(loginCalled, 1)
-  assert.equal(seenHeaders?.cookie, 'sid=xyz')
+  assert.equal(seenTokenArg, 'xyz', 'loginSite 返回 Cookie 形态 sid=xyz，换票必须用裸令牌')
+  assert.equal(seenUrl, 'https://modagentai.com/dl/dsh-devforge-0.13.1.tgz?token=ticket-2')
 })
 
 test('PluginUpdateService.apply：登录失败错误原样抛出（不静默降级为匿名下载）', async () => {
