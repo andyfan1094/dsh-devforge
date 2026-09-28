@@ -6,7 +6,7 @@
 import { DEVFORGE_API, type AgentPreset250kSetupResult, type AgentPreset250kStatus, type BackupStatus, type BackupSyncResult, type ForgeJob, ForgeJobCreateRequest, ForgeTemplate, type RemoteHostSummary, StandardDetail, StandardSummary } from '../protocol.ts'
 import type { TokenUsageReport } from '../usage/types.ts'
 import { DOUYIN_LIVE_API, type DouyinLiveSnapshot } from '../douyin-live/protocol.ts'
-import { BROWSER_API, type BrowserStatus } from '../browser/protocol.ts'
+import { BROWSER_API, type BrowserSettingsPatch, type BrowserSettingsView, type BrowserStatus } from '../browser/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
@@ -417,6 +417,22 @@ export class DevforgeApi {
   /** 停止本地浏览器会话；用户档案保留，登录状态不丢失。 */
   async browserStop(): Promise<void> {
     await readJson(await fetch(BROWSER_API.stop, { method: 'POST' }))
+  }
+
+  /** 本地浏览器开关：读取基础工具与发布类工具当前的启用状态。 */
+  async getBrowserSettings(): Promise<BrowserSettingsView> {
+    const data = await readJson<{ settings: BrowserSettingsView }>(await fetch(BROWSER_API.settings))
+    return data.settings
+  }
+
+  /** 本地浏览器开关：保存并让工具注册立即跟随（Host 侧热重建，无需重启 DSH）。 */
+  async putBrowserSettings(patch: BrowserSettingsPatch): Promise<BrowserSettingsView> {
+    const data = await readJson<{ settings: BrowserSettingsView }>(await fetch(BROWSER_API.settings, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }))
+    return data.settings
   }
 
   /** 远程访问网关：读脱敏配置与运行状态（密码原文永不出 Host）。 */

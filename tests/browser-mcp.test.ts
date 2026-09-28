@@ -53,7 +53,7 @@ test('isSafeHttpUrl 只放行 http(s)', () => {
 })
 
 test('normalizeBrowserConfig 收敛非法通道并补默认档案目录', () => {
-  const config = normalizeBrowserConfig({ enabled: true, headless: false, channel: 'safari', profileDir: '', timeoutMs: 1 })
+  const config = normalizeBrowserConfig({ enabled: true, publish: false, headless: false, channel: 'safari', profileDir: '', timeoutMs: 1 })
   assert.equal(config.channel, 'chrome')
   assert.equal(config.profileDir, join(homedir(), '.dsh', 'devforge', 'browser-profile'))
   assert.equal(config.outputDir, join(homedir(), '.dsh', 'devforge', 'browser-profile') + '-output')

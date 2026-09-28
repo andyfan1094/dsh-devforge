@@ -79,7 +79,7 @@ import { ragSearchTool } from './rag/tools.ts'
 import { MirrorSyncScheduler, normalizeMirrorSyncSettings } from './rag/mirror-sync.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
 import type { BrowserStatus } from './browser/protocol.ts'
-import { makeBrowserRoutes } from './browser/routes.ts'
+import { makeBrowserRoutes, makeBrowserSettingsRoutes } from './browser/routes.ts'
 import type { BrowserRoutesService } from './browser/service.ts'
 import { makeZhipuRoutes } from './zhipu/routes.ts'
 import { ZhipuCodingPlanService, resolveZhipuPrimaryKeyName, type ZhipuCapabilityConfig } from './zhipu/service.ts'
@@ -173,7 +173,7 @@ export interface Config {
   /** 远程运维（SSH/WinRM 兼容接管）子配置。 */
   remote?: RemoteConfig
   /** 本地浏览器（Playwright MCP）子配置。 */
-  browser?: { enabled?: boolean; headless?: boolean; channel?: string; profileDir?: string; timeoutMs?: number }
+  browser?: { enabled?: boolean; publish?: boolean; headless?: boolean; channel?: string; profileDir?: string; timeoutMs?: number }
   /** GitHub 能力（兼容接管）子配置。 */
   github?: GithubCapabilityConfig
   /** CNB 代码托管（cnb.cool）子配置。 */
@@ -216,7 +216,8 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('远程运维（SSH/WinRM 兼容接管）开关'),
   }).description('远程运维配置'),
   browser: z.object({
-    enabled: z.boolean().default(false).description('本地浏览器控制开关'),
+    enabled: z.boolean().default(true).description('本地浏览器控制开关（默认开启：新装用户开箱即可用，可在面板「本地浏览器」页关闭）'),
+    publish: z.boolean().default(false).description('闲鱼/小红书发布类工具开关（默认关闭：会真实发布内容，需在面板「本地浏览器」页显式开启）'),
     headless: z.boolean().default(false).description('无头模式（默认关闭，操作实时可见）'),
     channel: z.string().default('chrome').description('浏览器通道：chrome / msedge / chromium'),
     profileDir: z.string().default('').description('持久化用户档案目录（留空使用默认路径，保存登录状态）'),
@@ -442,13 +443,20 @@ export function apply(ctx: Context, config?: Config): void {
       announceToAgent: value.announceToAgent ?? DEFAULTS.announceToAgent,
       forgeAgentPreset: value.forgeAgentPreset?.trim() || DEFAULTS.forgeAgentPreset,
       remote: { enabled: value.remote?.enabled ?? false },
-      browser: {
-        enabled: value.browser?.enabled ?? false,
-        headless: value.browser?.headless === true,
-        channel: value.browser?.channel ?? 'chrome',
-        profileDir: value.browser?.profileDir ?? '',
-        timeoutMs: value.browser?.timeoutMs ?? 45000,
-      },
+      // 本地浏览器：面板接管语义与远程访问网关一致——面板保存过的开关优先于组合配置，
+      // 重启不丢；从未保存过则落到本兜底：基础工具默认开（新装用户开箱可用）、
+      // 发布类工具默认关（闲鱼/小红书会把内容真实发出去，须用户显式开启）。
+      browser: (() => {
+        const stored = (() => { try { return getSettings<{ enabled?: boolean; publish?: boolean }>(getDb(), 'browser.settings') } catch { return undefined } })()
+        return {
+          enabled: stored?.enabled ?? value.browser?.enabled ?? true,
+          publish: stored?.publish ?? value.browser?.publish ?? false,
+          headless: value.browser?.headless === true,
+          channel: value.browser?.channel ?? 'chrome',
+          profileDir: value.browser?.profileDir ?? '',
+          timeoutMs: value.browser?.timeoutMs ?? 45000,
+        }
+      })(),
       github: { enabled: value.github?.enabled ?? false },
       cnb: { enabled: value.cnb?.enabled ?? false },
       feishu: { enabled: value.feishu?.enabled ?? false },
@@ -986,6 +994,20 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
+    // 本地浏览器开关（2026-09-28）：面板直接开关基础/发布类工具；保存即落 store.db 的
+    // browser.settings 域并触发 sync()，工具注册立即跟随，无需重启 DSH。
+    // sync 在下方定义、此处只引用：与既有 requestGatewaySync = sync 同构，回调仅在用户点开关时执行，届时已初始化。
+    ...makeBrowserSettingsRoutes({
+      read: () => {
+        const browser = resolve().browser
+        return { enabled: browser?.enabled === true, publish: browser?.publish === true }
+      },
+      save: (next) => {
+        putSettings(getDb(), 'browser.settings', next)
+        ctx.logger.info('[dsh-devforge] 本地浏览器开关已保存并热重建（浏览器工具 %s，发布类工具 %s）', next.enabled ? '开' : '关', next.publish ? '开' : '关')
+        sync()
+      },
+    }),
     ...makeRagRoutes(ragService, ragEmbedders),
     ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream }),
     ...makeWorkflowRoutes(workflowEngine),
@@ -1248,6 +1270,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     safeActivate(ctx, '本地浏览器', () => {
       const browserActivation = activateBrowser(ctx, {
         enabled: value.enabled === true && value.browser?.enabled === true,
+        publish: value.enabled === true && value.browser?.publish === true,
         headless: value.browser?.headless === true,
         channel: value.browser?.channel ?? 'chrome',
         profileDir: value.browser?.profileDir ?? '',
@@ -1288,15 +1311,18 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
-        const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null }; siliconflow?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; syncChatModels?: boolean | null } }
+        const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; publish?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null }; siliconflow?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; syncChatModels?: boolean | null } }
         return {
           enabled: value.enabled ?? undefined,
           announceToAgent: value.announceToAgent ?? undefined,
           forgeAgentPreset: value.forgeAgentPreset?.trim() || DEFAULTS.forgeAgentPreset,
           // 子能力开关：未配置一律 false（安全默认），与 resolve() 兜底一致。
+          // 例外：browser 两个开关有自己的默认（基础开、发布关），见下方注释。
           remote: { enabled: value.remote?.enabled === true },
           browser: {
-            enabled: value.browser?.enabled === true,
+            // 浏览器基础工具默认开（新装用户开箱可用）；发布类工具默认关（会真实发布内容）。
+            enabled: value.browser?.enabled !== false,
+            publish: value.browser?.publish === true,
             headless: value.browser?.headless === true,
             channel: value.browser?.channel ?? 'chrome',
             profileDir: value.browser?.profileDir ?? '',

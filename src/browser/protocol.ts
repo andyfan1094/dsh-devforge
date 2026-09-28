@@ -12,6 +12,7 @@ export const BROWSER_API = {
   snapshot: '/api/dsh-devforge/browser/snapshot',
   screenshot: '/api/dsh-devforge/browser/screenshot',
   stop: '/api/dsh-devforge/browser/stop',
+  settings: '/api/dsh-devforge/browser/settings',
 } as const
 
 /** 面板和 Agent 均可安全读取的浏览器状态。 */
@@ -30,6 +31,23 @@ export interface BrowserStatus {
   profileDir: string
   message?: string
 }
+
+/**
+ * 面板「本地浏览器」页的开关视图（不含任何凭据与宿主路径）。
+ *
+ * 为什么是两个开关（2026-09-28 辉哥定）：浏览器基础工具只做"看和点"，
+ * 失败只影响自己，默认开启让新装用户开箱即用；闲鱼/小红书发布类工具会把内容
+ * 真实发出去，属于不可撤销动作，默认关闭并必须由用户在面板显式开启。
+ */
+export interface BrowserSettingsView {
+  /** 浏览器基础工具（browser_*）开关。 */
+  enabled: boolean
+  /** 闲鱼/小红书发布类工具开关。 */
+  publish: boolean
+}
+
+/** 面板保存浏览器的增量补丁：字段缺省表示保持原值。 */
+export type BrowserSettingsPatch = Partial<BrowserSettingsView>
 
 /** URL 安全校验：只允许 http(s) 地址交给本地浏览器打开。 */
 export function isSafeHttpUrl(value: unknown): boolean {

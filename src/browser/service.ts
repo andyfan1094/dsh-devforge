@@ -18,6 +18,8 @@ export function buildElementTargetArgs(ref: string): { element: string; target: 
 /** 浏览器 capability 的可配置项。 */
 export interface BrowserCapabilityConfig {
   enabled: boolean
+  /** 闲鱼/小红书发布类工具开关：默认关闭，用户在面板显式开启后才注册这些工具。 */
+  publish: boolean
   /** 无头模式默认关闭：操作过程必须在用户屏幕实时可见。 */
   headless: boolean
   /** 浏览器通道：chrome / msedge / chromium。 */
@@ -60,6 +62,7 @@ export function normalizeBrowserConfig(config: BrowserCapabilityConfig): Require
   const profileDir = config.profileDir.trim() === '' ? join(homedir(), '.dsh', 'devforge', 'browser-profile') : config.profileDir
   return {
     enabled: config.enabled,
+    publish: config.publish === true,
     headless: config.headless === true,
     channel,
     profileDir,

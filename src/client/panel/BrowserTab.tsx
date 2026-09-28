@@ -1,18 +1,26 @@
-/** 天工造梦内的本地浏览器控制页：状态、导航、截图与快照。 */
+/** 天工造梦内的本地浏览器控制页：开关、状态、导航、截图与快照。 */
 import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { BrowserStatus } from '../../browser/protocol.ts'
+import type { BrowserSettingsView, BrowserStatus } from '../../browser/protocol.ts'
 import css from './panel.module.css'
 
 export function BrowserTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [status, setStatus] = useState<BrowserStatus | null>(null)
+  const [settings, setSettings] = useState<BrowserSettingsView | null>(null)
   const [url, setUrl] = useState('https://resend.com/signup')
   const [snapshot, setSnapshot] = useState('')
   const [shot, setShot] = useState('')
   const [busy, setBusy] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const refresh = async (): Promise<void> => { try { setLoading(true); setError(''); setStatus(await api.getBrowserStatus()) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) } }
+  /** 一次刷新同时拉状态与开关：状态回答"现在能不能用"，开关决定"要不要注册工具"。 */
+  const refresh = async (): Promise<void> => {
+    try {
+      setLoading(true); setError('')
+      const [nextStatus, nextSettings] = await Promise.all([api.getBrowserStatus(), api.getBrowserSettings()])
+      setStatus(nextStatus); setSettings(nextSettings)
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
+  }
   useEffect(() => { void refresh() }, [])
   const run = async (label: string, action: () => Promise<void>): Promise<void> => {
     if (busy !== '') return
@@ -22,6 +30,12 @@ export function BrowserTab({ api }: { api: DevforgeApi }): JSX.Element {
   const takeShot = (): void => { void run('shot', async () => { const result = await api.browserScreenshot(); setShot(result.image) }) }
   const loadSnapshot = (): void => { void run('snapshot', async () => { const result = await api.getBrowserSnapshot(); setSnapshot(result.snapshot) }) }
   const stopBrowser = (): void => { void run('stop', async () => { await api.browserStop(); setSnapshot(''); setShot('') }) }
+  /** 保存开关：Host 侧落库后立即热重建工具注册，无需重启 DSH。 */
+  const toggle = (patch: Partial<BrowserSettingsView>): void => {
+    void run('settings', async () => { setSettings(await api.putBrowserSettings(patch)) })
+  }
+  /** 关掉基础能力时顺带关掉发布类工具：发布工具依赖浏览器能力，单独留着没有意义且容易被误解为仍可用。 */
+  const onToggleEnabled = (enabled: boolean): void => { toggle(enabled ? { enabled: true } : { enabled: false, publish: false }) }
   return (
     <section className={css['tabBody']}>
       <div className={css['toolbar']}>
@@ -32,8 +46,32 @@ export function BrowserTab({ api }: { api: DevforgeApi }): JSX.Element {
         <button type="button" className={css['ghostButton']} disabled={busy !== '' || status?.running !== true} onClick={stopBrowser}>停止</button>
       </div>
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
+      {/* 开关区（2026-09-28 新增）：此前本页只显示「未启用（请在设置中开启）」，而那个设置并不存在——
+          新装用户既没有开关也没有默认值。现在两个开关直接放在这里，保存即热生效。 */}
+      <div className={css['formRow']}>
+        <label className={css['checkLabel']}>
+          <input
+            type="checkbox"
+            checked={settings?.enabled === true}
+            disabled={busy !== '' || settings === null}
+            onChange={(event) => { onToggleEnabled(event.target.checked) }}
+          />
+          浏览器工具（打开网页 / 截图 / 点按钮）
+        </label>
+        <label className={css['checkLabel']}>
+          <input
+            type="checkbox"
+            checked={settings?.publish === true}
+            disabled={busy !== '' || settings === null || settings.enabled !== true}
+            onChange={(event) => { toggle({ publish: event.target.checked }) }}
+          />
+          闲鱼 / 小红书发布工具（会真实发布内容）
+        </label>
+        {busy === 'settings' && <span className={css['sectionHint']}>保存中…</span>}
+      </div>
       <div className={css['metricList']}>
-        <div className={css['metricRow']}><span>能力</span><strong>{status?.enabled ? '已启用' : status === null ? '正在检查' : '未启用（请在设置中开启）'}</strong></div>
+        <div className={css['metricRow']}><span>能力</span><strong>{status?.enabled ? '已启用' : status === null ? '正在检查' : '未启用'}</strong></div>
+        <div className={css['metricRow']}><span>发布类工具</span><strong>{settings?.publish === true ? '已开启' : '未开启（需显式开启）'}</strong></div>
         <div className={css['metricRow']}><span>浏览器进程</span><strong>{status?.running ? '运行中' : status === null ? '-' : '未启动'}</strong></div>
         <div className={css['metricRow']}><span>当前页</span><strong>{status?.currentUrl ?? status?.pageTitle ?? (status === null ? '-' : '无')}</strong></div>
       </div>
