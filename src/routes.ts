@@ -11,7 +11,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from './plugin-update.ts'
 import type { HarnessUpdateCheckItem } from './harness-update.ts'
 import type { ForgeEngine } from './forge.ts'
-import { isLoopbackRequest } from './loopback.ts'
+import { isGuiSameOriginRequest, isLoopbackRequest } from './loopback.ts'
 import type { DshWebRestartManager } from './restart.ts'
 import { detectProjectGit, listProjects, refreshAllProjectGitMeta, relocateProject, removeProject, saveProject, validateProjectPayload } from './projects/store.ts'
 import { automatchProjects, describeProject, scanForProjects } from './projects/scan.ts'
@@ -64,23 +64,10 @@ function guard(req: import('node:http').IncomingMessage, res: import('node:http'
   return false
 }
 
-/** 重启是破坏性操作，除 loopback 外还必须由当前 GUI 同源页面发起。 */
+/** 重启是破坏性操作，除 loopback 外还必须由当前 GUI 页面发起（HTTP 同源或 DSH 桌面壳 dsh-app:// 代转）。 */
 function guardRestart(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
   if (!guard(req, res)) return false
-  const host = req.headers.host
-  const origin = req.headers.origin
-  const referer = req.headers.referer
-  if (!host || (typeof origin !== 'string' && typeof referer !== 'string')) {
-    writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
-    return false
-  }
-  const requestOrigin = 'http://' + host
-  try {
-    const sourceOrigin = typeof origin === 'string' ? origin : new URL(referer as string).origin
-    if (sourceOrigin === requestOrigin) return true
-  } catch {
-    // 非法来源按拒绝处理，不能让异常穿透到 Host。
-  }
+  if (isGuiSameOriginRequest(req)) return true
   writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
   return false
 }

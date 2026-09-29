@@ -1,6 +1,6 @@
 /** 火山方舟 Agent/Coding Plan 路由族（loopback 围栏 + 同源写保护）。 */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { isLoopbackRequest } from '../loopback.ts'
+import { isGuiSameOriginRequest, isLoopbackRequest } from '../loopback.ts'
 import { ARK_API } from './protocol.ts'
 import { ArkCodingPlanService, ArkServiceError } from './service.ts'
 
@@ -22,20 +22,10 @@ function guard(req: import('node:http').IncomingMessage, res: import('node:http'
   return false
 }
 
-/** 写配置或触发实时刷新时额外校验同源，避免本机其它网页借用用户凭据。 */
+/** 写配置或触发实时刷新时校验本机 GUI 来源（HTTP 同源或 DSH 桌面壳 dsh-app:// 代转），避免本机其它网页借用用户凭据。 */
 function guardWrite(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): boolean {
   if (!guard(req, res)) return false
-  const host = req.headers.host
-  const source = typeof req.headers.origin === 'string' ? req.headers.origin : req.headers.referer
-  if (host === undefined || typeof source !== 'string') {
-    writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
-    return false
-  }
-  try {
-    if (new URL(source).host === host) return true
-  } catch {
-    /* 非法来源按拒绝处理。 */
-  }
+  if (isGuiSameOriginRequest(req)) return true
   writeJson(res, 403, { ok: false, error: 'forbidden: same-origin request required' })
   return false
 }
