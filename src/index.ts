@@ -113,6 +113,8 @@ import { createEffectiveModeResolver, installSandboxEscalationGuard, type Sandbo
 import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
 import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAULT_SOURCES, PLUGIN_UPDATE_DEFAULT_SITE_API, applySitePatch, toSiteView, type PluginUpdateSiteConfig, type PluginUpdateSitePatch, type PluginUpdateSiteView } from './plugin-update.ts'
+// 停机安全定时器：桌面端安装更新要求 Host 在 10 秒内退出，等待必须 unref 且可取消（0.41.14）。
+import { createTimerScope, type TimerScope } from './shutdown-timers.ts'
 import { applyHarnessUpdate, checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 import { DEVFORGE_SOURCE_KIND } from './session-source.ts'
 
@@ -428,6 +430,12 @@ function installsSandboxEscalationGuard(ctx: Context): void {
 
 /** 插件挂载（mountOnce 防重复挂载，dsh-winrm 同款）。 */
 let mounted = false
+/**
+ * 启动自动补齐模型清单所用的定时器域（0.41.14）。
+ * 该补齐失败时会以 5 秒间隔重试，若等待期间进程停机，ref 定时器会把 Host 退出硬拖到 10 秒量级，
+ * 直接导致桌面端「更新未安装」。因此等待一律 unref（不阻止退出），并在插件卸载/重挂时取消。
+ */
+let autoEnsureTimerScope: TimerScope | undefined
 export function apply(ctx: Context, config?: Config): void {
   if (mounted) return
   mounted = true
@@ -600,12 +608,23 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         () => siliconFlowService.ensureModels(),
         () => modagentaiService.migrateLegacyGateway(),
       ]
+      // 停机安全：重试等待必须 unref 且可取消。
+      // DSH 桌面端要求 Host 在收到 shutdown 后 10 秒内真正退出，否则拒绝安装更新；而内核停机
+      // 正常路径只置 process.exitCode、不强制退出进程，一个仍在等待的 ref 定时器就能把退出时间
+      // 拖到 10 秒量级（实测 5 秒×2 轮 ≈ 9.9~10.0 秒，正好越线，导致更新安装被拒）。
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (token !== autoEnsureToken) return
+        const scope = autoEnsureTimerScope
+        if (token !== autoEnsureToken || scope === undefined) return
         // 各服务商独立结算：某一家无凭据或设置冲突时，不能阻塞其它 Provider 的迁移与补齐。
         const results = await Promise.allSettled(ensureProviders.map(async (ensure) => await ensure()))
         if (results.every((result) => result.status === 'fulfilled')) return
-        await new Promise((resolve) => setTimeout(resolve, 5_000))
+        if (token !== autoEnsureToken || autoEnsureTimerScope !== scope) return
+        try {
+          await scope.wait(5_000).done
+        } catch {
+          // 插件卸载/停机取消了等待：直接结束补齐循环，不再重试。
+          return
+        }
       }
     })()
   }
@@ -1205,6 +1224,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     Object.assign(arkConfig, value.ark)
     Object.assign(openAiConfig, value.openai)
     Object.assign(siliconFlowConfig, value.siliconflow)
+    // 每次 sync 领取新的定时器域，并取消上一轮仍在等待的重试（避免旧定时器拖住进程退出）。
+    const previousTimerScope = autoEnsureTimerScope
+    autoEnsureTimerScope = createTimerScope()
+    previousTimerScope?.cancelAll()
     // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
     scheduleAutoEnsureModels()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
@@ -1398,7 +1421,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   sync()
 
   // 事件订阅兜底（engine 内部也订阅，这里幂等安全）
-  ctx.effect(() => () => { /* 预留全局清理 */ }, 'dsh-devforge: lifecycle')
+  ctx.effect(() => () => {
+    // 停机/卸载：清掉启动自动补齐仍在等待的重试定时器，避免拖住 Host 退出。
+    autoEnsureTimerScope?.cancelAll()
+  }, 'dsh-devforge: lifecycle')
 
   // 导出围栏工具供测试（非公开 API）
   void isLoopbackRequest
