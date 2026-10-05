@@ -109,6 +109,7 @@ import { startProjectAutoRegister } from './projects/auto-register.ts'
 import type { ProjectEntry } from './projects/protocol.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
 import { SANDBOX_DISCIPLINE_SECTION_NAME, SANDBOX_DISCIPLINE_SECTION_ORDER, SANDBOX_DISCIPLINE_TEXT } from './sandbox-discipline.ts'
+import { MEMORY_WORKFLOW_SECTION_NAME, MEMORY_WORKFLOW_SECTION_ORDER, MEMORY_WORKFLOW_TEXT } from './memory/workflow-discipline.ts'
 import { createEffectiveModeResolver, installSandboxEscalationGuard, type SandboxEscalationGuardContext, type SandboxPolicyContext } from './sandbox-escalation-guard.ts'
 import { createGuardTracer, defaultGuardTraceFile, type GuardTraceEntry } from './sandbox-guard-trace.ts'
 import { activatePluginBrief, emptyDiagnostics, type PluginBriefConfig } from './plugin-brief.ts'
@@ -1055,6 +1056,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   let disposeBrowser: (() => void) | undefined
   let disposeConstraints: (() => void) | undefined
   let disposeSandboxDiscipline: (() => void) | undefined
+  let disposeMemoryWorkflow: (() => void) | undefined
   let disposeUserProfile: (() => void) | undefined
   /** 凭据双向同步服务（yaml 主存 ↔ store.db credential 镜像；0.39.0）。 */
   let credentialSyncService: CredentialSyncService | undefined
@@ -1085,6 +1087,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     disposeBrowser?.(); disposeBrowser = undefined
     disposeConstraints?.(); disposeConstraints = undefined
     disposeSandboxDiscipline?.(); disposeSandboxDiscipline = undefined
+    disposeMemoryWorkflow?.(); disposeMemoryWorkflow = undefined
     disposeUserProfile?.(); disposeUserProfile = undefined
     disposeCredentialSync?.(); disposeCredentialSync = undefined; credentialSyncService = undefined
     disposeRemoteGateway?.(); disposeRemoteGateway = undefined
@@ -1122,6 +1125,14 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       name: SANDBOX_DISCIPLINE_SECTION_NAME,
       order: SANDBOX_DISCIPLINE_SECTION_ORDER,
       text: SANDBOX_DISCIPLINE_TEXT,
+    })
+    // 记忆工作流纪律常驻节（0.41.16）：把「先查记忆 → 再核事实 → 回写修正」的
+    // 闭环写进全部会话。记忆检索/钉选只解决「记忆在场」，本节点解决「记忆被用起来
+    // 且会自我修正」——解决完发现记忆有误必须回写，否则同一条事实每轮重新探索。
+    disposeMemoryWorkflow = ctx.systemPrompt.section({
+      name: MEMORY_WORKFLOW_SECTION_NAME,
+      order: MEMORY_WORKFLOW_SECTION_ORDER,
+      text: MEMORY_WORKFLOW_TEXT,
     })
     // 项目约束三层注入：常驻摘要保底；cwd 命中开发仓库或出现开发动作时升级全文（0.11.0）。
     // 0.19.0 起同一节追加产出公约摘要与当前项目卡（数据源带 5s TTL 缓存，避免每次装配读库）。
