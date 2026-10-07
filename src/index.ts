@@ -239,7 +239,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('智谱 Coding Plan 模型与官方额度看板'),
     apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
-    mcpTools: z.boolean().default(true).description('已废弃：智谱官方 MCP 工具已全量下架（0.41.17），此开关保留兼容、不再生效'),
+    mcpTools: z.boolean().default(true).description('官方 MCP 工具：网页读取/Zread（联网搜索类已下架）'),
     officialApiKeyEnv: z.string().default('ZHIPU_OFFICIAL_API_KEY').description('智谱官方 API（开放平台直调）受管凭据引用'),
   }).description('智谱 Coding Plan 配置'),
   minimax: z.object({
@@ -317,7 +317,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
-  '- 智谱 GLM Coding Plan：Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换；官方 MCP 工具已按辉哥 2026-10-07 要求全量下架（0.40.1 先下搜索类，0.41.17 再下网页读取/Zread），联网检索一律用天工造梦联网搜索 modagentai_web_search。',
+  '- zhipu_web_reader / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（网页读取/开源仓库解读；联网搜索类已按辉哥 2026-10-07 要求下架，联网检索一律用天工造梦联网搜索 modagentai_web_search），消耗套餐每月 MCP 额度；Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换。',
   '- minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL；联网搜索类已按辉哥 2026-09-26 要求下架，搜索一律用天工造梦联网搜索），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
   '- OpenAI 中转站：Coding Plan 页内支持多个中转端点、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
@@ -1265,8 +1265,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
           : {}),
       }).dispose
     })
-    // 智谱官方 MCP 工具：0.41.17 辉哥定稿全量下架（搜索类 0.40.1 先下架，读取类一并移除），
-    // 联网检索一律走天工造梦官网渠道 modagentai_web_search；空实现兜底，保留调用链兼容配置热更新。
+    // 智谱官方 MCP 工具：网页读取/Zread（联网搜索类已按辉哥 2026-10-07 要求下架），
+    // 联网检索一律走天工造梦官网渠道 modagentai_web_search；凭据走 Key 池（401/403/429 自动换下一把），绝不落明文。
     safeActivate(ctx, '智谱 MCP 工具', () => {
       disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled === true && value.zhipu?.mcpTools !== false, timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async (attempt) => {
         const picked = await zhipuKeys.resolveByAttempt(attempt)
