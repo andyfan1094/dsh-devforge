@@ -239,7 +239,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true).description('智谱 Coding Plan 模型与官方额度看板'),
     apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
     timeoutMs: z.number().min(1000).max(60000).default(15000).description('智谱官方接口超时（毫秒）'),
-    mcpTools: z.boolean().default(true).description('官方 MCP 工具：联网搜索/网页读取/Zread'),
+    mcpTools: z.boolean().default(true).description('已废弃：智谱官方 MCP 工具已全量下架（0.41.17），此开关保留兼容、不再生效'),
     officialApiKeyEnv: z.string().default('ZHIPU_OFFICIAL_API_KEY').description('智谱官方 API（开放平台直调）受管凭据引用'),
   }).description('智谱 Coding Plan 配置'),
   minimax: z.object({
@@ -317,7 +317,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
-  '- zhipu_web_reader / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（网页读取/开源仓库解读；联网搜索类已按辉哥 2026-09-26 要求下架，搜索一律用天工造梦联网搜索），消耗套餐每月 MCP 额度；Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换。',
+  '- 智谱 GLM Coding Plan：Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换；官方 MCP 工具已按辉哥 2026-10-07 要求全量下架（0.40.1 先下搜索类，0.41.17 再下网页读取/Zread），联网检索一律用天工造梦联网搜索 modagentai_web_search。',
   '- minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL；联网搜索类已按辉哥 2026-09-26 要求下架，搜索一律用天工造梦联网搜索），消耗 MiniMax 套餐额度。',
   '- 火山方舟 Agent Plan：天工造梦的 Coding Plan 页内支持 Plan API Key、官方文本模型池、推理档位，以及用控制面 AK/SK 查询的 5 小时/周/月用量看板。',
   '- OpenAI 中转站：Coding Plan 页内支持多个中转端点、受管 API Key、GET /v1/models 模型发现与聊天路由，并由所选生图模型提供全局 generate_image 工具。',
@@ -329,7 +329,7 @@ const DEVFORGE_GUIDANCE = [
   '- xianyu_publish：在独立发布标签页上传图片、填写商品信息并核验发布结果；真实发布必须传入“确认发布”。',
   '- MCP 服务器接入：外部 MCP 服务器在天工造梦面板「MCP」页配置；启用的服务器其工具以 mcp__<serverName>__<tool> 名称注册（如 mcp__github__create_issue），可直接调用，调用失败如实报错。',
   '- devforge_db_*（schema/query/credential/config/backup_read）：天工造梦数据直达口——服务器密码/主机配置/账号令牌/API Key 全在本机 store.db 与配置文件里，需要凭据时**先查库再动手、不要找用户要**：WinRM 主机密码 SELECT data FROM docs WHERE domain = \'winrm.host\'，SSH 主机密码 domain = \'ssh.host\'，API Key 类凭据用 devforge_db_credential，库外配置（飞书 JSON/备份密码/凭据主存）用 devforge_db_config，CNB 加密备份用 devforge_db_backup_read。',
-  '- modagentai_web_search：天工造梦官网联网搜索（服务端多渠道自动切换，按次扣钻石约 0.1💎/次）——智谱/MiniMax 官方搜索限额或失效时的备用通道；modagentai_search_quota 查剩余次数。',
+  '- modagentai_web_search：天工造梦官网联网搜索（本插件唯一联网搜索渠道，需要联网检索时一律优先使用；服务端多渠道自动切换，按次扣钻石约 0.1💎/次）；modagentai_search_quota 查剩余次数。',
 ].join('\n')
 
 /**
@@ -1265,7 +1265,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
           : {}),
       }).dispose
     })
-    // 智谱官方 MCP 工具：联网搜索/网页读取/Zread，凭据走 Key 池（401/403/429 自动换下一把），绝不落明文。
+    // 智谱官方 MCP 工具：0.41.17 辉哥定稿全量下架（搜索类 0.40.1 先下架，读取类一并移除），
+    // 联网检索一律走天工造梦官网渠道 modagentai_web_search；空实现兜底，保留调用链兼容配置热更新。
     safeActivate(ctx, '智谱 MCP 工具', () => {
       disposeZhipuMcp = activateZhipuMcpTools(ctx, { enabled: value.enabled === true && value.zhipu?.mcpTools !== false, timeoutMs: Math.max(value.zhipu?.timeoutMs ?? 15000, 30000) }, async (attempt) => {
         const picked = await zhipuKeys.resolveByAttempt(attempt)

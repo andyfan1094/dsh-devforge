@@ -3,7 +3,8 @@
  *
  * 定位：把 modagentai.com 的联网搜索服务开放给会话内模型——
  * 服务端多渠道自动切换（Tavily 主力/智谱备用/方舟兜底），按次扣钻石（默认 0.1💎/次），
- * 是智谱/MiniMax 官方 MCP 搜索限额/失效时的第三条通道；配额与渠道健康由官网统一管理。
+ * 2026-10-07 辉哥定稿：本插件唯一联网搜索渠道（智谱官方 MCP 工具已全量下架）；
+ * 配额与渠道健康由官网统一管理。
  * 安全模型：会话令牌只从受管凭据读取进请求头，绝不回显、绝不写日志。
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -21,7 +22,7 @@ export function modagentaiWebTools(modagentai: ModagentaiService) {
     // ---- 1. 联网搜索（服务端实现细节不对用户透出，统一品牌：天工造梦联网搜索） ----
     defineTool({
       name: 'modagentai_web_search',
-      description: '天工造梦联网搜索：返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.1💎/次），登录官网用户可用。',
+      description: '天工造梦联网搜索（本插件唯一联网搜索渠道，需要联网检索时一律优先使用它）：返回 AI 答案与带引用的网页列表；按次扣钻石（约 0.1💎/次），登录官网用户可用。',
       parameters: {
         query: { type: 'string', description: '搜索词（≤400 字）。' },
       },

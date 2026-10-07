@@ -497,7 +497,7 @@ export function ZhipuCodingPlanTab({ api, apiKeyEnv, section = 'config', embedde
         <span className={css['connectionDot']} data-state={configuredCount > 0 ? 'connected' : 'error'} />
         <div className={css['resourceInfo']}>
           <strong className={css['resourceTitle']}>智谱 Coding Plan</strong>
-          <span className={css['resourceMeta']}>{configuredCount > 0 ? '官方凭据已配置（' + configuredCount + ' 把 Key）' : '等待配置 API Key'} · {modelsReady ? '模型已就绪' : '模型待完善'} · {status?.mcpTools !== false ? '官方 MCP 工具已启用' : '官方 MCP 工具已关闭'}</span>
+          <span className={css['resourceMeta']}>{configuredCount > 0 ? '官方凭据已配置（' + configuredCount + ' 把 Key）' : '等待配置 API Key'} · {modelsReady ? '模型已就绪' : '模型待完善'} · 官方 MCP 工具已下架（联网搜索走天工造梦）</span>
         </div>
         {!modelsReady && <button type="button" className={css['ghostButton']} disabled={settingUp} onClick={() => { void setupModels() }}>{settingUp ? '正在配置…' : '完善模型接入'}</button>}
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => { void refresh() }}>{loading ? '刷新中…' : '刷新'}</button>
