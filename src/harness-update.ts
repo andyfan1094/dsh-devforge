@@ -14,7 +14,8 @@
  *     优先级的比较器（alpha < beta < rc < 正式版），不能用严格三段 x.y.z 比较。
  *   - Tags 接口返回顺序不代表版本顺序，必须全量扫描取最高版本。
  *   - 已装版本读取：不假设安装路径（npm/pnpm/brew/自定义前缀都可能），以当前宿主
- *     进程入口（process.argv[1]）真实路径逐级向上找 package.json，名字命中为止。
+ *     进程入口（process.argv[1]）真实路径逐级向上找 package.json，名字命中为止；
+ *     桌面安装包（包名 @deepseek-ai/dsh-desktop-runtime）按 <安装根>/resources/app.asar/dsh 兜底。
  *   - 预发布数字标识用「去前导零后按长度+字典序」比较，不转 Number，避免超大
  *     数字段在浮点下丢失精度导致误判。
  */
@@ -211,6 +212,37 @@ export function resolveHarnessPackageRoot(entryPath: string, targetName = '@deep
   return undefined
 }
 
+/** 桌面安装包本体目录特征：入口路径里出现的 `<安装根>/resources/app.asar/dsh` 段。 */
+const DESKTOP_RUNTIME_DIR_RE = /^(.*?[\\/]app\.asar[\\/]dsh)[\\/]/i
+
+/**
+ * 桌面安装包（electron-builder）本体包根兜底：`<安装根>/resources/app.asar/dsh`。
+ *
+ * 桌面版运行时的包名是 `@deepseek-ai/dsh-desktop-runtime`（不是 `@deepseek-ai/dsh`），
+ * 宿入口是 `dsh-desktop-host/lib/index.js`，所以 resolveHarnessPackageRoot 按包名向上找
+ * 永远命不中，面板会一直显示「本地 未识别」。这里先按入口路径里的 app.asar/dsh 段定位，
+ * 再从宿主可执行文件推导安装根；两处都读不到有效版本时返回 undefined。
+ *
+ * @param entryPath 宿主进程入口（process.argv[1]）。
+ * @param execPath 宿主可执行文件；缺省使用当前进程。
+ */
+export function resolveDesktopHarnessRoot(entryPath: string, execPath = process.execPath): string | undefined {
+  const candidates: string[] = []
+  const entryMatch = DESKTOP_RUNTIME_DIR_RE.exec(entryPath.trim())
+  if (entryMatch?.[1] !== undefined) candidates.push(entryMatch[1])
+  const executable = execPath.trim()
+  if (executable !== '' && executable !== '.') {
+    const resources = join(dirname(executable), 'resources')
+    candidates.push(join(resources, 'app.asar', 'dsh'))
+    candidates.push(join(resources, 'app.asar.unpacked', 'dsh'))
+  }
+  for (const candidate of candidates) {
+    const pkg = tryReadPackageJson(join(candidate, 'package.json'))
+    if (typeof pkg?.version === 'string' && pkg.version !== '') return candidate
+  }
+  return undefined
+}
+
 /** 已装本体版本读取器（可注入测试）。 */
 export type HarnessVersionReader = () => string
 
@@ -219,7 +251,8 @@ export function createDefaultHarnessVersionReader(entryPath: string): HarnessVer
   let cached: string | undefined
   return (): string => {
     if (cached !== undefined) return cached
-    const root = resolveHarnessPackageRoot(entryPath)
+    // 先按 npm/pnpm 布局的包名向上找；桌面安装包（包名是 dsh-desktop-runtime）再用安装根兜底。
+    const root = resolveHarnessPackageRoot(entryPath) ?? resolveDesktopHarnessRoot(entryPath)
     if (root === undefined) { cached = ''; return cached }
     const pkg = tryReadPackageJson(join(root, 'package.json'))
     cached = typeof pkg?.version === 'string' ? pkg.version : ''

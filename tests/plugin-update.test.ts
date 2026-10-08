@@ -1,6 +1,9 @@
 /** 插件更新能力单测：官网登录（sid 解析）、semver 比较、官网清单解析、sha256、检查编排、白名单升级、官网账号设置校验与 site 路由。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   PLUGIN_UPDATE_DEFAULT_SITE_API,
   PluginUpdateService,
@@ -9,12 +12,14 @@ import {
   buildGatedDownloadUrl,
   checkOne,
   compareSemver,
+  decodeProcessOutput,
   downloadTgz,
   fetchDownloadTicket,
   loginSite,
   normalizeSessionToken,
   parseSidFromSetCookie,
   parseSiteIndex,
+  resolveDesktopCliEntry,
   resolveLatest,
   sameOrigin,
   sha256Hex,
@@ -42,13 +47,13 @@ test('buildDshPluginAddCommand：Windows 优先直启当前 DSH Node 入口，�
 test('buildDshPluginAddCommand：Windows 无标准入口时经 ComSpec 启动并完整引用参数', () => {
   const command = buildDshPluginAddCommand('win32', 'web', 'C:\\Temp dir\\x.tgz', { comSpec: 'C:\\Windows\\System32\\cmd.exe' })
   assert.equal(command.file, 'C:\\Windows\\System32\\cmd.exe')
-  assert.deepEqual(command.args, ['/d', '/s', '/c', '"dsh plugin --profile web add "C:\\Temp dir\\x.tgz""'])
+  assert.deepEqual(command.args, ['/d', '/s', '/c', '"chcp 65001>nul & dsh plugin --profile web add "C:\\Temp dir\\x.tgz""'])
   assert.equal(command.verbatim, true)
 })
 
 test('buildDshPluginAddCommand：Windows 对 cmd 元字符统一加引号', () => {
   const command = buildDshPluginAddCommand('win32', 'web profile', 'C:\\Temp (safe)&drop\\x.tgz', { comSpec: 'cmd.exe' })
-  assert.deepEqual(command.args, ['/d', '/s', '/c', '"dsh plugin --profile "web profile" add "C:\\Temp (safe)&drop\\x.tgz""'])
+  assert.deepEqual(command.args, ['/d', '/s', '/c', '"chcp 65001>nul & dsh plugin --profile "web profile" add "C:\\Temp (safe)&drop\\x.tgz""'])
 })
 
 test('buildDshPluginAddCommand：Windows 无 Node 入口时拒绝变量展开字符', () => {
@@ -60,6 +65,82 @@ test('buildDshPluginAddCommand：POSIX 直接执行 dsh', () => {
   assert.equal(command.file, 'dsh')
   assert.deepEqual(command.args, ['plugin', '--profile', 'web', 'add', '/tmp/x.tgz'])
   assert.equal(command.verbatim, false)
+})
+
+// ---------------------------------------------------------------------------
+// 桌面安装包（0.41.20）：一键升级不再依赖 PATH —— 直启包内官方 CLI，GBK 报错解回中文
+// ---------------------------------------------------------------------------
+
+/** 构造桌面安装包目录：<根>/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib。 */
+function makeDesktopLayout(): { root: string; exe: string; cli: string; hostEntry: string } {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-desktop-layout-test-'))
+  const hostLib = join(root, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib')
+  mkdirSync(hostLib, { recursive: true })
+  const cli = join(hostLib, 'cli.js')
+  writeFileSync(cli, '// fake desktop cli')
+  const hostEntry = join(hostLib, 'index.js')
+  writeFileSync(hostEntry, '// fake desktop host')
+  return { root, exe: join(root, 'DeepSeek Harness.exe'), cli, hostEntry }
+}
+
+test('buildDshPluginAddCommand：桌面安装包直启包内 CLI（与官方 dsh.cmd 同形态，不依赖 PATH）', () => {
+  const layout = makeDesktopLayout()
+  try {
+    // 真机形态：桌面宿主进程的 argv[1] 是 GUI 主进程 dsh-desktop-host/lib/index.js。
+    const command = buildDshPluginAddCommand('win32', 'desktop', 'C:\\Temp\\dsh-devforge-0.41.20.tgz', {
+      entryPath: layout.hostEntry,
+      nodePath: layout.exe,
+    })
+    assert.equal(command.file, layout.exe)
+    assert.deepEqual(command.args, ['--expose-internals', layout.cli, 'plugin', '--profile', 'desktop', 'add', 'C:\\Temp\\dsh-devforge-0.41.20.tgz'])
+    assert.equal(command.verbatim, false)
+    assert.deepEqual(command.env, { ELECTRON_RUN_AS_NODE: '1' })
+  } finally {
+    rmSync(layout.root, { recursive: true, force: true })
+  }
+})
+
+test('buildDshPluginAddCommand：宿主入口不像 CLI 时按安装根推导内置 CLI', () => {
+  const layout = makeDesktopLayout()
+  try {
+    const command = buildDshPluginAddCommand('win32', 'desktop', 'C:\\Temp\\x.tgz', {
+      entryPath: 'C:\\somewhere\\else\\main.js',
+      nodePath: layout.exe,
+    })
+    assert.equal(command.file, layout.exe)
+    assert.deepEqual(command.args, ['--expose-internals', layout.cli, 'plugin', '--profile', 'desktop', 'add', 'C:\\Temp\\x.tgz'])
+    assert.deepEqual(command.env, { ELECTRON_RUN_AS_NODE: '1' })
+  } finally {
+    rmSync(layout.root, { recursive: true, force: true })
+  }
+})
+
+test('resolveDesktopCliEntry：桌面布局命中；npm 全局布局返回 undefined（回落原有路径）', () => {
+  const layout = makeDesktopLayout()
+  try {
+    assert.equal(resolveDesktopCliEntry(layout.exe, layout.hostEntry), layout.cli)
+    assert.equal(resolveDesktopCliEntry(layout.exe, ''), layout.cli)
+    assert.equal(resolveDesktopCliEntry('C:\\Program Files\\nodejs\\node.exe', 'C:\\Program Files\\nodejs\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js'), undefined)
+    assert.equal(resolveDesktopCliEntry('', ''), undefined)
+  } finally {
+    rmSync(layout.root, { recursive: true, force: true })
+  }
+})
+
+test('decodeProcessOutput：UTF-8 原样；中文 Windows 的 GBK 报错重解码为可读中文', () => {
+  assert.equal(decodeProcessOutput(Buffer.from('安装成功', 'utf8')), '安装成功')
+  assert.equal(decodeProcessOutput('已经是字符串'), '已经是字符串')
+  assert.equal(decodeProcessOutput(undefined), '')
+  // 0xB2 0xBB 是「不」的 GBK 字节：按 UTF-8 解会出现替换字符 U+FFFD。
+  const gbk = Buffer.concat([Buffer.from("'dsh' ", 'utf8'), Buffer.from([0xb2, 0xbb])])
+  let supportsGbk = true
+  try {
+    new TextDecoder('gbk')
+  } catch {
+    supportsGbk = false
+  }
+  if (supportsGbk) assert.equal(decodeProcessOutput(gbk), "'dsh' 不")
+  else assert.ok(decodeProcessOutput(gbk).includes('\uFFFD'))
 })
 
 test('compareSemver：逐段比较', () => {

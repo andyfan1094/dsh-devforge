@@ -12,6 +12,7 @@ import {
   parseHarnessTagVersion,
   pickLatestHarnessTag,
   planHarnessUpgrade,
+  resolveDesktopHarnessRoot,
   resolveHarnessPackageRoot,
   HARNESS_UPDATE_DEFAULT_SOURCE,
 } from '../src/harness-update.ts'
@@ -94,6 +95,36 @@ test('resolveHarnessPackageRoot：从入口向上命中 @deepseek-ai/dsh；异�
     assert.equal(badReader(), '')
   } finally {
     rmSync(join(pkgDir, '..', '..'), { recursive: true, force: true })
+  }
+})
+
+/** 构造桌面安装包目录：<安装根>/resources/app.asar/dsh 为包根，包名是 dsh-desktop-runtime。 */
+function makeFakeDesktopHarnessDir(installRoot: string, version: string): string {
+  const pkgDir = join(installRoot, 'resources', 'app.asar', 'dsh')
+  const hostLib = join(pkgDir, 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib')
+  mkdirSync(hostLib, { recursive: true })
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-runtime', version }))
+  writeFileSync(join(hostLib, 'index.js'), '// fake desktop host')
+  writeFileSync(join(hostLib, 'cli.js'), '// fake desktop cli')
+  return pkgDir
+}
+
+test('resolveDesktopHarnessRoot：桌面包名不命中时按安装根兜底，面板不再显示「未识别」', () => {
+  const installRoot = mkdtempSync(join(tmpdir(), 'dsh-desktop-root-test-'))
+  try {
+    const pkgDir = makeFakeDesktopHarnessDir(installRoot, '0.2.0-rc.2')
+    const hostEntry = join(pkgDir, 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'index.js')
+    // npm 布局的包名查找必然失败：桌面版包名是 @deepseek-ai/dsh-desktop-runtime。
+    assert.equal(resolveHarnessPackageRoot(hostEntry), undefined)
+    // 入口路径里的 app.asar/dsh 段与 execPath 推导两条路都能定位包根。
+    assert.equal(resolveDesktopHarnessRoot(hostEntry), pkgDir)
+    assert.equal(resolveDesktopHarnessRoot('C:\\somewhere\\main.js', join(installRoot, 'DeepSeek Harness.exe')), pkgDir)
+    assert.equal(resolveDesktopHarnessRoot(''), undefined)
+    // 面板读到的本机版本应是桌面运行时版本，而不是空串。
+    const reader = createDefaultHarnessVersionReader(hostEntry)
+    assert.equal(reader(), '0.2.0-rc.2')
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true })
   }
 })
 

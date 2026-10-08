@@ -19,11 +19,12 @@
  *   - 只对登记过的包提供更新，apply 白名单校验，绝不能被用来装任意包。
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, type ExecFileOptionsWithBufferEncoding } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
 import { createPackageReader, type PackageReader } from './plugin-brief.ts'
 
@@ -481,28 +482,94 @@ export interface DshPluginAddCommandOptions {
   comSpec?: string
 }
 
+/** 一条待执行的 dsh plugin add 命令。 */
+export interface DshPluginAddCommand {
+  /** 可执行文件（Node、桌面版 Electron 主程序或 ComSpec）。 */
+  file: string
+  /** 命令行参数。 */
+  args: string[]
+  /** 是否由 Windows 原样解析参数（cmd 兜底时为 true）。 */
+  verbatim: boolean
+  /** 需要额外注入的环境变量；桌面布局以 Electron 运行内置 CLI 时为 ELECTRON_RUN_AS_NODE=1。 */
+  env?: Record<string, string>
+}
+
 /** 可安全直接复用的 DSH CLI 入口形态。 */
 const DSH_ENTRY_RE = /[\\/](?:bin\.(?:js|ts)|dsh)$/
 
+/** 桌面安装包内置 CLI 相对 `<安装根>/resources` 的路径（与官方 dsh.cmd 指向同一文件）。 */
+const DESKTOP_CLI_TAIL = ['node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js'] as const
+
+/** 桌面宿主库目录：GUI 主进程 index.js 与官方 CLI cli.js 同目录。 */
+const DESKTOP_HOST_LIB_RE = /^(.*[\\/]dsh-desktop-host[\\/]lib)[\\/](?:cli|index)\.js$/i
+
 /** cmd 会在引号内展开的变量字符；没有 Node 入口时拒绝这类输入，避免语义被改写。 */
 const CMD_EXPANSION_RE = /[%!]/
+
+/**
+ * 定位桌面安装包内的官方 CLI 入口，不依赖 PATH。
+ *
+ * 背景：桌面版宿主进程的 process.argv[1] 是 GUI 主进程 `dsh-desktop-host/lib/index.js`，
+ * 既不是 `bin.js` 也不是 `dsh`，而官方 `dsh.cmd` 只存在于安装目录内、没有注册进 PATH，
+ * 于是「一键升级」在 cmd 兜底里必然报「'dsh' 不是内部或外部命令」。
+ *
+ * 探测顺序：
+ *   1. argv[1] 已是桌面宿主入口时，取同目录的 cli.js（天然覆盖 app.asar 与 unpacked 两种形态）；
+ *   2. 从宿主可执行文件推导 `<安装根>/resources/app.asar/dsh/...` 与 unpacked 变体。
+ * 非桌面布局（npm/pnpm 全局安装、源码开发态）返回 undefined，由调用方回落到原有路径。
+ *
+ * @param nodePath 宿主可执行文件（桌面版是 `DeepSeek Harness.exe`）。
+ * @param entryPath 宿主进程入口（process.argv[1]）。
+ */
+export function resolveDesktopCliEntry(nodePath: string, entryPath = ''): string | undefined {
+  const entry = entryPath.trim()
+  const hostMatch = DESKTOP_HOST_LIB_RE.exec(entry)
+  if (hostMatch?.[1] !== undefined) {
+    const sibling = join(hostMatch[1], 'cli.js')
+    if (existsSync(sibling)) return sibling
+  }
+  const executable = nodePath.trim()
+  if (executable === '' || executable === '.') return undefined
+  const resources = join(dirname(executable), 'resources')
+  // app.asar 内的路径由 Electron 的 fs 支持解析；unpacked 变体用于原生模块被解包的安装形态。
+  const candidates = [
+    join(resources, 'app.asar', 'dsh', ...DESKTOP_CLI_TAIL),
+    join(resources, 'app.asar.unpacked', 'dsh', ...DESKTOP_CLI_TAIL),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
 
 /**
  * 构造 `dsh plugin add` 的启动命令。
  *
  * Windows 优先直接执行当前 DSH 的 Node 入口：运行中的宿主已经拥有真实入口与
  * Node 路径，复用它不会再经过 dsh.cmd/dsh.ps1，也不依赖 GUI 进程是否继承 npm PATH。
- * 只有入口不是标准 DSH CLI 时才退回 ComSpec；退回路径逐 token 引用，并拒绝
- * cmd 的变量展开字符。POSIX 保持原有直接执行 dsh 的行为。
+ * 桌面安装包再退一步复用包内官方 CLI（`--expose-internals` + ELECTRON_RUN_AS_NODE，
+ * 与官方 dsh.cmd 完全同形态）。只有都不可用时才退回 ComSpec；退回路径逐 token 引用，
+ * 并拒绝 cmd 的变量展开字符。POSIX 保持原有直接执行 dsh 的行为。
  */
-export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: string, tgzPath: string, options: DshPluginAddCommandOptions = {}): { file: string; args: string[]; verbatim: boolean } {
+export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: string, tgzPath: string, options: DshPluginAddCommandOptions = {}): DshPluginAddCommand {
   if (platform === 'win32') {
     const entryPath = options.entryPath?.trim() ?? ''
+    const nodePath = options.nodePath?.trim() || process.execPath
     if (entryPath !== '' && DSH_ENTRY_RE.test(entryPath)) {
       return {
-        file: options.nodePath?.trim() || process.execPath,
+        file: nodePath,
         args: [...(options.execArgv ?? []), entryPath, 'plugin', '--profile', profile, 'add', tgzPath],
         verbatim: false,
+      }
+    }
+    // 桌面安装包：PATH 里没有 dsh，按官方 dsh.cmd 的形态直启包内 CLI（Electron 以 Node 运行）。
+    const desktopCli = resolveDesktopCliEntry(nodePath, entryPath)
+    if (desktopCli !== undefined) {
+      return {
+        file: nodePath,
+        args: ['--expose-internals', desktopCli, 'plugin', '--profile', profile, 'add', tgzPath],
+        verbatim: false,
+        env: { ELECTRON_RUN_AS_NODE: '1' },
       }
     }
     if (CMD_EXPANSION_RE.test(profile) || CMD_EXPANSION_RE.test(tgzPath)) {
@@ -519,11 +586,33 @@ export function buildDshPluginAddCommand(platform: NodeJS.Platform, profile: str
     const commandLine = ['dsh', 'plugin', '--profile', profile, 'add', tgzPath].map(quoteCmdArg).join(' ')
     return {
       file: options.comSpec?.trim() || process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', '"' + commandLine + '"'],
+      // 兜底路径额外切 UTF-8 代码页（对按控制台代码页输出的外部命令有效）。实测：cmd 自身的
+      // 本地化提示（「'dsh' 不是内部或外部命令…」）仍按 OEM 代码页输出，真正兜住乱码的是
+      // runPluginAdd 里的 GBK 重解码，chcp 只是双保险。
+      args: ['/d', '/s', '/c', '"chcp 65001>nul & ' + commandLine + '"'],
       verbatim: true,
     }
   }
   return { file: 'dsh', args: ['plugin', '--profile', profile, 'add', tgzPath], verbatim: false }
+}
+
+/**
+ * 解码子进程输出。
+ *
+ * 中文 Windows 下 cmd/node 的报错按 GBK 输出，一律按 UTF-8 解码会在面板里变成
+ * 「'dsh' 锟斤拷」这类乱码。这里先按 UTF-8 解，出现替换字符 U+FFFD 时用 GBK 重解；
+ * 运行环境不支持 GBK 时回落 UTF-8 结果，保证永远有可读文本。
+ */
+export function decodeProcessOutput(input: Buffer | string | undefined): string {
+  if (input === undefined) return ''
+  if (typeof input === 'string') return input
+  const utf8 = input.toString('utf8')
+  if (!utf8.includes('\uFFFD')) return utf8
+  try {
+    return new TextDecoder('gbk').decode(input)
+  } catch {
+    return utf8
+  }
 }
 
 /** 执行 dsh plugin add（默认实现；测试可注入）。 */
@@ -534,20 +623,25 @@ export function runPluginAdd(profile: string, tgzPath: string, timeoutMs = 18000
       nodePath: process.execPath,
       execArgv: process.execArgv,
     })
-    execFile(command.file, command.args, {
+    const options: ExecFileOptionsWithBufferEncoding = {
       timeout: timeoutMs,
-      encoding: 'utf8',
+      // 收字节而不是字符串：中文 Windows 的报错是 GBK，交给 decodeProcessOutput 判定编码。
+      encoding: 'buffer',
       windowsVerbatimArguments: command.verbatim,
       windowsHide: true,
       // 更新动作没有交互式终端；避免 pnpm 在无 TTY 时等待确认或直接中止。
-      env: { ...process.env, CI: 'true' },
-    }, (error, stdout, stderr) => {
+      // 桌面安装包额外注入 ELECTRON_RUN_AS_NODE，让安装目录里的 GUI 主程序以 Node 形态运行包内 CLI。
+      env: { ...process.env, CI: 'true', ...(command.env ?? {}) },
+    }
+    execFile(command.file, command.args, options, (error, stdout, stderr) => {
+      const output = decodeProcessOutput(stdout)
+      const errorText = decodeProcessOutput(stderr)
       if (error) {
-        const detail = (stderr || stdout || error.message).toString().slice(-400)
+        const detail = (errorText || output || error.message).slice(-400)
         reject(new Error('dsh plugin add 失败：' + detail))
         return
       }
-      resolve(((stdout || '') + (stderr || '')).slice(-400))
+      resolve((output + errorText).slice(-400))
     })
   })
 }
