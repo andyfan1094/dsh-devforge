@@ -39,8 +39,12 @@ export function RemoteAccessTab({ api }: { api: DevforgeApi }): JSX.Element {
         upstreamPort: Number(draft.upstreamPort),
         sessionHours: Number(draft.sessionHours),
       })
+      const changedPassword = draft.password !== ''
       apply(data.config, data.runtime)
-      setNotice(data.config.enabled ? `已保存并生效：http://本机:${data.config.port}（员工浏览器输密码即可访问）` : '已保存，网关已停用')
+      setNotice(
+        (changedPassword ? '访问密码已更新；' : '')
+        + (data.config.enabled ? `已保存并生效：http://本机:${data.config.port}（员工浏览器输密码即可访问）` : '已保存，网关已停用'),
+      )
       // PUT 响应里的运行状态是热重建前的快照；稍等网关重建完成后再刷一次真实状态。
       window.setTimeout(() => { void refresh() }, 900)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) }
@@ -59,7 +63,7 @@ export function RemoteAccessTab({ api }: { api: DevforgeApi }): JSX.Element {
       {notice !== '' && <div className={css['banner']} data-kind="info">{notice}</div>}
       <div className={css['metricList']}>
         <div className={css['metricRow']}><span>网关状态</span><strong>{runtime === null ? '正在检查' : runtime.running ? `运行中（端口 ${runtime.listeningPort ?? config?.port ?? '-'}）` : config?.enabled === true ? '已启用但未运行' : '已停用'}</strong></div>
-        <div className={css['metricRow']}><span>访问密码</span><strong>{config === null ? '-' : config.hasPassword ? '已设置（保存时留空 = 不修改）' : '未设置'}</strong></div>
+        <div className={css['metricRow']}><span>访问密码</span><strong>{config === null ? '-' : config.hasPassword ? '已设置 · 想更换请在下方「修改访问密码」填新密码后点保存' : '未设置 · 请在下方填写访问密码'}</strong></div>
       </div>
       {runtime?.running === true && runtime.urls.length > 0 && (
         <div className={css['metricList']}>
@@ -77,7 +81,10 @@ export function RemoteAccessTab({ api }: { api: DevforgeApi }): JSX.Element {
       <div className={css['formRow']}>
         <input className={css['input']} style={{ width: '9em' }} value={draft.port} onChange={(event) => { setDraft((d) => ({ ...d, port: event.target.value.replace(/\D/gu, '') })) }} placeholder="网关端口 19390" spellCheck={false} title="员工浏览器访问的端口" />
         <input className={css['input']} style={{ width: '10em' }} value={draft.host} onChange={(event) => { setDraft((d) => ({ ...d, host: event.target.value })) }} placeholder="监听地址" spellCheck={false} title="0.0.0.0=所有网卡（局域网可访问）；127.0.0.1=仅本机" />
-        <input className={css['input']} type="password" autoComplete="new-password" value={draft.password} onChange={(event) => { setDraft((d) => ({ ...d, password: event.target.value })) }} placeholder={config?.hasPassword === true ? '密码已设置，留空不修改' : '访问密码'} />
+      </div>
+      <div className={css['formRow']}>
+        <label style={{ fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap' }} htmlFor="gateway-password-input">修改访问密码</label>
+        <input id="gateway-password-input" className={css['input']} style={{ width: '16em' }} type="password" autoComplete="new-password" value={draft.password} onChange={(event) => { setDraft((d) => ({ ...d, password: event.target.value })) }} placeholder={config?.hasPassword === true ? '填新密码即更换，留空 = 不改' : '设置访问密码'} title="在此输入新密码后点右上角「保存」，立即生效；留空则保持原密码" />
       </div>
       <div className={css['formRow']}>
         <input className={css['input']} style={{ width: '9em' }} value={draft.upstreamPort} onChange={(event) => { setDraft((d) => ({ ...d, upstreamPort: event.target.value.replace(/\D/gu, '') })) }} placeholder="上游端口 3080" spellCheck={false} title="本机 DSH Web 的端口（生产默认 3080）" />
