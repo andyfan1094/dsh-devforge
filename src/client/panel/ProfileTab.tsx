@@ -228,6 +228,9 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
   const [statusMsg, setStatusMsg] = useState('')
   const [statusErr, setStatusErr] = useState('')
 
+  // 退出登录二次确认：退出会清空本机令牌并停用天工造梦模型路由，先讲清楚再执行（避免误触）。
+  const [confirmLogout, setConfirmLogout] = useState(false)
+
   /** 拉取官网资料；把 gender/birthday 灌进编辑暂存。失败只落提示不崩页面。 */
   const refreshProfile = useCallback(async () => {
     setLoadErr(''); setStatusMsg(''); setStatusErr(''); setLoginErr('')
@@ -318,6 +321,28 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
       if (!result.gatewayApplied) setStatusErr(result.message) // 登录成功但中转自动配置失败：进资料态并保留原因
     } catch (error) {
       setLoginErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * 退出官网账号（辉哥 2026-10-08：个人中心缺此入口）。
+   * 后端 logout 会尽力吊销官网会话、清空本机令牌、停用天工造梦模型路由与端点密钥，
+   * 所以入口先二次确认；成功后重新拉一次真实状态回到未登录态，并说明重新登录即自动恢复。
+   */
+  async function doLogout(): Promise<void> {
+    setStatusErr(''); setStatusMsg('')
+    setBusy(true)
+    try {
+      await api.logoutModagentai()
+      setConfirmLogout(false)
+      setEditing(false)
+      setLoginPass('')
+      await refreshProfile()
+      setStatusMsg('已退出登录，天工造梦模型路由已停用，重新登录即自动恢复。')
+    } catch (error) {
+      setStatusErr('退出登录失败：' + (error instanceof Error ? error.message : String(error)))
     } finally {
       setBusy(false)
     }
@@ -461,6 +486,9 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
                 </button>
                 <span className={css['identityMetaDot']}>·</span>
                 <button type="button" className={css['identityLink']} disabled={busy} onClick={() => { onNavigate('memory') }}>编辑身份</button>
+                <span className={css['identityMetaDot']}>·</span>
+                {/* 退出登录：与「编辑资料」并列的次要入口，点击后展开确认行再执行 */}
+                <button type="button" className={css['identityLink']} disabled={busy} onClick={() => { setEditing(false); setConfirmLogout(true) }}>退出登录</button>
               </div>
             </div>
           </div>
@@ -475,6 +503,14 @@ export function ProfileTab({ api, onNavigate }: ProfileTabProps): JSX.Element {
               <input type="date" value={birthday} onChange={(event) => { setBirthday(event.target.value) }} aria-label="生日" />
               <button type="button" className={css['primaryButton']} disabled={busy} onClick={() => { void doSave() }}>{busy ? '保存中…' : '保存'}</button>
               <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { setEditing(false) }}>取消</button>
+            </div>
+          )}
+          {/* 退出登录二次确认（与「编辑资料」同位置展开）：退出会停用模型路由，先说清后果再执行 */}
+          {confirmLogout && (
+            <div className={css['identityEditRow']}>
+              <span className={css['identityHint']}>退出会清空本机登录令牌，并停用天工造梦模型路由；重新登录即自动恢复。</span>
+              <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void doLogout() }}>{busy ? '退出中…' : '确认退出'}</button>
+              <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { setConfirmLogout(false) }}>取消</button>
             </div>
           )}
           {(statusMsg !== '' || statusErr !== '') && (
