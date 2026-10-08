@@ -253,8 +253,64 @@ function trustScore(trust: MemoryTrust): number {
 /** 内置记忆 CRUD、版本元数据和可解释词法检索门面。 */
 export class NativeMemoryStore {
   private readonly rag: RagStore
+  /**
+   * 记忆正文快照缓存。全量 list/search/统计每次都重新解析 memory.entry + memory.meta
+   * 两个域（2026-10-08 实测 4455 条 ≈ 10.7MB JSON），而每轮对话的召回注入都会触发；
+   * 命中后只做内存组装。version 记录主库 data_version，其它进程写入即自动重建。
+   */
+  private entriesCache?: { version: number; entries: Map<string, StoredMemoryEntry> }
+  /** 记忆元数据原始 data 快照。只存原始值，组装时才 asMeta（依赖 entry 兜底）。 */
+  private metaCache?: { version: number; data: Map<string, unknown> }
 
   constructor(rag: RagStore) { this.rag = rag }
+
+  /** 取（必要时重建）记忆正文快照。 */
+  private storedEntries(): Map<string, StoredMemoryEntry> {
+    const version = this.rag.dataVersion()
+    const cached = this.entriesCache
+    if (cached !== undefined && cached.version === version) return cached.entries
+    const entries = new Map<string, StoredMemoryEntry>()
+    for (const row of this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN)) {
+      const stored = asStoredEntry(row.data, row.id)
+      if (stored !== undefined) entries.set(row.id, stored)
+    }
+    this.entriesCache = { version, entries }
+    return entries
+  }
+
+  /** 取（必要时重建）记忆元数据快照。 */
+  private metaData(): Map<string, unknown> {
+    const version = this.rag.dataVersion()
+    const cached = this.metaCache
+    if (cached !== undefined && cached.version === version) return cached.data
+    const data = new Map<string, unknown>()
+    for (const row of this.rag.listDomainDocs(MEMORY_META_DOMAIN)) data.set(row.id, row.data)
+    this.metaCache = { version, data }
+    return data
+  }
+
+  /** 写入后就地更新正文快照（无快照时保持惰性，不为此重建全量）。 */
+  private cacheEntry(id: string, stored: StoredMemoryEntry | undefined): void {
+    if (this.entriesCache === undefined) return
+    if (stored === undefined) this.entriesCache.entries.delete(id)
+    else this.entriesCache.entries.set(id, stored)
+  }
+
+  /** 写入后就地更新元数据快照：markAccessed 这类高频写不再让整份快照失效。 */
+  private cacheMeta(meta: MemoryEntryMeta): void {
+    if (this.metaCache === undefined) return
+    this.metaCache.data.set(meta.entryId, meta)
+  }
+
+  /** 同事务落盘正文与元数据，并同步进程内快照。 */
+  private persist(id: string, stored: StoredMemoryEntry, meta: MemoryEntryMeta): void {
+    this.rag.withDomainTransaction(() => {
+      this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, id, stored)
+      this.rag.putDomainDoc(MEMORY_META_DOMAIN, id, meta)
+    })
+    this.cacheEntry(id, stored)
+    this.cacheMeta(meta)
+  }
 
   list(options?: { limit?: number; category?: NativeMemoryCategory; scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(1000, Math.floor(options?.limit ?? 100)))
@@ -288,10 +344,7 @@ export class NativeMemoryStore {
     const entryId = id ?? randomUUID()
     const stored = this.normalizeStored(input, entryId, now, now)
     const meta = this.normalizeMeta(input, stored, undefined, now)
-    this.rag.withDomainTransaction(() => {
-      this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, entryId, stored)
-      this.rag.putDomainDoc(MEMORY_META_DOMAIN, entryId, meta)
-    })
+    this.persist(entryId, stored, meta)
     return hydrateEntry(stored, meta)
   }
 
@@ -304,10 +357,7 @@ export class NativeMemoryStore {
     const now = Date.now()
     const stored = this.normalizeStored({ ...current, ...patch }, id, current.createdAt, now)
     const meta = this.normalizeMeta({ ...current, ...patch }, stored, currentMeta, now)
-    this.rag.withDomainTransaction(() => {
-      this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, id, stored)
-      this.rag.putDomainDoc(MEMORY_META_DOMAIN, id, meta)
-    })
+    this.persist(id, stored, meta)
     return hydrateEntry(stored, meta)
   }
 
@@ -327,6 +377,7 @@ export class NativeMemoryStore {
     const stored = this.normalizeStored({ ...input, archived: false }, entryId, now, now)
     const newMeta = this.normalizeMeta({ ...input, archived: false }, stored, undefined, now)
     newMeta.supersedes = uniqueIds
+    const touched: Array<{ id: string; stored: StoredMemoryEntry; meta: MemoryEntryMeta }> = []
     this.rag.withDomainTransaction(() => {
       this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, entryId, stored)
       this.rag.putDomainDoc(MEMORY_META_DOMAIN, entryId, newMeta)
@@ -339,8 +390,12 @@ export class NativeMemoryStore {
         this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, oldEntry.id, oldStored)
         this.rag.putDomainDoc(MEMORY_META_DOMAIN, oldEntry.id, supersededMeta)
         this.rag.putDomainDoc(MEMORY_RELATION_DOMAIN, relation.id, relation)
+        touched.push({ id: oldEntry.id, stored: oldStored, meta: supersededMeta })
       }
     })
+    this.cacheEntry(entryId, stored)
+    this.cacheMeta(newMeta)
+    for (const item of touched) { this.cacheEntry(item.id, item.stored); this.cacheMeta(item.meta) }
     return hydrateEntry(stored, newMeta)
   }
 
@@ -360,6 +415,8 @@ export class NativeMemoryStore {
       this.rag.deleteDomainDoc(NATIVE_MEMORY_DOMAIN, id)
       this.rag.deleteDomainDoc(MEMORY_META_DOMAIN, id)
     })
+    this.cacheEntry(id, undefined)
+    this.metaCache?.data.delete(id)
     return true
   }
 
@@ -433,10 +490,7 @@ export class NativeMemoryStore {
     const now = Date.now()
     const stored = this.normalizeStored({ ...entry, archived: value }, id, entry.createdAt, now)
     const nextMeta: MemoryEntryMeta = { ...meta, state: value ? 'archived' : 'active', revision: meta.revision + 1, updatedAt: now }
-    this.rag.withDomainTransaction(() => {
-      this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, id, stored)
-      this.rag.putDomainDoc(MEMORY_META_DOMAIN, id, nextMeta)
-    })
+    this.persist(id, stored, nextMeta)
     return hydrateEntry(stored, nextMeta)
   }
 
@@ -450,10 +504,7 @@ export class NativeMemoryStore {
     const now = Date.now()
     const stored = this.normalizeStored({ ...entry, archived: true }, id, entry.createdAt, now)
     const nextMeta: MemoryEntryMeta = { ...meta, state: 'quarantined', revision: meta.revision + 1, updatedAt: now }
-    this.rag.withDomainTransaction(() => {
-      this.rag.putDomainDoc(NATIVE_MEMORY_DOMAIN, id, stored)
-      this.rag.putDomainDoc(MEMORY_META_DOMAIN, id, nextMeta)
-    })
+    this.persist(id, stored, nextMeta)
     return hydrateEntry(stored, nextMeta)
   }
 
@@ -470,10 +521,10 @@ export class NativeMemoryStore {
   }
 
   listMetas(): MemoryEntryMeta[] {
-    const storedById = new Map(this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN).map((row) => [row.id, asStoredEntry(row.data, row.id)]))
-    // 元数据一次全域拉取建 Map：逐条 getMeta 会把 O(n) 放大成 O(n²)（642 条记忆 ≈ 41 万次 JSON 解析，接口卡死 20 秒）。
-    const metaById = new Map(this.rag.listDomainDocs(MEMORY_META_DOMAIN).map((row) => [row.id, row.data]))
-    return [...storedById.entries()].flatMap(([id, stored]) => stored === undefined ? [] : [asMeta(metaById.get(id), stored) ?? fallbackMeta(stored)])
+    const metaById = this.metaData()
+    const out: MemoryEntryMeta[] = []
+    for (const [id, stored] of this.storedEntries()) out.push(asMeta(metaById.get(id), stored) ?? fallbackMeta(stored))
+    return out
   }
 
   /** 基于真实状态计算质量基线；候选、复盘和反馈域计数由治理服务补齐。 */
@@ -514,11 +565,10 @@ export class NativeMemoryStore {
   }
 
   private all(): NativeMemoryEntry[] {
-    const metas = new Map(this.rag.listDomainDocs(MEMORY_META_DOMAIN).map((row) => [row.id, row.data]))
-    return this.rag.listDomainDocs(NATIVE_MEMORY_DOMAIN).flatMap((row) => {
-      const stored = asStoredEntry(row.data, row.id)
-      return stored === undefined ? [] : [hydrateEntry(stored, asMeta(metas.get(row.id), stored))]
-    })
+    const metas = this.metaData()
+    const out: NativeMemoryEntry[] = []
+    for (const [id, stored] of this.storedEntries()) out.push(hydrateEntry(stored, asMeta(metas.get(id), stored)))
+    return out
   }
 
   private metaFor(stored: StoredMemoryEntry): MemoryEntryMeta {
@@ -569,7 +619,10 @@ export class NativeMemoryStore {
     }
   }
 
-  private writeMeta(meta: MemoryEntryMeta): void { this.rag.putDomainDoc(MEMORY_META_DOMAIN, meta.entryId, meta) }
+  private writeMeta(meta: MemoryEntryMeta): void {
+    this.rag.putDomainDoc(MEMORY_META_DOMAIN, meta.entryId, meta)
+    this.cacheMeta(meta)
+  }
 
   private validId(id: string): boolean { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/u.test(id) }
 }

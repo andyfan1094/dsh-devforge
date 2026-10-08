@@ -35,6 +35,11 @@ function defaultVecDbPath(mainDbPath: string): string {
   return join(dirname(mainDbPath), 'rag-vec.db')
 }
 
+/** 进程内向量缓存上限（1024 维 ≈ 4KB/条，4096 条 ≈ 16MB）。 */
+const RAG_VECTOR_CACHE_LIMIT = 4096
+/** 批量取向量的分块大小：远低于 SQLite 变量数上限，且单次结果集可控。 */
+const RAG_VECTOR_QUERY_CHUNK = 400
+
 /** RAG 存储门面。 */
 export class RagStore {
   private readonly db: DatabaseSync
@@ -122,12 +127,56 @@ export class RagStore {
 
   // ── 向量缓存（rag-vec.db，本地派生物）──
 
+  /**
+   * 进程内向量缓存：召回一次要为上千条记忆取向量，逐条回库在 2026-10-08 实测是
+   * 每轮数百毫秒的主要来源。容量上限防止长会话把 1024 维向量堆成内存泄漏，
+   * 超限按插入序淘汰（Map 迭代序即插入序，近似 LRU 的 FIFO 变体）。
+   */
+  private readonly vecCache = new Map<string, Float32Array>()
+
+  private rememberVector(hash: string, vector: Float32Array): Float32Array {
+    if (!this.vecCache.has(hash) && this.vecCache.size >= RAG_VECTOR_CACHE_LIMIT) {
+      const oldest = this.vecCache.keys().next().value
+      if (oldest !== undefined) this.vecCache.delete(oldest)
+    }
+    this.vecCache.set(hash, vector)
+    return vector
+  }
+
+  /** BLOB → Float32Array（小端 float32）。 */
+  private static decodeVector(dim: number, data: Uint8Array): Float32Array {
+    const buffer = Buffer.from(data)
+    const out = new Float32Array(dim)
+    for (let i = 0; i < dim; i++) out[i] = buffer.readFloatLE(i * 4)
+    return out
+  }
+
   getVector(hash: string): Float32Array | null {
+    const cached = this.vecCache.get(hash)
+    if (cached !== undefined) return cached
     const row = this.vecDb.prepare('SELECT dim, data FROM vec WHERE hash = ?').get(hash) as { dim: number; data: Uint8Array } | undefined
     if (row === undefined) return null
-    const buffer = Buffer.from(row.data)
-    const out = new Float32Array(row.dim)
-    for (let i = 0; i < row.dim; i++) out[i] = buffer.readFloatLE(i * 4)
+    return this.rememberVector(hash, RagStore.decodeVector(row.dim, row.data))
+  }
+
+  /**
+   * 批量取向量：命中内存缓存的直接返回，其余按块用一条 IN 查询回库。
+   * 逐条 getVector 在上千条规模下会放大成上千次语句编译+执行，这里合并成个位数查询。
+   */
+  getVectors(hashes: readonly string[]): Map<string, Float32Array> {
+    const out = new Map<string, Float32Array>()
+    const missing: string[] = []
+    for (const hash of new Set(hashes)) {
+      const cached = this.vecCache.get(hash)
+      if (cached !== undefined) out.set(hash, cached)
+      else missing.push(hash)
+    }
+    for (let start = 0; start < missing.length; start += RAG_VECTOR_QUERY_CHUNK) {
+      const batch = missing.slice(start, start + RAG_VECTOR_QUERY_CHUNK)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = this.vecDb.prepare(`SELECT hash, dim, data FROM vec WHERE hash IN (${placeholders})`).all(...batch) as Array<{ hash: string; dim: number; data: Uint8Array }>
+      for (const row of rows) out.set(row.hash, this.rememberVector(row.hash, RagStore.decodeVector(row.dim, row.data)))
+    }
     return out
   }
 
@@ -135,6 +184,16 @@ export class RagStore {
     const buffer = Buffer.alloc(vector.length * 4)
     for (let i = 0; i < vector.length; i++) buffer.writeFloatLE(vector[i], i * 4)
     this.vecDb.prepare('INSERT OR REPLACE INTO vec (hash, dim, data) VALUES (?, ?, ?)').run(hash, vector.length, buffer)
+    this.rememberVector(hash, vector)
+  }
+
+  /**
+   * 主库数据版本号：其它连接（另一进程 / 另一 profile 的 Host）提交写入时会递增，
+   * 本连接自己的写入不会。上层内存缓存据此判断快照是否过期，避免跨进程读到陈旧记忆。
+   */
+  dataVersion(): number {
+    const row = this.db.prepare('PRAGMA data_version').get() as { data_version?: number } | undefined
+    return typeof row?.data_version === 'number' ? row.data_version : 0
   }
 
   // ── 设置 ──
