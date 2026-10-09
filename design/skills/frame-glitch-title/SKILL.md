@@ -1,5 +1,14 @@
 ---
 name: frame-glitch-title
+triggers:
+  - 故障风
+  - 赛博朋克
+  - 标题帧
+  - 视频转场
+  - 数据腐败
+  - 扫描线
+  - glitch
+  - 故障艺术
 zh_name: "故障艺术标题帧"
 en_name: "Glitch Title Frame"
 emoji: "⚡"

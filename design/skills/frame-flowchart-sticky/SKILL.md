@@ -1,5 +1,14 @@
 ---
 name: frame-flowchart-sticky
+triggers:
+  - 流程图
+  - 便利贴
+  - 白板风
+  - 节点连线
+  - 示意图
+  - 视频流程图
+  - flowchart
+  - 头脑风暴
 zh_name: "便利贴流程图帧"
 en_name: "Sticky Flowchart Frame"
 emoji: "📝"

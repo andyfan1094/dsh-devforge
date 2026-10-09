@@ -10,21 +10,23 @@
  */
 
 /* --- 变量与工具类（源自 globalCss，已清洗） --- */
-@layer base {
-  body {
-    @apply bg-[#0a0a0f] text-white antialiased;
+body {
+    background-color: #0a0a0f;
+    color: #fff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     background-image:
       linear-gradient(transparent 50%, rgba(0, 255, 255, 0.02) 50%);
     background-size: 100% 4px;
-  }
+}
 
-  h1, h2, h3 {
+h1, h2, h3 {
     text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
-  }
+}
 
-  ::selection {
-    @apply bg-cyan-400 text-black;
-  }
+::selection {
+    background-color: #22d3ee;
+    color: #000;
 }
 
 @keyframes neon-pulse {

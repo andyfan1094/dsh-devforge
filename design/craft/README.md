@@ -1,3 +1,19 @@
+---
+name: 工艺规则库说明
+description: craft 目录导航：解释为什么在 skills、模板、设计系统之外还需要「跨品牌通用工艺」这一轴，以及技能如何用 od.craft.requires 按需引入。
+triggers:
+  - 工艺规则库
+  - craft 目录
+  - 设计资产导航
+  - 通用设计知识
+  - craft requires
+  - 资产说明
+  - 设计规则索引
+  - craft readme
+od:
+  category: craft
+---
+
 # Craft references
 
 Brand-agnostic craft knowledge. Each file is a small, dense rulebook on one
@@ -46,8 +62,8 @@ authoring does not silently accept arbitrary values.
 Run `pnpm lint:craft` after adding or changing `od.craft.requires`. The
 repository guard reports unresolved slugs with their manifest paths, so typos
 cannot silently drop a craft section from the runtime prompt. If a slug is an
-intentional forward reference, list it in `craft/FUTURE_SECTIONS.md` until the
-matching `craft/<slug>.md` file ships.
+intentional forward reference, record it in the 待补充 section of
+`design/INDEX.md` until the matching `craft/<slug>.md` file ships.
 
 ### Runtime compatibility and authoring failures
 
@@ -57,8 +73,8 @@ optional paragraph must not make an otherwise usable runtime bundle fail.
 
 Checked-in content has a stronger contract: `pnpm lint:craft` and
 `pnpm guard` fail on malformed slugs and unresolved references. A deliberate
-forward reference is valid only when it is listed in
-`craft/FUTURE_SECTIONS.md`; this makes planned work explicit while preserving
+forward reference is valid only when it is recorded in the 待补充 section of
+`design/INDEX.md`; this makes planned work explicit while preserving
 the runtime compatibility behavior.
 
 Note for skill authors arriving from older guidance: an earlier draft
@@ -93,8 +109,8 @@ A purely behavioral craft file (state-coverage, animation-discipline) is guidanc
 
 **Partial-stateful skills.** A skill that's mostly static but contains an embedded form, data table, or query surface should opt in. State-coverage rules apply to the stateful component, not the whole page.
 
-Planned-but-unshipped slugs are recorded in
-[`FUTURE_SECTIONS.md`](FUTURE_SECTIONS.md); do not hard-code a second future
+Planned-but-unshipped slugs are recorded in the 待补充 section of
+[`design/INDEX.md`](../INDEX.md); do not hard-code a second future
 list here.
 
 ## Attribution

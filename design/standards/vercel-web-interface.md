@@ -1,3 +1,21 @@
+---
+name: Vercel 网页界面规范
+description: Vercel Web Interface Guidelines 的精简可执行版：用 MUST / SHOULD / NEVER 约束键盘与焦点、表单、导航、动效、布局、性能与暗色模式。
+triggers:
+  - Vercel 规范
+  - 网页界面规范
+  - 界面开发规范
+  - Web Interface Guidelines
+  - 无障碍
+  - 焦点环
+  - 键盘支持
+  - 表单最佳实践
+  - 性能规范
+  - web interface
+od:
+  category: standards
+---
+
 Concise rules for building accessible, fast, delightful UIs. Use MUST/SHOULD/NEVER to guide decisions.
 
 ## Interactions

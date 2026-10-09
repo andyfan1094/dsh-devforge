@@ -1,5 +1,14 @@
 ---
 name: deck-swiss-international
+triggers:
+  - 瑞士国际主义
+  - 瑞士风排版
+  - 网格系统
+  - 克莱因蓝
+  - 幻灯片
+  - 事实型演示
+  - swiss style
+  - 国际主义风格
 zh_name: "瑞士国际主义 Deck"
 en_name: "Swiss International Deck"
 emoji: "🟦"

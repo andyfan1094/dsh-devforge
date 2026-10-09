@@ -158,6 +158,10 @@ Linear Style 源自备受开发者推崇的项目管理工具 Linear。其设计
 |---|---|
 | `transform` | 直接禁令句：「- No scale transforms on hover」 |
 
+### 转换附带处理
+
+- 去掉 2 处 `@layer` 包装（剥离 Tailwind 后该语法无意义，留着会被浏览器整块忽略）
+
 ---
 
 ## 九、AI 硬规则（源 `aiRules` 全文，生成时应逐条遵守）

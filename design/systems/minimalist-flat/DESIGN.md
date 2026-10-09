@@ -162,6 +162,10 @@ Minimalist Flat 风格追求设计的本质，去除一切不必要的装饰，�
 | `shadow` | 直接禁令句：「- **严格二维扁平**：禁止 translate、禁止 scale、禁止任何 shadow 带来的 Z 轴反馈，所有交互必须停留在二维平面内。」 |
 | `transform` | 直接禁令句：「- **Strict 2D Flatness**: NO translate, NO scale, NO shadow Z-axis feedback. All interactions stay within the 2D plane.」 |
 
+### 转换附带处理
+
+- 去掉 1 处 `@layer` 包装（剥离 Tailwind 后该语法无意义，留着会被浏览器整块忽略）
+
 ---
 
 ## 九、AI 硬规则（源 `aiRules` 全文，生成时应逐条遵守）

@@ -1,5 +1,14 @@
 ---
 name: mockup-device-3d
+triggers:
+  - 设备样机
+  - 手机模型
+  - 3D 展架
+  - 产品展示
+  - 屏幕内嵌
+  - 转盘
+  - mockup
+  - 笔记本样机
 zh_name: "iPhone × MacBook 立体展架"
 en_name: "Device 3D Showcase"
 emoji: "📱"

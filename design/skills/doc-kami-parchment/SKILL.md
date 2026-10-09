@@ -1,5 +1,15 @@
 ---
 name: doc-kami-parchment
+triggers:
+  - 羊皮纸文档
+  - 暖色纸张
+  - 墨蓝配色
+  - 衬线文档
+  - 一页纸
+  - one-pager
+  - 报告排版
+  - kami
+  - 文档设计
 zh_name: "Kami 羊皮纸文档"
 en_name: "Kami Parchment Document"
 emoji: "📜"

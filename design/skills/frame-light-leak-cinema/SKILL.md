@@ -1,5 +1,14 @@
 ---
 name: frame-light-leak-cinema
+triggers:
+  - 胶片感
+  - 漏光
+  - 电影感
+  - 颗粒噪点
+  - 宽银幕
+  - 章节卡
+  - 视频片头
+  - light leak
 zh_name: "胶片漏光电影帧"
 en_name: "Light-Leak Cinematic Frame"
 emoji: "🎞️"

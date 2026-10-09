@@ -1,3 +1,21 @@
+---
+name: RTL 与双向文本
+description: 从右到左布局与双向混排规则：dir / lang 基线方向、CSS 逻辑属性、图标镜像、数字与标点在中东语言里的处理。
+triggers:
+  - RTL
+  - 从右到左
+  - 阿拉伯语
+  - 希伯来语
+  - 双向文本
+  - 镜像布局
+  - 逻辑属性
+  - 中东语言
+  - bidi
+  - i18n 布局
+od:
+  category: craft
+---
+
 # RTL and bidirectional craft rules
 
 Universal rules for right-to-left layout and bidirectional text. The

@@ -153,11 +153,16 @@ Developer Terminal 不是在模仿终端的样子，而是在借用终端的语�
 |---|---|
 | `gradient` | forbidden.patterns 含整类渐变禁令 `^bg-gradient-` |
 | `transform` | 直接禁令句：「no translate or scale」 |
+
 ### 例外保留（禁令成立，但下列规则经复核不属禁令范围）
 
 | 项 | 值 |
 |---|---|
 | `.developer-terminal-scanlines::after` | aiRules 禁的是**装饰性渐变类**（原文「禁止渐变（bg-gradient-*）」）；扫描线是 2.5% 不透明度的 `repeating-linear-gradient` 纹理，属 CRT 荧幕母题，不是色彩渐变，保留。 |
+
+### 转换附带处理
+
+- 源 `globalCss` 没有任何 CSS 变量，已用 `colors` 字段补齐 6 个 `:root` 变量，保证 tokens.css 与 design-tokens.json 一致、且不留悬空引用
 
 ---
 

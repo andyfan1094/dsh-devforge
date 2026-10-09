@@ -1,5 +1,15 @@
 ---
 name: deck-guizang-editorial
+triggers:
+  - 归藏风演示稿
+  - 编辑风 deck
+  - 电子墨水
+  - 杂志风幻灯片
+  - 衬线标题
+  - 章节封页
+  - 墨水色
+  - editorial deck
+  - 演示稿
 zh_name: "归藏编辑墨水 Deck"
 en_name: "Guizang Editorial E-Ink Deck"
 emoji: "🖋️"

@@ -1,4 +1,10 @@
 {
+  "--developer-terminal-primary": "#4AF626",
+  "--developer-terminal-secondary": "#0A0E12",
+  "--developer-terminal-accent-1": "#8BE9FD",
+  "--developer-terminal-accent-2": "#FF79C6",
+  "--developer-terminal-accent-3": "#FFB86C",
+  "--developer-terminal-accent-4": "#6272A4",
   "--color-primary": "#4AF626",
   "--color-secondary": "#0A0E12",
   "--color-accent-1": "#8BE9FD",

@@ -166,6 +166,10 @@ Retro Vintage 风格从20世纪中期的设计美学中汲取灵感，通过复�
 | `glass` | 直接禁令句：「禁止使用玻璃态效果」 |
 | `transform` | 直接禁令句：「禁止使用任何 `scale` 或 `translate-y` 动画（Antique Stillness — 旧纸张不会浮起或弹跳）」 |
 
+### 转换附带处理
+
+- 去掉 1 处 `@layer` 包装（剥离 Tailwind 后该语法无意义，留着会被浏览器整块忽略）
+
 ---
 
 ## 九、AI 硬规则（源 `aiRules` 全文，生成时应逐条遵守）

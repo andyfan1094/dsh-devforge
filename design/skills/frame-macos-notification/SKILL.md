@@ -1,5 +1,14 @@
 ---
 name: frame-macos-notification
+triggers:
+  - 通知横幅
+  - 系统通知
+  - 磨砂玻璃
+  - 弹窗
+  - 视频叠加
+  - macOS 风格
+  - notification
+  - 消息提醒
 zh_name: "macOS 通知横幅"
 en_name: "macOS Notification Banner"
 emoji: "🔔"

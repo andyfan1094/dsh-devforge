@@ -1,5 +1,14 @@
 ---
 name: frame-liquid-bg-hero
+triggers:
+  - 流体背景
+  - 液态背景
+  - 渐变背景
+  - hero 背景
+  - 视频片头
+  - 海报背景
+  - 动态背景
+  - liquid
 zh_name: "流体背景 Hero 帧"
 en_name: "Liquid Background Hero"
 emoji: "🌊"

@@ -10,18 +10,21 @@
  */
 
 /* --- 变量与工具类（源自 globalCss，已清洗） --- */
-@layer base {
-  body {
-    @apply bg-white text-black antialiased;
-  }
+body {
+    background-color: #fff;
+    color: #000;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
 
-  h1, h2, h3, h4 {
-    @apply font-bold tracking-tight;
-  }
+h1, h2, h3, h4 {
+    font-weight: 700;
+    letter-spacing: -0.025em;
+}
 
-  ::selection {
-    @apply bg-black text-white;
-  }
+::selection {
+    background-color: #000;
+    color: #fff;
 }
 
 :root {

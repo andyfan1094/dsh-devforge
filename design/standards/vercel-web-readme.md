@@ -1,3 +1,21 @@
+---
+name: Vercel 网页界面指南
+description: Vercel 官方 Web Interface Guidelines 完整正文：交互、动效、布局、内容与无障碍、性能、暗色模式等数百条界面决策，框架无关，部分针对 React / Next.js。
+triggers:
+  - 网页界面指南
+  - Web Interface Guidelines
+  - Vercel 指南
+  - 界面最佳实践
+  - 交互规范
+  - 无障碍指南
+  - 性能指南
+  - 暗色模式
+  - UI 指南
+  - 前端规范
+od:
+  category: standards
+---
+
 # Web Interface Guidelines
 
 Interfaces succeed because of hundreds of choices. This is a living, non-exhaustive list of those decisions. Most guidelines are framework-agnostic, some specific to React/Next.js. [Feedback is welcome](https://github.com/vercel-labs/web-interface-guidelines/tree/main).

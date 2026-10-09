@@ -1,3 +1,19 @@
+---
+name: 排版层级契约
+description: 排版层级如何「表现」而非只是字号列表：唯一主导入口、层间节奏与对比、层级向量、可控破例与信息流的可复原性。
+triggers:
+  - 排版层级
+  - 字号层级
+  - 视觉层级
+  - 主导入口
+  - 层间对比
+  - 信息层级
+  - 层级向量
+  - typography hierarchy
+od:
+  category: craft
+---
+
 # Typography hierarchy craft rules
 
 Shared hierarchy contracts that layer on top of `typography.md`. This file does

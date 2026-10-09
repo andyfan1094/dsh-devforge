@@ -1,3 +1,20 @@
+---
+name: 工艺地板
+description: 设计工艺的硬性数值底线与拒绝清单：对比度、行宽 measure、display 字号上限、字距地板、圆角区间，以及必须齐备的交互状态。
+triggers:
+  - 工艺地板
+  - 质量底线
+  - 验收标准
+  - 对比度
+  - 行宽
+  - 字号上限
+  - 圆角
+  - 设计检查清单
+  - craft floor
+od:
+  category: craft
+---
+
 # 工艺地板（craft floor）
 
 > **来源**：译自 impeccable `skill/reference/craft-floor.md`（52 行，Apache-2.0，© 2025 Paul Bakaus）。

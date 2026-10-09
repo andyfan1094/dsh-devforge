@@ -1,5 +1,14 @@
 ---
 name: social-x-post-card
+triggers:
+  - 推文卡片
+  - X 卡片
+  - Twitter 卡片
+  - 社交截图
+  - 互动数据
+  - 图卡分享
+  - x post
+  - 推特
 zh_name: "X (Twitter) 帖子卡"
 en_name: "X / Twitter Post Card"
 emoji: "𝕏"

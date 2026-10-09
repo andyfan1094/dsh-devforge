@@ -1,3 +1,20 @@
+---
+name: 状态覆盖
+description: 每个交互面必须渲染的五种状态（加载 / 空 / 错误 / 有数据 / 边界）及各自必备内容，并给出边界场景测试矩阵。
+triggers:
+  - 状态覆盖
+  - 空状态
+  - 加载状态
+  - 错误状态
+  - 边界情况
+  - 骨架屏
+  - 五态齐备
+  - state coverage
+  - empty state
+od:
+  category: craft
+---
+
 # State coverage craft rules
 
 Universal rules for what every interactive surface must render. The active

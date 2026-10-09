@@ -1,3 +1,21 @@
+---
+name: 动效纪律
+description: 判断动效何时值得存在，并约束时长、缓动与编排：只保留一个有意图的时刻，附 prefers-reduced-motion 降级底线。
+triggers:
+  - 动效
+  - 动画
+  - 过渡
+  - 缓动
+  - 动效时长
+  - 减少动效
+  - 动画纪律
+  - motion
+  - animation
+  - easing
+od:
+  category: craft
+---
+
 # Animation discipline craft rules
 
 Universal rules for when motion earns its place in a UI and what numbers

@@ -1,3 +1,21 @@
+---
+name: 配色规则
+description: 在设计系统令牌之上如何使用颜色：中性 / 强调 / 语义 / 特效四层配比，单一强调色纪律、对比度与有色表面上的文字取色。
+triggers:
+  - 配色
+  - 色彩
+  - 调色板
+  - 强调色
+  - 对比度
+  - 语义色
+  - 配色方案
+  - color
+  - palette
+  - accent
+od:
+  category: craft
+---
+
 # Color craft rules
 
 Universal color rules applied on top of the active `DESIGN.md`. The

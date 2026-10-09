@@ -1,5 +1,14 @@
 ---
 name: vfx-text-cursor
+triggers:
+  - 光标特效
+  - 逐字揭示
+  - 光斑
+  - 色散
+  - 文字动画
+  - 视频金句
+  - vfx
+  - 打字动效
 zh_name: "VFX 文字光标"
 en_name: "VFX Text Cursor"
 emoji: "✨"

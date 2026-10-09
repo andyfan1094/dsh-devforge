@@ -1,5 +1,14 @@
 ---
 name: social-spotify-card
+triggers:
+  - Spotify 卡片
+  - 正在播放
+  - 音乐卡片
+  - 专辑封面
+  - 播放进度
+  - 个人主页
+  - now playing
+  - 音乐
 zh_name: "Spotify 正在播放卡"
 en_name: "Spotify Now-Playing Card"
 emoji: "🎵"

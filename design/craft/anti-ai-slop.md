@@ -1,3 +1,21 @@
+---
+name: 反 AI 味规则
+description: 可自动检查的「AI 默认味」清单：默认 indigo 强调色、双色信任渐变、emoji 当图标、同尺寸卡片栅格等 P0 违规项。
+triggers:
+  - 反 AI 味
+  - AI 味
+  - 去 AI 感
+  - 设计套路
+  - 默认紫
+  - indigo
+  - 渐变滥用
+  - emoji 图标
+  - anti-ai-slop
+  - slop
+od:
+  category: craft
+---
+
 # Anti-AI-slop rules
 
 Concrete, checkable rules that distinguish "designed by a human who has

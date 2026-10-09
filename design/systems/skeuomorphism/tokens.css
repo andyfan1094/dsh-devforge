@@ -10,6 +10,11 @@
  */
 
 /* --- 变量与工具类（源自 globalCss，已清洗） --- */
+/* --- 源 `globalCss` 引用了从未定义的变量 `--skeuomorphism-primary`；以下由 skeuomorphism-tokens.ts 的 colors 字段补齐 --- */
+:root {
+  --skeuomorphism-primary: #8b7355;
+}
+
 :root {
   --skeu-leather: #8b7355;
   --skeu-wood: #d4c4a8;

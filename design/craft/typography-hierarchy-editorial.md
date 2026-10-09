@@ -1,3 +1,20 @@
+---
+name: 编辑式排版层级
+description: 面向长文、杂志版式、数字指南与编辑型落地页的层级节奏：戏剧化的尺度跳变、张力与留白编排、被有意压制的次级元素。
+triggers:
+  - 编辑式排版
+  - 杂志排版
+  - 长文排版
+  - 层级节奏
+  - 尺度跳变
+  - 刊物版式
+  - 文章排版
+  - editorial typography
+  - 排版层级
+od:
+  category: craft
+---
+
 # Editorial typography hierarchy craft rules
 
 Extends `typography.md` + `typography-hierarchy.md`. Defines hierarchy

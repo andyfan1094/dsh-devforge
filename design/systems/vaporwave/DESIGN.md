@@ -143,6 +143,10 @@ Vaporwave（蒸汽波）是一种源于2010年代初的网络亚文化美学，�
 
 本套风格未推导出任何整类禁令（其 `forbidden` 只针对具体类名，不做整类剔除），因此 **`globalCss` 未做整类剔除**。
 
+### 转换附带处理
+
+- 源 `globalCss` 引用了从未定义的变量 `--vaporwave-primary`，已用 `colors` 字段补齐 1 个 `:root` 变量，保证 tokens.css 与 design-tokens.json 一致、且不留悬空引用
+
 ---
 
 ## 九、AI 硬规则（源 `aiRules` 全文，生成时应逐条遵守）

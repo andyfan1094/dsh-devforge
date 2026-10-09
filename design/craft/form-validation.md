@@ -1,3 +1,20 @@
+---
+name: 表单校验规则
+description: 表单校验的完整生命周期：WHATWG 约束校验作为平台底线、校验时机状态机、WCAG 3.3.x 错误播报与恢复、跨端 schema 契约。
+triggers:
+  - 表单校验
+  - 表单验证
+  - 错误提示
+  - 输入校验
+  - 校验时机
+  - 内联错误
+  - 无障碍表单
+  - form validation
+  - schema
+od:
+  category: craft
+---
+
 # Form validation craft rules
 
 Universal rules for form validation lifecycle, error wiring beyond the

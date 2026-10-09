@@ -1,5 +1,14 @@
 ---
 name: social-reddit-card
+triggers:
+  - Reddit 卡片
+  - 帖子卡
+  - 社交卡片
+  - 投票
+  - 论坛截图
+  - 视频叠加
+  - reddit
+  - 社区帖子
 zh_name: "Reddit 帖子卡"
 en_name: "Reddit Post Card"
 emoji: "🔺"

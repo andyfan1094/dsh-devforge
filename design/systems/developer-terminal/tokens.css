@@ -10,6 +10,16 @@
  */
 
 /* --- 变量与工具类（源自 globalCss，已清洗） --- */
+/* --- 源 `globalCss` 没有任何 CSS 变量；以下由 developer-terminal-tokens.ts 的 colors 字段补齐 --- */
+:root {
+  --developer-terminal-primary: #4AF626;
+  --developer-terminal-secondary: #0A0E12;
+  --developer-terminal-accent-1: #8BE9FD;
+  --developer-terminal-accent-2: #FF79C6;
+  --developer-terminal-accent-3: #FFB86C;
+  --developer-terminal-accent-4: #6272A4;
+}
+
 @keyframes developer-terminal-blink {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0; }

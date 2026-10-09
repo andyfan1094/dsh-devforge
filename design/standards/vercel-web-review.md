@@ -1,4 +1,17 @@
 ---
+name: Vercel 界面规范审查
+triggers:
+  - 界面规范审查
+  - UI 代码审查
+  - 无障碍审查
+  - 规范合规检查
+  - 表单审查
+  - 焦点状态检查
+  - 可访问性检查
+  - Vercel 审查
+  - web review
+od:
+  category: standards
 description: Review UI code for Vercel Web Interface Guidelines compliance
 argument-hint: <file-or-pattern>
 ---

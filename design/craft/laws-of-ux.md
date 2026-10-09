@@ -1,3 +1,21 @@
+---
+name: UX 定律
+description: 以认知与行为研究为依据的界面构图规则：希克定律、米勒分块、菲茨定律、格式塔邻近、峰终定律、选择过载与渐进披露。
+triggers:
+  - UX 定律
+  - 用户体验定律
+  - 认知负荷
+  - 希克定律
+  - 米勒定律
+  - 菲茨定律
+  - 格式塔
+  - 峰终定律
+  - 选择过载
+  - laws of ux
+od:
+  category: craft
+---
+
 # Laws of UX craft rules
 
 Universal cognitive, perceptual, and behavioral heuristics that decide

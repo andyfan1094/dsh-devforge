@@ -164,6 +164,10 @@ od:
 | `bounce` | forbidden 明列 animate-bounce |
 | `glass` | 人工登记（依据）：wabi-sabi 的 aiRules 通篇主张「无装饰 / 无影虚空 / 绝对静止」，且 forbidden 明确禁 rounded-2xl/3xl/full 与 shadow-lg/xl/2xl；同文件 globalCss 里的 .wabi-sabi-frosted（backdrop-filter 毛玻璃）属模板残留，与本风格精神直接冲突。 |
 
+### 转换附带处理
+
+- 源 `globalCss` 引用了从未定义的变量 `--wabi-sabi-primary`，已用 `colors` 字段补齐 1 个 `:root` 变量，保证 tokens.css 与 design-tokens.json 一致、且不留悬空引用
+
 ---
 
 ## 九、AI 硬规则（源 `aiRules` 全文，生成时应逐条遵守）

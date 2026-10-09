@@ -1,5 +1,14 @@
 ---
 name: deck-open-slide-canvas
+triggers:
+  - 1920 画布
+  - 自由画布演示稿
+  - 幻灯片自由排版
+  - React 组件排版
+  - 演示稿
+  - open-slide
+  - 无模板 deck
+  - 大画布
 zh_name: "1920 画布自由 Deck"
 en_name: "Open-Slide 1920 Canvas Deck"
 emoji: "🎨"

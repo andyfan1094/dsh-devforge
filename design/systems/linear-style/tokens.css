@@ -10,31 +10,30 @@
  */
 
 /* --- 变量与工具类（源自 globalCss，已清洗） --- */
-@layer base {
-  body {
-    @apply bg-[#0a0a0b] text-white antialiased;
+body {
+    background-color: #0a0a0b;
+    color: #fff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
-  }
 }
 
-@layer utilities {
-  .linear-border {
+.linear-border {
     border: 1px solid rgba(255, 255, 255, 0.1);
-  }
+}
 
-  .linear-surface {
+.linear-surface {
     background: rgba(255, 255, 255, 0.03);
-  }
+}
 
-  .linear-surface-hover {
+.linear-surface-hover {
     background: rgba(255, 255, 255, 0.06);
-  }
+}
 
-  .linear-gradient {
+.linear-gradient {
     background: linear-gradient(to right, #5e6ad2, #8b5cf6);
-  }
 }
 
 :root {

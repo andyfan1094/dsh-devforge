@@ -1,3 +1,21 @@
+---
+name: 无障碍基线规范
+description: 无障碍的合规底线与工艺承诺：WCAG / EN 301 549 各法域要求、键盘与焦点管理、读屏与 ARIA 名称、对比度，以及 iOS / Android / Flutter 原生端对齐。
+triggers:
+  - 无障碍
+  - 可访问性
+  - 无障碍规范
+  - a11y
+  - WCAG
+  - 对比度
+  - 焦点环
+  - 键盘导航
+  - 读屏
+  - accessibility
+od:
+  category: craft
+---
+
 # Accessibility baseline craft rules
 
 Universal rules for the legal floor of accessibility plus the craft

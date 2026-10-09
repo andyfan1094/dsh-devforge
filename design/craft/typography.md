@@ -1,3 +1,20 @@
+---
+name: 排版规则
+description: 适用于任意设计系统的通用排版规则：字号阶梯、行高、字距 tracking、行宽 measure、字体配对与可读性红线。
+triggers:
+  - 排版
+  - 字体
+  - 字号
+  - 行高
+  - 字距
+  - 行宽
+  - 字体配对
+  - 可读性
+  - typography
+od:
+  category: craft
+---
+
 # Typography craft rules
 
 Universal typography rules that apply on top of any `DESIGN.md`. The

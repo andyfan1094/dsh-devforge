@@ -1,5 +1,14 @@
 ---
 name: frame-logo-outro
+triggers:
+  - 片尾
+  - logo 动画
+  - 品牌收尾
+  - 视频结束卡
+  - 光晕
+  - 品牌落版
+  - outro
+  - end card
 zh_name: "品牌 Logo 收尾帧"
 en_name: "Logo Outro Frame"
 emoji: "🎬"

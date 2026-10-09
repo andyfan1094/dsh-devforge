@@ -1,5 +1,14 @@
 ---
 name: frame-data-chart-nyt
+triggers:
+  - 数据图表
+  - 折线图
+  - 柱状图
+  - 图表动画
+  - NYT 风格
+  - 视频图表帧
+  - 数据可视化
+  - data chart
 zh_name: "NYT 风数据图表帧"
 en_name: "NYT-Style Data Chart Frame"
 emoji: "📈"
