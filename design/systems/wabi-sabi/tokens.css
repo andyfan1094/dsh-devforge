@@ -1,0 +1,88 @@
+/*
+ * 侘寂风（Wabi-Sabi）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/wabi-sabi.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 8 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --wabi-bg: #f7f3ec;
+  --wabi-surface: #f2ede4;
+  --wabi-text: #3a3a3a;
+  --wabi-muted: #8a8278;
+  --wabi-moss: #8a9a7b;
+  --wabi-tea: #b5a78c;
+  --wabi-clay: #8b6f4e;
+  --wabi-border: #d4cdc5;
+}
+
+@keyframes wabi-sabi-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.wabi-sabi-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.wabi-sabi-card:hover::before {
+  opacity: 1;
+}
+
+.wabi-sabi-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.wabi-sabi-animate-in {
+}
+
+.wabi-sabi-focus { outline: 2px solid var(--wabi-sabi-primary, currentColor); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wabi-sabi-animate-in {
+    animation: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .wabi-sabi-card {
+
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#d4cdc5]/30 · rounded-none · border-solid
+ *   阴影 sm / md / lg / none：shadow-none · shadow-sm · shadow-md · shadow-none
+ *   阴影 hover / focus：hover:shadow-sm · focus:ring-1 focus:ring-[#8a9a7b]/20
+ *   过渡 / 按下态：transition-opacity duration-1000 · active:opacity-80
+ *   标题字体 / 正文字体 / 等宽字体：font-serif font-light tracking-wide · font-serif font-light · font-mono font-light
+ *   字号 · hero：text-3xl md:text-5xl lg:text-6xl
+ *   字号 · h1：text-2xl md:text-4xl
+ *   字号 · h2：text-xl md:text-2xl
+ *   字号 · h3：text-lg md:text-xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-24 md:py-32 lg:py-40 · px-8 md:px-16 lg:px-24 · p-8 md:p-10
+ *   间距 · sm：gap-6
+ *   间距 · md：gap-10
+ *   间距 · lg：gap-16
+ *   底色 主 / 次：bg-[#f7f3ec] · bg-[#f2ede4]
+ *   底色 · 强调：bg-[#8a9a7b]/10 · bg-[#b5a78c]/10 · bg-[#8b6f4e]/10
+ *   文字 主 / 次 / 弱：text-[#3a3a3a] · text-[#8a8278] · text-[#b5a78c]
+ *   按钮 · primary：bg-transparent border-b border-[#3a3a3a]/30 text-[#3a3a3a]
+ *   按钮 · secondary：bg-transparent border-b border-[#d4cdc5] text-[#8a8278]
+ *   按钮 · danger：bg-transparent border-b border-[#8b6f4e] text-[#8b6f4e]
+ *   必须包含 · button：bg-transparent · transition-colors · duration-500
+ *   必须包含 · card：transition-colors
+ *   必须包含 · input：bg-transparent · focus:outline-none
+ * ------------------------------------------------------------------ */

@@ -1,0 +1,12 @@
+{
+  "--minimalist-flat-primary": "#000000",
+  "--minimalist-flat-secondary": "#ffffff",
+  "--minimalist-flat-accent": "#ff3366",
+  "--minimalist-flat-glow": "rgba(0, 0, 0, 0.3)",
+  "--color-primary": "#000000",
+  "--color-secondary": "#ffffff",
+  "--color-accent-1": "#ff3366",
+  "--color-accent-2": "#00d4aa",
+  "--color-accent-3": "#ffcc00",
+  "--color-accent-4": "#b45700"
+}

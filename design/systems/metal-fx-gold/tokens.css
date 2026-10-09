@@ -1,0 +1,131 @@
+/*
+ * Metal FX Gold（金属金）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/metal-fx-gold/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* ─── Surfaces (dark obsidian → polished steel) ─── */
+  --background: oklch(0.13 0.005 260);          /* Deep obsidian, slight cool cast */
+  --foreground: oklch(0.96 0.005 260);          /* Cool white */
+
+  --card: oklch(0.17 0.008 260);                /* Brushed steel raised */
+  --card-foreground: oklch(0.96 0.005 260);
+
+  --popover: oklch(0.20 0.01 260);              /* Polished chrome floating */
+  --popover-foreground: oklch(0.96 0.005 260);
+
+  /* ─── Primary: polished silver — the iridescence lives in the metal ring, not the fill ─── */
+  --primary: oklch(0.92 0 0);                   /* Polished silver / chrome white */
+  --primary-foreground: oklch(0.13 0.005 260);
+
+  --secondary: oklch(0.24 0.008 260);           /* Steel grey */
+  --secondary-foreground: oklch(0.92 0.005 260);
+
+  --muted: oklch(0.22 0.005 260);
+  --muted-foreground: oklch(0.62 0.01 260);
+
+  --accent: oklch(0.26 0.005 260);              /* Neutral steel accent */
+  --accent-foreground: oklch(0.96 0.005 260);
+
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.97 0 0);
+
+  --border: oklch(1 0 0 / 0.10);                /* Soft chrome edge */
+  --input: transparent;                          /* Transparent — wrapper paints the surface so icons stay visible */
+  --ring: oklch(0.92 0 0);                      /* Silver focus ring */
+  --radius: 0.625rem;
+
+  /* ─── Iridescent gradients (chromatic palette = signature of metal-fx) ─── */
+  --gradient-chromatic:
+    linear-gradient(
+      135deg,
+      oklch(0.78 0.16 320) 0%,
+      oklch(0.78 0.16 280) 25%,
+      oklch(0.78 0.14 220) 50%,
+      oklch(0.82 0.14 90) 75%,
+      oklch(0.78 0.16 320) 100%
+    );
+
+  --gradient-silver:
+    linear-gradient(
+      180deg,
+      oklch(0.45 0.005 260) 0%,
+      oklch(0.30 0.005 260) 50%,
+      oklch(0.20 0.005 260) 100%
+    );
+
+  /* ─── Shadow scale (dark, metallic — sharp top-edge highlights) ─── */
+  --shadow-xs:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+
+  --shadow-sm:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 2px 4px rgba(0, 0, 0, 0.22);
+
+  --shadow-md:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 2px 4px rgba(0, 0, 0, 0.55),
+    0 4px 8px rgba(0, 0, 0, 0.28);
+
+  --shadow-lg:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 4px 8px rgba(0, 0, 0, 0.65),
+    0 8px 18px rgba(0, 0, 0, 0.35);
+
+  --shadow-xl:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    0 8px 16px rgba(0, 0, 0, 0.75),
+    0 16px 36px rgba(0, 0, 0, 0.4);
+
+  --shadow-inset:
+    inset 0 1px 2px rgba(0, 0, 0, 0.4),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Iridescent glow — chromatic bloom around primary buttons */
+  --shadow-primary:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 1px rgba(220, 140, 255, 0.25),
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 4px 14px rgba(180, 100, 240, 0.3),
+    0 8px 24px rgba(120, 200, 255, 0.18);
+
+  /* Chrome resting button shadow — silvery contact */
+  --shadow-button:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+
+  --shadow-button-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 2px 4px rgba(0, 0, 0, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.32);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

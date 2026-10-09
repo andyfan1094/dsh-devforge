@@ -1,0 +1,22 @@
+{
+  "--background": "oklch(1 0 0)",
+  "--foreground": "oklch(0.2376 0 0)",
+  "--card": "oklch(1 0 0)",
+  "--card-foreground": "oklch(0.2376 0 0)",
+  "--popover": "oklch(1 0 0)",
+  "--popover-foreground": "oklch(0.2376 0 0)",
+  "--primary": "oklch(0.6256 0.2374 299.29)",
+  "--primary-foreground": "oklch(1 0 0)",
+  "--secondary": "oklch(0.9662 0.0058 308.39)",
+  "--secondary-foreground": "oklch(0.2376 0 0)",
+  "--muted": "oklch(0.9587 0.0055 308.4)",
+  "--muted-foreground": "oklch(0.5547 0 0)",
+  "--accent": "oklch(0.9337 0.0088 308.36)",
+  "--accent-foreground": "oklch(0.2376 0 0)",
+  "--destructive": "oklch(0.6356 0.2082 25.38)",
+  "--destructive-foreground": "oklch(1 0 0)",
+  "--border": "oklch(0.9002 0.0133 308.3)",
+  "--input": "oklch(0.9587 0.0055 308.4)",
+  "--ring": "oklch(0.6256 0.2374 299.29)",
+  "--radius": "0.5rem"
+}

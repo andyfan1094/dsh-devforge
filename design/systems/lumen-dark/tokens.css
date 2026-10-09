@@ -1,0 +1,121 @@
+/*
+ * Lumen Dark（流光深色）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/lumen-dark/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* ─── Surfaces (elevation = lighter bg) ─── */
+  --background: oklch(0.14 0 0);          /* Deepest plane */
+  --foreground: oklch(0.97 0.01 85);      /* Warm white */
+
+  --card: oklch(0.17 0 0);                 /* Raised surface */
+  --card-foreground: oklch(0.97 0.01 85);
+
+  --popover: oklch(0.19 0 0);              /* Floating surface */
+  --popover-foreground: oklch(0.97 0.01 85);
+
+  /* ─── Primary: warm amber (named "lumen" for the warm light metaphor) ─── */
+  --primary: oklch(0.78 0.14 85);          /* Amber */
+  --primary-foreground: oklch(0.16 0.02 85);
+
+  --secondary: oklch(0.22 0 0);
+  --secondary-foreground: oklch(0.85 0 0);
+
+  --muted: oklch(0.2 0 0);
+  --muted-foreground: oklch(0.6 0 0);
+
+  --accent: oklch(0.25 0.015 85);          /* Warm-tinted accent bg */
+  --accent-foreground: oklch(0.97 0.01 85);
+
+  --destructive: oklch(0.64 0.22 25);
+  --destructive-foreground: oklch(0.97 0 0);
+
+  --border: oklch(1 0 0 / 0.08);           /* Subtle white 8% */
+  --input: oklch(1 0 0 / 0.06);
+  --ring: oklch(0.78 0.14 85);             /* Amber ring matches primary */
+  --radius: 0.5rem;
+
+  /*
+   * ─── Shadow scale (5 tiers following Better Design's depth principle) ───
+   *
+   * Each tier stacks three layers:
+   *   1. Inset highlight  — light from above hitting the top edge
+   *   2. Contact shadow   — sharp, close, where the element "touches" the surface
+   *   3. Ambient shadow   — soft, diffused, environmental
+   *
+   * The principle doc prescribes highlight opacities of 30/50/70% and contact/ambient
+   * at 30%/15% black — those values target LIGHT themes. Dark themes need lower
+   * highlights (bright whites read as gaudy on dark bg) and deeper shadows (higher
+   * opacity to register against dark canvas). The progression below keeps the 1:2
+   * offset/blur ratio between contact and ambient layers per the spec.
+   *
+   * Tier usage:
+   *   xs  → dots, chips, status pills (barely-there lift)
+   *   sm  → buttons, small cards (resting elevation)
+   *   md  → hover state of sm, interactive cards, elevated buttons
+   *   lg  → dropdowns, popovers, tooltips (floating)
+   *   xl  → dialogs, sheets, modals (maximum elevation)
+   */
+  --shadow-xs:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.15);
+
+  --shadow-sm:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.2);
+
+  --shadow-md:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 4px 8px rgba(0, 0, 0, 0.25);
+
+  --shadow-lg:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 4px 8px rgba(0, 0, 0, 0.6),
+    0 8px 16px rgba(0, 0, 0, 0.3);
+
+  --shadow-xl:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 8px 16px rgba(0, 0, 0, 0.7),
+    0 16px 32px rgba(0, 0, 0, 0.35);
+
+  /* Inset/pressed — inputs sit BELOW the surface plane (light falls into the recess) */
+  --shadow-inset:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+
+  /* Amber-glow variant for primary buttons — shadow-md + warm color bloom layer */
+  --shadow-primary:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 0 1px rgba(255, 200, 100, 0.2),
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(240, 170, 60, 0.18);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

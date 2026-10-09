@@ -67,6 +67,30 @@ export const CONSTRAINT_FULL_TEXT = [
   '- 完整约束文档：dsh-devforge 仓库 docs/插件暂存环境测试约束.md（提交 e364977 起生效）。',
 ].join('\n')
 
+/**
+ * 设计能力指引（常驻注入，与约束级别无关）。
+ *
+ * 目的：把插件内置"设计资产库"的入口与作业流程告诉每个会话，避免模型在
+ * 视觉类任务上凭手感调样式。资产本体不注入（体量以 MB 计），只给流程与
+ * 红线摘要，全文一律由 devforge_design 工具按需读取。
+ */
+export const DESIGN_CAPABILITY_TEXT = [
+  '【设计能力（dsh-devforge 注入）】',
+  '遇到视觉、界面、演示稿、美化、重设计类任务时，先查设计资产再动手，不要凭手感直接调样式。',
+  '1. 查资产：devforge_design（不带参数给总览；query 关键词检索；id 读全文）。六层资产：',
+  '   craft 工艺规则（反 AI 味 / UX 定律 / 排版层级 / 无障碍 / 动效纪律）、standards 外部权威规范、',
+  '   skills 设计工作法、systems 设计系统（DESIGN.md + tokens.css）、templates 渲染模板、prompts 提示词库。',
+  '2. 定方向：读 skills/taste-skill —— 三旋钮（DESIGN_VARIANCE / MOTION_INTENSITY / VISUAL_DENSITY）',
+  '   加一行 Design Read，先把"这是什么产品、该什么调性"写清楚再动手。',
+  '3. 选形态：读 skills/hallmark —— 宏观结构、主题与组件原型，并参考其结构指纹记录避免每次产出同一种骨架。',
+  '4. 选系统：读 systems/<id> 拿 DESIGN.md 与 tokens.css，颜色间距字体一律走 token，不自己造值。',
+  '5. 走流程与验收：读 skills/impeccable —— craft-floor 硬地板与评审协议；',
+  '   改造既有界面则读 skills/redesign，风格实例化读 systems 或 skills 里的风格条目。',
+  '6. 交付前必过红线并自检：桌面与移动至少两档截图看过再交付。',
+  '红线摘要：禁默认靛蓝当主色、禁紫蓝渐变与渐变文字、禁 emoji 当功能图标、禁编造指标与填充文案、',
+  '禁 transition:all、焦点环必须瞬时不可淡入、移动优先从 320px 起、display 文字不用 Inter/Roboto 这类默认脸。',
+].join('\n')
+
 /** 开发动作工具名（小写精确匹配）。 */
 const DEV_TOOL_EXACT = new Set([
   'write', 'edit', 'multiedit', 'multi_edit', 'apply_patch', 'applypatch', 'notebook_edit', 'bash', 'shell', 'terminal', 'exec', 'str_replace',
@@ -170,7 +194,9 @@ export function eventsHaveDevSignal(events: readonly unknown[]): boolean {
 /** 按当前级别与开关渲染注入文本。 */
 export function renderConstraintText(level: ConstraintLevel, enabled: boolean): string {
   if (!enabled) return ''
-  return level === 'full' ? CONSTRAINT_FULL_TEXT : CONSTRAINT_SUMMARY_TEXT
+  const base = level === 'full' ? CONSTRAINT_FULL_TEXT : CONSTRAINT_SUMMARY_TEXT
+  // 设计能力指引常驻：与约束级别无关，任何会话都该知道有设计资产可查。
+  return base + '\n\n' + DESIGN_CAPABILITY_TEXT
 }
 
 // ------------------------------------------------ 项目卡与产出公约注入（0.19.0）

@@ -1,0 +1,65 @@
+/*
+ * Supabase Design System（Supabase 设计系统）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/supabase/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  --background: oklch(0.2267 0 0);
+  --foreground: oklch(0.9619 0 0);
+
+  --card: oklch(0.2591 0 0);
+  --card-foreground: oklch(0.9619 0 0);
+
+  --popover: oklch(0.2044 0 0);
+  --popover-foreground: oklch(0.9619 0 0);
+
+  --primary: oklch(0.7629 0.1537 159.36);
+  --primary-foreground: oklch(0.9911 0.0123 167.47);
+
+  --secondary: oklch(0.2741 0.0055 286.03);
+  --secondary-foreground: oklch(0.9848 0 0);
+
+  --muted: oklch(0.3008 0 0);
+  --muted-foreground: oklch(0.7119 0.0129 286.07);
+
+  --accent: oklch(0.2685 0.0063 34.3);
+  --accent-foreground: oklch(0.9848 0 0);
+
+  --destructive: oklch(0.3959 0.1331 25.72);
+  --destructive-foreground: oklch(0.971 0.0127 17.38);
+
+  --border: oklch(0.3008 0 0);
+  --input: oklch(0.3008 0 0);
+  --ring: oklch(0.6154 0.1157 159.63);
+
+  --radius: 0.5rem;
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+html {
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

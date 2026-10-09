@@ -167,6 +167,38 @@ export interface StandardDetail extends StandardSummary {
   content: string
 }
 
+/**
+ * 设计资产类型：craft 工艺规则 / standards 外部权威规范 / skills 技能 /
+ * systems 设计系统 / templates 渲染模板 / prompts 提示词库。
+ */
+export type DesignAssetKind = 'craft' | 'standards' | 'skills' | 'systems' | 'templates' | 'prompts'
+
+/** 一项设计资产的摘要（列表与检索用，不含正文）。 */
+export interface DesignAssetSummary {
+  /** 资产 id（"类型/名称"，如 craft/anti-ai-slop、systems/linear）。 */
+  id: string
+  /** 资产类型。 */
+  kind: DesignAssetKind
+  /** 展示名称（frontmatter 的 name 或文档一级标题）。 */
+  name: string
+  /** 一句话描述（frontmatter description）。 */
+  description: string
+  /** 分类标签（沿用 OpenDesign 资产的 od.category）。 */
+  category: string
+  /** 检索触发词（Agent 找技能的主要线索）。 */
+  triggers: string[]
+  /** 入口文件字节数。 */
+  bytes: number
+  /** 更新时间（epoch ms）。 */
+  updatedAt: number
+}
+
+/** 一项设计资产的完整内容。 */
+export interface DesignAssetDetail extends DesignAssetSummary {
+  /** markdown 正文；设计系统会附带 tokens.css 与 design-tokens.json。 */
+  content: string
+}
+
 /** 服务生成任务状态机：queued → running → succeeded/failed/cancelled。 */
 export type ForgeJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 

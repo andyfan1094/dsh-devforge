@@ -1,0 +1,16 @@
+{
+  "--liquid-glass-bg": "rgba(255, 255, 255, 0.1)",
+  "--liquid-glass-bg-hover": "rgba(255, 255, 255, 0.15)",
+  "--liquid-glass-blur": "40px",
+  "--liquid-glass-saturate": "1.8",
+  "--liquid-glass-border-start": "#ff6b6b",
+  "--liquid-glass-border-mid": "#4ecdc4",
+  "--liquid-glass-border-end": "#a855f7",
+  "--color-primary": "rgba(255, 255, 255, 0.1)",
+  "--color-secondary": "rgba(255, 255, 255, 0.15)",
+  "--color-accent-1": "#ff6b6b",
+  "--color-accent-2": "#4ecdc4",
+  "--color-accent-3": "#a855f7",
+  "--color-accent-4": "#007AFF",
+  "--color-accent-5": "#FF2D55"
+}

@@ -1,0 +1,22 @@
+{
+  "--background": "oklch(0.14 0 0)",
+  "--foreground": "oklch(1 0 0)",
+  "--card": "oklch(1 0 0 / 0.06)",
+  "--card-foreground": "oklch(0.98 0 0)",
+  "--popover": "oklch(1 0 0 / 0.08)",
+  "--popover-foreground": "oklch(1 0 0)",
+  "--primary": "oklch(0.65 0.19 250)",
+  "--primary-foreground": "oklch(1 0 0)",
+  "--secondary": "oklch(1 0 0 / 0.08)",
+  "--secondary-foreground": "oklch(0.7 0 0)",
+  "--muted": "oklch(1 0 0 / 0.05)",
+  "--muted-foreground": "oklch(0.55 0 0)",
+  "--accent": "oklch(0.65 0.19 250 / 0.15)",
+  "--accent-foreground": "oklch(0.98 0 0)",
+  "--destructive": "oklch(0.58 0.22 27)",
+  "--destructive-foreground": "oklch(1 0 0)",
+  "--border": "oklch(1 0 0 / 0.12)",
+  "--input": "oklch(1 0 0 / 0.06)",
+  "--ring": "oklch(0.65 0.19 250)",
+  "--radius": "1.25rem"
+}

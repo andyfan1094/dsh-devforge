@@ -97,8 +97,9 @@ import { ModagentaiService } from './modagentai/service.ts'
 import { activateOpenAiGenerateImage } from './openai/tools.ts'
 import { makeCredentialsRoutes } from './credentials-routes.ts'
 import { DshWebRestartManager } from './restart.ts'
+import { DesignStore } from './design.ts'
 import { StandardsStore } from './standards.ts'
-import { devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
+import { devforgeDesignTool, devforgeJobsTool, devforgeRestartTool, devforgeStandardsTool } from './tools.ts'
 import { devforgeProjectTool } from './projects/tools.ts'
 import { runProjectDeploy } from './projects/deploy.ts'
 import { runProjectProbe } from './projects/probe.ts'
@@ -538,6 +539,8 @@ export function apply(ctx: Context, config?: Config): void {
   // 规范库根目录 = 本文件上级的 standards/（lib/index.js → ../standards）
   const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
   const standards = new StandardsStore(join(pluginRoot, 'standards'))
+  // 设计资产库（0.42.0）：与规范库同构，但内容面向视觉与体验（craft/standards/skills/systems/templates/prompts）。
+  const design = new DesignStore(join(pluginRoot, 'design'))
   const restartManager = new DshWebRestartManager()
   // 第一阶段只读桥接旧 SSH/WinRM store；不搬运、不回写任何凭据。
   const remoteRegistry = new LegacyRemoteRegistry()
@@ -1041,7 +1044,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   // 工作流软下线（0.39.0，辉哥定稿）：rag_run 工具停注、面板页签隐藏；引擎与路由保留，
   // 恢复方法——本行数组重新加回 `ragRunTool(workflowEngine)`（import 恢复 './workflow/tools.ts'）即可。
   // 官网搜索（0.39.0，辉哥定稿）：modagentai.com 联网搜索开放给模型，智谱/MiniMax 限额时的第三条通道。
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool({ run: runProjectProbeById }), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeDesignTool(design), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool({ run: runProjectProbeById }), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined

@@ -1,0 +1,125 @@
+/*
+ * 霓虹复古（Neon Retro）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/vaporwave.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --vapor-pink: #ff71ce;
+  --vapor-cyan: #01cdfe;
+  --vapor-purple: #b967ff;
+  --vapor-green: #05ffa1;
+  --vapor-yellow: #fffb96;
+}
+
+.vapor-glow {
+  text-shadow:
+    0 0 10px var(--vapor-pink),
+    0 0 20px var(--vapor-pink),
+    0 0 40px var(--vapor-cyan);
+}
+
+.vapor-grid {
+  background-image:
+    linear-gradient(rgba(255, 113, 206, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 113, 206, 0.1) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+.vapor-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1) 0px,
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+}
+
+@keyframes vaporwave-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vaporwave-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.vaporwave-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(255, 113, 206, 0.08);
+}
+
+.vaporwave-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.vaporwave-animate-in {
+  animation: vaporwave-fade-in 0.5s ease-out both;
+}
+
+.vaporwave-focus { outline: 2px solid var(--vaporwave-primary, currentColor); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vaporwave-animate-in {
+    animation: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .vaporwave-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+}
+
+@media print {
+  .vaporwave-gradient,
+  .vaporwave-frosted {
+    background: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#ff71ce]/50 · rounded-xl · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_0_8px_rgba(255,113,206,0.4)] md:shadow-[0_0_12px_rgba(255,113,206,0.4)] · shadow-[0_0_16px_rgba(255,113,206,0.5)] md:shadow-[0_0_24px_rgba(255,113,206,0.5)] · shadow-[0_0_24px_rgba(255,113,206,0.6)] md:shadow-[0_0_40px_rgba(255,113,206,0.6)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[0_0_32px_rgba(1,205,254,0.7)] · focus:shadow-[0_0_20px_rgba(1,205,254,0.6)]
+ *   彩色阴影：pink: shadow-[0_0_20px_rgba(255,113,206,0.6)] · cyan: shadow-[0_0_20px_rgba(1,205,254,0.6)] · purple: shadow-[0_0_20px_rgba(185,103,255,0.6)]
+ *   过渡 / 按下态：transition-all duration-300 ease-in-out · active:scale-95
+ *   标题字体 / 正文字体 / 等宽字体：font-bold tracking-wide · font-sans · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-8xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-4xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-12 md:py-20 lg:py-28 · px-4 md:px-8 lg:px-12 · p-5 md:p-8
+ *   间距 · sm：gap-3 md:gap-4
+ *   间距 · md：gap-4 md:gap-6
+ *   间距 · lg：gap-6 md:gap-10
+ *   底色 主 / 次：bg-[#1a0a2e] · bg-[#16082a]
+ *   底色 · 强调：bg-[#ff71ce] · bg-[#01cdfe] · bg-[#b967ff] · bg-[#05ffa1]
+ *   文字 主 / 次 / 弱：text-[#ff71ce] · text-[#01cdfe] · text-[#b967ff]/70
+ *   按钮 · primary：bg-gradient-to-r from-[#ff71ce] to-[#b967ff] text-white
+ *   按钮 · secondary：bg-[#01cdfe]/20 text-[#01cdfe] border border-[#01cdfe]/50
+ *   按钮 · danger：bg-red-500/80 text-white
+ *   必须包含 · button：rounded-xl · shadow-[0_0_16px_rgba(255,113,206,0.5)] · hover:shadow-[0_0_32px_rgba(1,205,254,0.7)] · transition-all duration-300 ease-in-out · font-bold
+ *   必须包含 · card：rounded-xl · bg-[#1a0a2e]/80 · border border-[#ff71ce]/50 · shadow-[0_0_16px_rgba(255,113,206,0.5)]
+ *   必须包含 · input：rounded-xl · border border-[#b967ff]/50 · bg-[#1a0a2e]/60 · text-[#01cdfe] · focus:shadow-[0_0_20px_rgba(1,205,254,0.6)] · focus:outline-none
+ * ------------------------------------------------------------------ */

@@ -1,0 +1,16 @@
+{
+  "--wabi-bg": "#f7f3ec",
+  "--wabi-surface": "#f2ede4",
+  "--wabi-text": "#3a3a3a",
+  "--wabi-muted": "#8a8278",
+  "--wabi-moss": "#8a9a7b",
+  "--wabi-tea": "#b5a78c",
+  "--wabi-clay": "#8b6f4e",
+  "--wabi-border": "#d4cdc5",
+  "--color-primary": "#3a3a3a",
+  "--color-secondary": "#f2ede4",
+  "--color-accent-1": "#8a9a7b",
+  "--color-accent-2": "#b5a78c",
+  "--color-accent-3": "#8b6f4e",
+  "--color-accent-4": "#799d91"
+}

@@ -1,0 +1,88 @@
+/*
+ * Airbnb Design System（Airbnb 设计系统）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/airbnb/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* Airbnb — extracted from airbnb.com production (2026-04) */
+
+  --background: #FFFFFF;
+  --foreground: #222222;
+
+  --card: #FFFFFF;
+  --card-foreground: #222222;
+
+  --popover: #FFFFFF;
+  --popover-foreground: #222222;
+
+  /* Rausch — Airbnb's brand coral */
+  --primary: #FF385C;
+  --primary-foreground: #FFFFFF;
+
+  --secondary: #222222;
+  --secondary-foreground: #FFFFFF;
+
+  --muted: #F7F7F7;
+  --muted-foreground: #6A6A6A;
+
+  --accent: #F7F7F7;
+  --accent-foreground: #222222;
+
+  --destructive: #C13515;
+  --destructive-foreground: #FFFFFF;
+
+  --border: #DDDDDD;
+  --input: #F7F7F7;
+  --ring: #222222;
+
+  --radius: 0.75rem;
+
+  /* Airbnb radial gradient — used on CTA buttons, hero accents */
+  --rausch-gradient: radial-gradient(
+    circle at center,
+    #FF385C 0%,
+    #E61E4D 27.5%,
+    #E31C5F 40%,
+    #D70466 57.5%,
+    #BD1E59 75%,
+    #BD1E59 100%
+  );
+
+  /* Shadows — Airbnb uses very subtle shadows, border-based elevation */
+  --shadow-2xs: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-xs:  0 1px 2px rgba(0,0,0,0.06);
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
+  --shadow:     0 2px 4px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.08), 0 6px 20px rgba(0,0,0,0.06);
+  --shadow-lg:  0 6px 20px rgba(0,0,0,0.2);
+  --shadow-xl:  0 6px 20px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.04);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+html {
+    font-family: "Airbnb Cereal VF", Circular, -apple-system, system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

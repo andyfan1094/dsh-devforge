@@ -1,0 +1,82 @@
+/*
+ * Minimal Light（极简浅色）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/minimal-light/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* Luxe — exact styles from the original site (browser-extracted 2026) */
+  /* Light theme: --background #f5f5f5, --foreground #4a4c52 */
+  /* Primary: black (#000), no box shadows — clean minimal */
+  /* Font: Geist Sans, border-radius 12px */
+  /* Border: #d9d9d9, no shadows on any elements */
+
+  --background: oklch(0.9696 0 0);          /* #f5f5f5 rgb(245,245,245) */
+  --foreground: oklch(0.4208 0.0101 271.17);        /* #4a4c52 rgb(74,76,82) */
+
+  --card: oklch(0.9772 0 0);                /* oklch(0.97) near-white */
+  --card-foreground: oklch(0.4208 0.0101 271.17);
+
+  --popover: oklch(0.9772 0 0);
+  --popover-foreground: oklch(0.4208 0.0101 271.17);
+
+  /* Primary: black — monochromatic */
+  --primary: oklch(0 0 0);              /* #000 */
+  --primary-foreground: oklch(1 0 0);
+
+  /* Secondary: slightly lighter than background */
+  --secondary: oklch(0.9466 0 0);
+  --secondary-foreground: oklch(0.4751 0.0117 271.16);
+
+  --muted: oklch(0.9696 0 0);
+  --muted-foreground: oklch(0.5459 0 0);    /* oklch(0.556) */
+
+  --accent: oklch(0.9466 0 0);
+  --accent-foreground: oklch(0.4208 0.0101 271.17);
+
+  --destructive: oklch(0.6356 0.2082 25.38);
+  --destructive-foreground: oklch(1 0 0);
+
+  --border: oklch(0.8845 0 0);              /* #d9d9d9 */
+  --input: oklch(0.9696 0 0);
+  --ring: oklch(0 0 0);                 /* black focus ring */
+  --radius: 0.75rem;               /* 12px */
+
+  /* Shadow overrides — light theme: clean minimal shadows, not dark-mode 40% black */
+  --shadow-2xs: 0 1px 2px 0 rgba(0,0,0,0.03);
+  --shadow-xs:  0 1px 2px 0 rgba(0,0,0,0.05);
+  --shadow-sm:  0 1px 3px 0 rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.04);
+  --shadow:     0 1px 3px 0 rgba(0,0,0,0.08), 0 1px 2px -1px rgba(0,0,0,0.06);
+  --shadow-md:  0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.06);
+  --shadow-lg:  0 8px 16px -2px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+  --shadow-xl:  0 16px 24px -4px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.04);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+html {
+    font-family: "Geist", "GeistSans", ui-sans-serif, system-ui, -apple-system,
+      BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

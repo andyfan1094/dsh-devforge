@@ -1,0 +1,82 @@
+/*
+ * Dark Orange（深色橙）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/dark-orange/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* Sharp Dark — dark landing page style extracted from the original site */
+  /* Brand orange: #F05023 = oklch(0.6469 0.2036 35.49) */
+  /* Background: #1c1c1c = oklch(0.2267 0 0) */
+  /* Surface: #191919 = oklch(0.2156 0 0) */
+  /* Border: #262626 = oklch(0.2697 0 0) */
+
+  --background: oklch(0.2267 0 0);          /* #1c1c1c */
+  --foreground: oklch(0.9696 0 0);          /* near-white */
+
+  --card: oklch(0.2156 0 0);                /* #191919 */
+  --card-foreground: oklch(0.9696 0 0);
+
+  --popover: oklch(0.2156 0 0);
+  --popover-foreground: oklch(0.9696 0 0);
+
+  /* Brand orange: #F05023 */
+  --primary: oklch(0.6469 0.2036 35.49);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.2697 0 0);           /* #262626 */
+  --secondary-foreground: oklch(0.8054 0 0);
+
+  --muted: oklch(0.2591 0 0);
+  --muted-foreground: oklch(0.5982 0 0);
+
+  --accent: oklch(0.2905 0 0);
+  --accent-foreground: oklch(0.9696 0 0);
+
+  --destructive: oklch(0.6469 0.2287 22.64);
+  --destructive-foreground: oklch(1 0 0);
+
+  --border: oklch(0.2697 0 0);              /* #262626 */
+  --input: oklch(0.2484 0 0);
+  --ring: oklch(0.6469 0.2036 35.49);              /* orange ring */
+
+  /* 10px radius — Sharp Dark's signature rounded-10 */
+  --radius: 0.625rem;
+
+  /* Shadow overrides — dark theme: deeper shadows that pop on near-black bg */
+  --shadow-2xs: 0 1px 2px 0 rgba(0,0,0,0.4);
+  --shadow-xs:  0 1px 2px 0 rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  --shadow-sm:  0 1px 3px 0 rgba(0,0,0,0.5), 0 1px 2px -1px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04);
+  --shadow:     0 2px 4px 0 rgba(0,0,0,0.5), 0 1px 2px -1px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+  --shadow-md:  0 4px 8px -1px rgba(0,0,0,0.6), 0 2px 4px -2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+  --shadow-lg:  0 10px 20px -2px rgba(0,0,0,0.7), 0 4px 8px -4px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+  --shadow-xl:  0 20px 32px -4px rgba(0,0,0,0.8), 0 8px 12px -6px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.07);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+html {
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

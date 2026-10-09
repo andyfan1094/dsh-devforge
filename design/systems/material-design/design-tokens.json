@@ -1,0 +1,15 @@
+{
+  "--md-primary": "#6200ee",
+  "--md-primary-variant": "#3700b3",
+  "--md-secondary": "#03dac6",
+  "--md-secondary-variant": "#018786",
+  "--md-background": "#fafafa",
+  "--md-surface": "#ffffff",
+  "--md-error": "#b00020",
+  "--color-primary": "#6200ee",
+  "--color-secondary": "#03dac6",
+  "--color-accent-1": "#ff0266",
+  "--color-accent-2": "#ffde03",
+  "--color-accent-3": "#00c853",
+  "--color-accent-4": "#c12700"
+}

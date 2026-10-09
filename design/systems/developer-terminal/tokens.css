@@ -1,0 +1,83 @@
+/*
+ * 终端风（Developer Terminal）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/developer-terminal.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+@keyframes developer-terminal-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.developer-terminal-cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  background: #4af626;
+  vertical-align: text-bottom;
+  animation: developer-terminal-blink 1.06s steps(1, end) infinite;
+}
+
+.developer-terminal-prompt::before {
+  content: "visitor@stylekit:~$ ";
+  color: #8be9fd;
+}
+
+.developer-terminal-glow {
+  text-shadow: 0 0 8px rgba(74, 246, 38, 0.35);
+}
+
+.developer-terminal-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(139, 233, 253, 0.025) 0px,
+    rgba(139, 233, 253, 0.025) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.developer-terminal-selection ::selection {
+  background: rgba(74, 246, 38, 0.3);
+  color: #4af626;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#1F2937] · rounded-sm · border-solid
+ *   阴影 sm / md / lg / none：shadow-none · shadow-none · shadow-none · shadow-none
+ *   阴影 hover / focus：hover:shadow-none · ring-1 ring-[#4AF626]/60
+ *   过渡 / 按下态：transition-colors duration-150 · active:bg-[#4AF626]/20
+ *   标题字体 / 正文字体 / 等宽字体：font-mono font-bold tracking-tight · font-mono · font-mono
+ *   字号 · hero：text-2xl md:text-4xl
+ *   字号 · h1：text-xl md:text-2xl
+ *   字号 · h2：text-lg md:text-xl
+ *   字号 · h3：text-base md:text-lg
+ *   字号 · body：text-sm
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-8 md:py-12 · px-4 md:px-6 · p-4
+ *   间距 · sm：gap-2
+ *   间距 · md：gap-3
+ *   间距 · lg：gap-5
+ *   底色 主 / 次：bg-[#0A0E12] · bg-[#0D141B]
+ *   底色 · 强调：bg-[#4AF626] · bg-[#8BE9FD] · bg-[#FF79C6] · bg-[#FFB86C]
+ *   文字 主 / 次 / 弱：text-[#4AF626] · text-[#8BE9FD] · text-[#6272A4]
+ *   按钮 · primary：bg-[#4AF626] text-[#0A0E12] hover:bg-[#3FD41F]
+ *   按钮 · secondary：bg-transparent text-[#4AF626] border border-[#1F2937] hover:border-[#4AF626]/60
+ *   按钮 · danger：bg-transparent text-[#FF79C6] border border-[#FF79C6]/40 hover:bg-[#FF79C6]/10
+ *   必须包含 · button：font-mono · text-sm · rounded-sm · transition-colors duration-150
+ *   必须包含 · card：font-mono · bg-[#0D141B] · border border-[#1F2937] · rounded-sm
+ *   必须包含 · input：font-mono · bg-[#0A0E12] · border border-[#1F2937] · rounded-sm · text-[#4AF626] · caret-[#4AF626] · placeholder:text-[#6272A4] · focus:outline-none focus:border-[#4AF626]/60
+ * ------------------------------------------------------------------ */

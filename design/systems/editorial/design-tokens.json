@@ -1,0 +1,10 @@
+{
+  "--ed-bg": "#F9F8F6",
+  "--ed-fg": "#1C1C1C",
+  "--color-primary": "#1C1C1C",
+  "--color-secondary": "#F9F8F6",
+  "--color-accent-1": "#1C1C1C",
+  "--color-accent-2": "#6b7280",
+  "--color-accent-3": "#1c1c1c",
+  "--color-accent-4": "#816d70"
+}

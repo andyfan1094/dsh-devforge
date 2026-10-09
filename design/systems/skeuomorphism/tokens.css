@@ -1,0 +1,112 @@
+/*
+ * 拟物设计（Skeuomorphism）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/skeuomorphism.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --skeu-leather: #8b7355;
+  --skeu-wood: #d4c4a8;
+  --skeu-metal: #c0c0c0;
+  --skeu-paper: #f5f5dc;
+}
+
+.skeu-metal-button {
+  background: linear-gradient(180deg, #e8e8e8 0%, #c0c0c0 50%, #a8a8a8 100%);
+  border: 1px solid #888;
+  box-shadow:
+    0 4px 8px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.8),
+    inset 0 -1px 0 rgba(0,0,0,0.2);
+}
+
+.skeu-inset {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2), inset 0 -1px 0 rgba(255,255,255,0.5);
+}
+
+.skeu-raised {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+
+@keyframes skeuomorphism-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes skeuomorphism-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.skeuomorphism-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeuomorphism-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: linear-gradient(135deg, rgba(139, 115, 85, 0.05), transparent);
+  pointer-events: none;
+}
+
+.skeuomorphism-card:hover::before {
+  opacity: 1;
+}
+
+.skeuomorphism-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(139, 115, 85, 0.08);
+}
+
+.skeuomorphism-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.skeuomorphism-animate-in {
+  animation: skeuomorphism-fade-in 0.5s ease-out both;
+}
+
+.skeuomorphism-focus { outline: 2px solid var(--skeuomorphism-primary, currentColor); outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#a89880] · rounded-lg · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_1px_3px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.24)] · shadow-[0_3px_6px_rgba(0,0,0,0.16),0_3px_6px_rgba(0,0,0,0.23)] · shadow-[0_10px_20px_rgba(0,0,0,0.19),0_6px_6px_rgba(0,0,0,0.23)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[0_14px_28px_rgba(0,0,0,0.25),0_10px_10px_rgba(0,0,0,0.22)] · focus:shadow-[0_3px_6px_rgba(0,0,0,0.16),0_3px_6px_rgba(0,0,0,0.23)]
+ *   彩色阴影：brown: shadow-[0_3px_6px_rgba(139,115,85,0.3),0_3px_6px_rgba(139,115,85,0.2)] · dark: shadow-[0_3px_6px_rgba(0,0,0,0.25),0_3px_6px_rgba(0,0,0,0.2)]
+ *   过渡 / 按下态：transition-all duration-200 ease-out · active:translate-y-px
+ *   标题字体 / 正文字体 / 等宽字体：font-sans font-bold · font-sans · font-mono
+ *   字号 · hero：text-3xl md:text-5xl lg:text-6xl
+ *   字号 · h1：text-2xl md:text-4xl
+ *   字号 · h2：text-xl md:text-3xl
+ *   字号 · h3：text-lg md:text-xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-10 md:py-16 lg:py-24 · px-4 md:px-8 lg:px-12 · p-4 md:p-6
+ *   间距 · sm：gap-2 md:gap-3
+ *   间距 · md：gap-3 md:gap-5
+ *   间距 · lg：gap-5 md:gap-8
+ *   底色 主 / 次：bg-gradient-to-b from-[#e8dfd1] to-[#d4c4a8] · bg-[#8b7355]
+ *   底色 · 强调：bg-[#b8a88a] · bg-[#6b5b45] · bg-[#c9b896] · bg-[#a0926e]
+ *   文字 主 / 次 / 弱：text-[#3a2f22] · text-[#6b5b45] · text-[#8b7355]
+ *   按钮 · primary：bg-gradient-to-b from-[#b8a88a] to-[#8b7355] text-white
+ *   按钮 · secondary：bg-gradient-to-b from-[#e8dfd1] to-[#d4c4a8] text-[#3a2f22]
+ *   按钮 · danger：bg-gradient-to-b from-[#c0392b] to-[#962d22] text-white
+ *   必须包含 · button：rounded-lg · border border-[#a89880] · shadow-[0_3px_6px_rgba(0,0,0,0.16),0_3px_6px_rgba(0,0,0,0.23)] · hover:-translate-y-px · transition-all duration-200 ease-out · font-bold
+ *   必须包含 · card：rounded-lg · border border-[#a89880] · shadow-[0_3px_6px_rgba(0,0,0,0.16),0_3px_6px_rgba(0,0,0,0.23)] · bg-gradient-to-b from-[#e8dfd1] to-[#d4c4a8]
+ *   必须包含 · input：rounded-lg · border border-[#a89880] · bg-[#f5efe6] · font-sans · focus:shadow-[0_3px_6px_rgba(0,0,0,0.16),0_3px_6px_rgba(0,0,0,0.23)] · focus:outline-none
+ * ------------------------------------------------------------------ */

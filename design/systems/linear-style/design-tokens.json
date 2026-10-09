@@ -1,0 +1,12 @@
+{
+  "--linear-style-primary": "#5e6ad2",
+  "--linear-style-secondary": "#0a0a0b",
+  "--linear-style-accent": "#f2c94c",
+  "--linear-style-glow": "rgba(94, 106, 210, 0.3)",
+  "--color-primary": "#5e6ad2",
+  "--color-secondary": "#0a0a0b",
+  "--color-accent-1": "#f2c94c",
+  "--color-accent-2": "#27ae60",
+  "--color-accent-3": "#eb5757",
+  "--color-accent-4": "#2d9cdb"
+}

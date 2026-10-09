@@ -1,0 +1,12 @@
+{
+  "--swiss-black": "#000000",
+  "--swiss-white": "#ffffff",
+  "--swiss-red": "#ff0000",
+  "--swiss-blue": "#0057b8",
+  "--color-primary": "#000000",
+  "--color-secondary": "#ffffff",
+  "--color-accent-1": "#ff0000",
+  "--color-accent-2": "#0057b8",
+  "--color-accent-3": "#ffcc00",
+  "--color-accent-4": "#6c3b00"
+}

@@ -1,0 +1,122 @@
+/*
+ * 新拟物派（Neumorphism）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/neumorphism.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 5 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --neu-bg: #e0e5ec;
+  --neu-bg-light: #f0f0f3;
+  --neu-shadow-dark: #b8bcc2;
+  --neu-shadow-light: #ffffff;
+  --neu-accent: #6d5dfc;
+  --neu-text: #333333;
+  --neu-text-muted: #6b7280;
+}
+
+.neu-raised {
+  background: var(--neu-bg);
+  border-radius: 12px;
+  box-shadow:
+    8px 8px 16px var(--neu-shadow-dark),
+    -8px -8px 16px var(--neu-shadow-light);
+}
+
+.neu-raised-sm {
+  box-shadow:
+    4px 4px 8px var(--neu-shadow-dark),
+    -4px -4px 8px var(--neu-shadow-light);
+}
+
+.neu-pressed {
+  background: var(--neu-bg);
+  border-radius: 12px;
+  box-shadow:
+    inset 8px 8px 16px var(--neu-shadow-dark),
+    inset -8px -8px 16px var(--neu-shadow-light);
+}
+
+.neu-pressed-sm {
+  box-shadow:
+    inset 4px 4px 8px var(--neu-shadow-dark),
+    inset -4px -4px 8px var(--neu-shadow-light);
+}
+
+.neu-hover:hover {
+  box-shadow:
+    4px 4px 8px var(--neu-shadow-dark),
+    -4px -4px 8px var(--neu-shadow-light);
+}
+
+.neu-active:active {
+  box-shadow:
+    inset 4px 4px 8px var(--neu-shadow-dark),
+    inset -4px -4px 8px var(--neu-shadow-light);
+}
+
+.neu-circle {
+  border-radius: 50%;
+}
+
+@keyframes neumorphism-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.neumorphism-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.neumorphism-card:hover::before {
+  opacity: 1;
+}
+
+.neumorphism-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(224, 229, 236, 0.08);
+}
+
+.neumorphism-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.neumorphism-animate-in {
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border-0 · border-transparent · rounded-xl · border-none
+ *   阴影 sm / md / lg / none：shadow-[4px_4px_8px_#b8bcc2,-4px_-4px_8px_#ffffff] · shadow-[6px_6px_12px_#b8bcc2,-6px_-6px_12px_#ffffff] md:shadow-[8px_8px_16px_#b8bcc2,-8px_-8px_16px_#ffffff] · shadow-[8px_8px_16px_#b8bcc2,-8px_-8px_16px_#ffffff] md:shadow-[12px_12px_24px_#b8bcc2,-12px_-12px_24px_#ffffff] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[4px_4px_8px_#b8bcc2,-4px_-4px_8px_#ffffff] · focus:shadow-[6px_6px_12px_#b8bcc2,-6px_-6px_12px_#ffffff]
+ *   彩色阴影：pressed: shadow-[inset_4px_4px_8px_#b8bcc2,inset_-4px_-4px_8px_#ffffff] · pressedLg: shadow-[inset_8px_8px_16px_#b8bcc2,inset_-8px_-8px_16px_#ffffff]
+ *   过渡 / 按下态：transition-all duration-200 · active:shadow-[inset_4px_4px_8px_#b8bcc2,inset_-4px_-4px_8px_#ffffff]
+ *   标题字体 / 正文字体 / 等宽字体：font-semibold text-gray-800 · text-gray-600 · font-mono text-gray-700
+ *   字号 · hero：text-4xl md:text-6xl
+ *   字号 · h1：text-3xl md:text-4xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-12 md:py-20 · px-6 md:px-8 · p-6 md:p-8
+ *   间距 · sm：gap-3 md:gap-4
+ *   间距 · md：gap-4 md:gap-6
+ *   间距 · lg：gap-6 md:gap-8
+ *   底色 主 / 次：bg-[#e0e5ec] · bg-[#f0f0f3]
+ *   底色 · 强调：bg-[#6d5dfc] · bg-[#ff6b6b] · bg-[#4ecdc4] · bg-[#ffe66d]
+ *   文字 主 / 次 / 弱：text-gray-800 · text-gray-600 · text-gray-400
+ *   按钮 · primary：bg-[#6d5dfc] text-white
+ *   按钮 · secondary：bg-[#e0e5ec] text-gray-700
+ *   必须包含 · button：bg-[#e0e5ec] · rounded-xl · shadow-[6px_6px_12px_#b8bcc2,-6px_-6px_12px_#ffffff] · hover:shadow-[4px_4px_8px_#b8bcc2,-4px_-4px_8px_#ffffff] · active:shadow-[inset_4px_4px_8px_#b8bcc2,inset_-4px_-4px_8px_#ffffff] · transition-all duration-200
+ *   必须包含 · card：bg-[#e0e5ec] · rounded-2xl · shadow-[8px_8px_16px_#b8bcc2,-8px_-8px_16px_#ffffff]
+ *   必须包含 · input：bg-[#e0e5ec] · rounded-xl · shadow-[inset_4px_4px_8px_#b8bcc2,inset_-4px_-4px_8px_#ffffff] · focus:shadow-[inset_6px_6px_12px_#b8bcc2,inset_-6px_-6px_12px_#ffffff] · focus:outline-none · placeholder:text-gray-400 · transition-shadow duration-200
+ * ------------------------------------------------------------------ */

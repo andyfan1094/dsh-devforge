@@ -5,8 +5,9 @@
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { DesignStore } from './design.ts'
 import type { ForgeEngine } from './forge.ts'
-import type { ForgeJob, StandardSummary } from './protocol.ts'
+import type { DesignAssetSummary, ForgeJob, StandardSummary } from './protocol.ts'
 import type { DshWebRestartManager } from './restart.ts'
 import type { StandardsStore } from './standards.ts'
 
@@ -161,6 +162,86 @@ export function devforgeStandardsTool(standards: StandardsStore) {
         result.standards = standards.list()
       } else {
         result.content = standards.get(args.id)?.content ?? ''
+      }
+      return result
+    },
+  })
+}
+
+/** 设计资产工具输出值类型。 */
+interface DesignToolOutput {
+  assets?: DesignAssetSummary[]
+  content?: string
+  catalog?: string
+}
+
+/**
+ * 设计资产工具：检索与读取设计方法论。
+ *
+ * 用法优先级：给 id 读正文 → 给 query 做检索 → 都不给则返回资产总览。
+ * 做视觉、界面、演示稿类任务前应先调用，避免凭手感调样式。
+ */
+export function devforgeDesignTool(design: DesignStore) {
+  return defineTool({
+    name: 'devforge_design',
+    description: '设计资产库：检索/读取设计方法论与资产 —— 工艺规则(craft：反 AI 味、UX 定律、排版层级、无障碍、动效纪律)、' +
+      '外部权威规范(standards：Vercel Web Interface Guidelines)、设计技能(skills)、' +
+      '设计系统(systems：DESIGN.md + tokens.css)、渲染模板(templates)、提示词库(prompts)。' +
+      '做视觉/界面/演示稿/美化/重设计任务前先查它。' +
+      'Triggers: 设计, 设计系统, 设计规范, 美化, 重设计, 配色, 排版, 动效, design, design system, redesign.',
+    parameters: {
+      id: { type: 'string', description: '资产 id（如 craft/anti-ai-slop、systems/linear、skills/taste-skill）；给了就读全文。' },
+      kind: { type: 'string', enum: ['craft', 'standards', 'skills', 'systems', 'templates', 'prompts'], description: '只看某一类资产。' },
+      query: { type: 'string', description: '关键词检索（覆盖名称/描述/分类/触发词）。' },
+      catalog: { type: 'boolean', description: 'true 返回资产总览清单。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          assets: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string', required: true },
+                kind: { type: 'string', required: true },
+                name: { type: 'string', required: true },
+                description: { type: 'string', required: true },
+                category: { type: 'string', required: true },
+                triggers: { type: 'array', items: { type: 'string' }, required: true },
+                bytes: { type: 'number', required: true },
+                updatedAt: { type: 'number', required: true },
+              },
+            },
+          },
+          content: { type: 'string' },
+          catalog: { type: 'string' },
+        },
+      },
+      render: (_args, value: DesignToolOutput) => {
+        if (value.content !== undefined) return text(value.content !== '' ? value.content : '资产不存在')
+        if (value.catalog !== undefined) return text(value.catalog)
+        const items = value.assets ?? []
+        if (items.length === 0) return text('（没有匹配的设计资产；可用 catalog=true 看全部）')
+        return text(['id | 类型 | 名称 | 描述', '--- | --- | --- | ---',
+          ...items.map((a) => [a.id, a.kind, a.name, (a.description.split('\n')[0] ?? '').slice(0, 90) || '-'].join(' | '))].join('\n'))
+      },
+    },
+    async execute(args): Promise<DesignToolOutput> {
+      const result: DesignToolOutput = {}
+      const kind = args.kind as DesignAssetSummary['kind'] | undefined
+      if (args.id) {
+        result.content = design.get(args.id)?.content ?? ''
+      } else if (args.query) {
+        result.assets = design.search(args.query, kind)
+      } else if (args.catalog === true || kind === undefined) {
+        // 既无 id 也无 query：先给总览，让 Agent 看清手上有什么能力
+        result.catalog = design.catalog()
+      } else {
+        result.assets = design.list(kind)
       }
       return result
     },

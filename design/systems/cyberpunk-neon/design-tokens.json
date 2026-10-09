@@ -1,0 +1,12 @@
+{
+  "--cyberpunk-neon-primary": "#00ffff",
+  "--cyberpunk-neon-secondary": "#0a0a0f",
+  "--cyberpunk-neon-accent": "#ff00ff",
+  "--cyberpunk-neon-glow": "rgba(0, 255, 255, 0.3)",
+  "--color-primary": "#00ffff",
+  "--color-secondary": "#0a0a0f",
+  "--color-accent-1": "#ff00ff",
+  "--color-accent-2": "#ffff00",
+  "--color-accent-3": "#00ff00",
+  "--color-accent-4": "#ff0506"
+}

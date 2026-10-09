@@ -1,0 +1,114 @@
+/*
+ * 玻璃拟态（Glassmorphism）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/glassmorphism.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --glass-blur: 40px;
+  --glass-blur-heavy: 60px;
+  --glass-saturate: 180%;
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-bg-hover: rgba(255, 255, 255, 0.14);
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-border-hover: rgba(255, 255, 255, 0.3);
+  --glass-shadow: 0 16px 40px rgba(3, 7, 18, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -1px 0 rgba(2, 6, 16, 0.35);
+  --glass-shadow-hover: 0 24px 64px rgba(3, 7, 18, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.32), inset 0 -1px 0 rgba(2, 6, 16, 0.35);
+  --glass-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --night-deep: #060A13;
+  --night: #0B1322;
+  --night-steel: #16233A;
+  --moon-steel: #33517A;
+  --moonlight: #7C9CC4;
+  --champagne: #E4B863;
+}
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.12), transparent 50%);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.glass-container {
+  position: relative;
+  background:
+    radial-gradient(640px circle at 85% 12%, rgba(124, 156, 196, 0.22), transparent 60%),
+    radial-gradient(560px circle at 8% 85%, rgba(51, 81, 122, 0.3), transparent 60%),
+    radial-gradient(420px circle at 30% 40%, rgba(228, 184, 99, 0.08), transparent 55%),
+    linear-gradient(165deg, var(--night-deep) 0%, var(--night) 55%, var(--night-steel) 100%);
+  min-height: 100vh;
+}
+
+.glass-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  opacity: 0.025;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes glassmorphism-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glassmorphism-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.glassmorphism-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.glassmorphism-animate-in {
+  animation: glassmorphism-fade-in 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-white/15 · rounded-3xl · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_2px_8px_rgba(3,7,18,0.35),inset_0_1px_0_rgba(255,255,255,0.18)] · shadow-[0_8px_24px_rgba(3,7,18,0.45),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-1px_0_rgba(2,6,16,0.3)] · shadow-[0_16px_48px_rgba(3,7,18,0.55),0_0_0_1px_rgba(255,255,255,0.08),inset_0_1px_0_rgba(255,255,255,0.25),inset_0_-1px_0_rgba(2,6,16,0.35)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[0_20px_60px_rgba(3,7,18,0.65),0_0_0_1px_rgba(255,255,255,0.12),inset_0_1px_0_rgba(255,255,255,0.32)] · focus:shadow-[0_0_0_3px_rgba(228,184,99,0.18),0_8px_24px_rgba(3,7,18,0.45)]
+ *   彩色阴影：inner: shadow-[inset_0_1px_1px_rgba(255,255,255,0.3),inset_0_-1px_1px_rgba(2,6,16,0.35)] · glow: shadow-[0_0_40px_rgba(124,156,196,0.15),0_0_80px_rgba(124,156,196,0.05)] · blue: shadow-[0_0_24px_rgba(124,156,196,0.3),inset_0_1px_0_rgba(124,156,196,0.2)] · green: shadow-[0_0_16px_rgba(228,184,99,0.3),inset_0_1px_0_rgba(228,184,99,0.2)]
+ *   过渡 / 按下态：transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] · active:scale-[0.97]
+ *   标题字体 / 正文字体 / 等宽字体：font-semibold text-white · text-white/80 · font-mono text-white/85
+ *   字号 · hero：text-4xl md:text-6xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 · px-6 md:px-8 · p-6 md:p-8
+ *   间距 · sm：gap-4
+ *   间距 · md：gap-6
+ *   间距 · lg：gap-8
+ *   底色 主 / 次：bg-white/8 backdrop-blur-[40px] backdrop-saturate-[180%] · bg-white/12 backdrop-blur-[60px] backdrop-saturate-[180%]
+ *   底色 · 强调：bg-[radial-gradient(640px_circle_at_85%_10%,rgba(124,156,196,0.25),transparent_60%),radial-gradient(560px_circle_at_10%_90%,rgba(51,81,122,0.3),transparent_60%)] bg-[#0B1322] · bg-[radial-gradient(640px_circle_at_80%_15%,rgba(201,143,78,0.22),transparent_60%),radial-gradient(560px_circle_at_12%_88%,rgba(92,58,30,0.35),transparent_60%)] bg-[#120D0A] · bg-[radial-gradient(640px_circle_at_85%_12%,rgba(127,182,158,0.2),transparent_60%),radial-gradient(560px_circle_at_10%_88%,rgba(31,77,58,0.35),transparent_60%)] bg-[#081210]
+ *   文字 主 / 次 / 弱：text-white · text-white/80 · text-white/50
+ *   按钮 · primary：bg-white/12 text-white backdrop-blur-[40px] backdrop-saturate-[180%]
+ *   按钮 · secondary：bg-white/6 text-white/85 backdrop-blur-[30px] backdrop-saturate-[160%]
+ *   必须包含 · button：bg-white/10 backdrop-blur-[40px] backdrop-saturate-[180%] · border border-white/20 · rounded-2xl · text-white · shadow-[0_4px_16px_rgba(3,7,18,0.45),inset_0_1px_0_rgba(255,255,255,0.25),inset_0_-1px_0_rgba(2,6,16,0.3)] · hover:bg-white/15 hover:border-white/35 hover:shadow-[0_10px_32px_rgba(3,7,18,0.55),inset_0_1px_0_rgba(255,255,255,0.35)] · hover:-translate-y-0.5 · transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
+ *   必须包含 · card：bg-white/8 backdrop-blur-[60px] backdrop-saturate-[180%] · border border-white/15 · rounded-3xl · shadow-[0_16px_40px_rgba(3,7,18,0.5),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-1px_0_rgba(2,6,16,0.35)] · [background-image:linear-gradient(to_bottom,rgba(255,255,255,0.12),transparent_50%)]
+ *   必须包含 · input：bg-white/6 backdrop-blur-[40px] backdrop-saturate-[180%] · border border-white/15 · rounded-2xl · text-white placeholder-white/35 · shadow-[inset_0_1px_0_rgba(255,255,255,0.15),inset_0_-1px_0_rgba(2,6,16,0.3)] · focus:outline-none focus:border-white/35 focus:bg-white/10 · focus:shadow-[0_0_0_3px_rgba(228,184,99,0.15),inset_0_1px_0_rgba(255,255,255,0.25)] · transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
+ * ------------------------------------------------------------------ */

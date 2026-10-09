@@ -1,0 +1,89 @@
+/*
+ * 极简扁平风（Minimalist Flat）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/minimalist-flat.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 5 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+@layer base {
+  body {
+    @apply bg-white text-black antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-bold tracking-tight;
+  }
+
+  ::selection {
+    @apply bg-black text-white;
+  }
+}
+
+:root {
+  --minimalist-flat-primary: #000000;
+  --minimalist-flat-secondary: #ffffff;
+  --minimalist-flat-accent: #ff3366;
+  --minimalist-flat-glow: rgba(0, 0, 0, 0.3);
+}
+
+@keyframes minimalist-flat-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.minimalist-flat-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.minimalist-flat-card:hover::before {
+  opacity: 1;
+}
+
+.minimalist-flat-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.minimalist-flat-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.minimalist-flat-animate-in {
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border-2 · border-black · rounded-none · border-solid
+ *   阴影 sm / md / lg / none：shadow-none · shadow-none · shadow-none · shadow-none
+ *   阴影 hover / focus：shadow-none · shadow-none
+ *   过渡 / 按下态：transition-colors duration-200 · active:opacity-80
+ *   标题字体 / 正文字体 / 等宽字体：font-bold tracking-tight · font-sans · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-8xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-lg md:text-xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 lg:py-32 · px-4 md:px-8 lg:px-16 · p-6 md:p-8
+ *   间距 · sm：gap-4 md:gap-6
+ *   间距 · md：gap-6 md:gap-8
+ *   间距 · lg：gap-8 md:gap-12
+ *   底色 主 / 次：bg-white · bg-black
+ *   底色 · 强调：bg-[#ff3366] · bg-[#00d4aa] · bg-[#ffcc00]
+ *   文字 主 / 次 / 弱：text-black · text-white · text-gray-500
+ *   按钮 · primary：bg-black text-white border-2 border-black
+ *   按钮 · secondary：bg-white text-black border-2 border-black
+ *   按钮 · danger：bg-[#ff3366] text-white border-2 border-[#ff3366]
+ *   必须包含 · button：border-2 border-black · font-medium · hover:bg-black hover:text-white · transition-colors duration-200
+ *   必须包含 · card：border-2 border-black · hover:bg-black hover:text-white · transition-colors duration-200
+ *   必须包含 · input：border-0 border-b-2 border-black · bg-transparent · focus:outline-none · focus:border-[#ff3366] · transition-colors duration-200
+ * ------------------------------------------------------------------ */

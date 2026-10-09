@@ -1,0 +1,144 @@
+/*
+ * Inset Dark（内凹深色）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/inset-dark/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  /* ─── Surfaces (deepest → highest) ─── */
+  --background: oklch(0.13 0 0);          /* #0e0e0e — page */
+  --foreground: oklch(1 0 0);             /* pure white */
+
+  --card: oklch(0.17 0 0);                /* #1c1c1c — track/well */
+  --card-foreground: oklch(1 0 0);
+
+  --popover: oklch(0.21 0 0);             /* #2a2a2a — floating */
+  --popover-foreground: oklch(1 0 0);
+
+  /* ─── Primary: the raised pill itself, monochrome ─── */
+  --primary: oklch(0.27 0 0);             /* #383838 — pill top */
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.17 0 0);           /* #1c1c1c — recessed surface */
+  --secondary-foreground: oklch(0.78 0 0);
+
+  --muted: oklch(0.17 0 0);
+  --muted-foreground: oklch(0.62 0 0);    /* dim white ~55% */
+
+  --accent: oklch(0.23 0 0);              /* hover surface */
+  --accent-foreground: oklch(1 0 0);
+
+  --destructive: oklch(0.62 0.21 25);
+  --destructive-foreground: oklch(0.97 0 0);
+
+  --border: oklch(1 0 0 / 0.08);          /* hairline white 8% */
+  --input: oklch(0.17 0 0);               /* #1c1c1c — recessed well */
+  --ring: oklch(1 0 0 / 0.18);
+  --radius: 0.75rem;                      /* 12px — track radius */
+
+  /*
+   * ─── Shadow scale ───
+   *
+   * The toggle's pill stacks four box-shadow layers; the same recipe scales
+   * across the system. Wells go inward (recessed); tiles go outward (raised).
+   */
+
+  /* Raised pill — top highlight + hairline border + close + ambient */
+  --shadow-pill:
+    0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.25);
+
+  --shadow-pill-hover:
+    0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.45),
+    0 6px 16px rgba(0, 0, 0, 0.3);
+
+  /* Raised surfaces — small / medium / large / extra-large */
+  --shadow-xs:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 1px rgba(0, 0, 0, 0.35);
+
+  --shadow-sm:
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.2);
+
+  --shadow-md:
+    0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.25);
+
+  --shadow-lg:
+    0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 6px 12px rgba(0, 0, 0, 0.55),
+    0 12px 24px rgba(0, 0, 0, 0.35);
+
+  --shadow-xl:
+    0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 12px 24px rgba(0, 0, 0, 0.65),
+    0 24px 48px rgba(0, 0, 0, 0.4);
+
+  /* Recessed wells — deep top inset + soft bottom highlight */
+  --shadow-inset:
+    inset 0 1px 2px rgba(0, 0, 0, 0.6),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+
+  --shadow-inset-deep:
+    inset 0 2px 4px rgba(0, 0, 0, 0.7),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Pill gradient — exposed for components that need the pill background */
+  --pill-gradient: linear-gradient(180deg, oklch(0.27 0 0) 0%, oklch(0.21 0 0) 100%);
+  --pill-gradient-hover: linear-gradient(180deg, oklch(0.3 0 0) 0%, oklch(0.23 0 0) 100%);
+
+  /* Active text shadow — drops the label into the pill */
+  --text-shadow-pressed: 0 1px 1px rgba(0, 0, 0, 0.5);
+
+  /*
+   * ─── Legacy aliases ───
+   * The 80+ shadcn primitives in this DS reference --shadow-s/-m/-l and a
+   * few specialised tokens. Mapped here so each primitive picks up the
+   * inset-dark recipe without having to be touched individually.
+   */
+  --shadow-s: var(--shadow-sm);
+  --shadow-m: var(--shadow-md);
+  --shadow-l: var(--shadow-lg);
+  --shadow-button: var(--shadow-pill);
+  --shadow-button-hover: var(--shadow-pill-hover);
+  /* Primary buttons share the pill recipe — this DS is monochromatic */
+  --shadow-primary: var(--shadow-pill);
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+}

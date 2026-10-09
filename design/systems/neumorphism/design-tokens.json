@@ -1,0 +1,15 @@
+{
+  "--neu-bg": "#e0e5ec",
+  "--neu-bg-light": "#f0f0f3",
+  "--neu-shadow-dark": "#b8bcc2",
+  "--neu-shadow-light": "#ffffff",
+  "--neu-accent": "#6d5dfc",
+  "--neu-text": "#333333",
+  "--neu-text-muted": "#6b7280",
+  "--color-primary": "#e0e5ec",
+  "--color-secondary": "#d1d9e6",
+  "--color-accent-1": "#6d5dfc",
+  "--color-accent-2": "#ff6b6b",
+  "--color-accent-3": "#4ecdc4",
+  "--color-accent-4": "#ffe66d"
+}

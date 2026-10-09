@@ -1,0 +1,82 @@
+/*
+ * 单色极简（Monochrome）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/monochrome.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 3 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --monochrome-bg: #fafafa;
+  --monochrome-text: #111111;
+  --monochrome-muted: #666666;
+  --monochrome-subtle: #999999;
+  --monochrome-border: #e5e5e5;
+  --monochrome-surface: #f5f5f5;
+}
+
+@keyframes monochrome-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes monochrome-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.monochrome-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.monochrome-card:hover::before {
+  opacity: 1;
+}
+
+.monochrome-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(17, 17, 17, 0.08);
+}
+
+.monochrome-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.monochrome-animate-in {
+  animation: monochrome-fade-in 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#e5e5e5] · rounded-sm · border-solid
+ *   阴影 sm / md / lg / none：shadow-sm · shadow-sm · shadow-md · shadow-none
+ *   阴影 hover / focus：shadow-sm · ring-1 ring-[#cccccc]
+ *   过渡 / 按下态：transition-colors duration-200 · active:opacity-70
+ *   标题字体 / 正文字体 / 等宽字体：font-bold tracking-tight · font-light · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-8xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-4xl
+ *   字号 · h3：text-lg md:text-xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 · px-6 md:px-8 · p-6
+ *   间距 · sm：gap-4
+ *   间距 · md：gap-6
+ *   间距 · lg：gap-8
+ *   底色 主 / 次：bg-[#fafafa] · bg-[#f5f5f5]
+ *   底色 · 强调：bg-[#e5e5e5] · bg-[#cccccc] · bg-[#111111]
+ *   文字 主 / 次 / 弱：text-[#111111] · text-[#666666] · text-[#999999]
+ *   按钮 · primary：bg-[#111111] text-[#fafafa]
+ *   按钮 · secondary：bg-[#f5f5f5] border border-[#e5e5e5] text-[#111111]
+ *   必须包含 · button：rounded-sm · transition-colors · font-medium
+ *   必须包含 · card：rounded-sm · border
+ *   必须包含 · input：border-b · focus:outline-none · bg-transparent
+ * ------------------------------------------------------------------ */

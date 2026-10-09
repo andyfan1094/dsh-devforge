@@ -1,0 +1,64 @@
+/*
+ * Notion（Notion 设计系统）—— 设计系统 tokens
+ *
+ * 来源：better-design registry/notion/globals.json（MIT License, Copyright (c) 2026 Marvin Kaunda）
+ * 转换：D:\项目\scripts\convert-better-design-systems.mjs（已清理 Tailwind v4 专有语法）
+ *
+ * 清理动作：
+ *   - 删除 @import "tailwindcss" 与 @import "tw-animate-css"
+ *   - 删除 @custom-variant dark (&:is(.dark *))
+ *   - 删除 @theme inline{} 中的 Tailwind 工具类镜像 --color-*；保留 --radius-* 的 calc() 派生值（真 token）
+ *   - @layer base 里的 @apply 已展开为原生 CSS；@layer components/utilities 已去掉 layer 包装
+ */
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.292 0.0023 87.46);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.292 0.0023 87.46);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.292 0.0023 87.46);
+
+  --primary: oklch(0.2044 0 0);
+  --primary-foreground: oklch(0.9848 0 0);
+
+  --secondary: oklch(0.9784 0.002 84.56);
+  --secondary-foreground: oklch(0.292 0.0023 87.46);
+
+  --muted: oklch(0.9784 0.002 84.56);
+  --muted-foreground: oklch(0.4783 0.0064 87.49);
+
+  --accent: oklch(0.956 0.0029 84.56);
+  --accent-foreground: oklch(0.292 0.0023 87.46);
+
+  --destructive: oklch(0.6356 0.2082 25.38);
+  --destructive-foreground: oklch(0.9848 0 0);
+
+  --border: oklch(0.9338 0.0044 84.56);
+  --input: oklch(0.9338 0.0044 84.56);
+  --ring: oklch(0.6036 0.169 252.99);
+  --radius: 0rem;
+  /* --- 由 @theme inline 提升的派生圆角 token --- */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- 基础层（源自 @layer base，@apply 已展开为原生 CSS） --- */
+/* 与源设计系统一致的全局预设；若你的项目已有 reset，可整块删除 */
+* {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+html {
+    font-family: ui-sans-serif, -apple-system, "system-ui", "Segoe UI Variable Display", "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+}
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}

@@ -1,0 +1,97 @@
+/*
+ * 复古怀旧风（Retro Vintage）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/retro-vintage.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 7 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+@layer base {
+  body {
+    @apply bg-[#f5e6d3] text-[#8b4513] antialiased;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-serif;
+  }
+}
+
+.retro-divider {
+  @apply flex items-center gap-4;
+}
+
+.retro-divider::before,
+.retro-divider::after {
+  content: '';
+  @apply flex-1 h-px bg-[#8b4513]/30;
+}
+
+:root {
+  --retro-vintage-primary: #8b4513;
+  --retro-vintage-secondary: #f5e6d3;
+  --retro-vintage-accent: #c94c4c;
+  --retro-vintage-glow: rgba(139, 69, 19, 0.3);
+}
+
+@keyframes retro-vintage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.retro-vintage-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.retro-vintage-animate-in {
+}
+
+.retro-vintage-focus { outline: 2px solid var(--retro-vintage-primary, currentColor); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .retro-vintage-animate-in {
+    animation: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .retro-vintage-card {
+
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border-2 · border-[#8b4513] · rounded-none · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_2px_4px_rgba(139,69,19,0.1)] · shadow-[0_4px_8px_rgba(139,69,19,0.15)] · shadow-[0_8px_16px_rgba(139,69,19,0.2)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[0_4px_12px_rgba(139,69,19,0.2)] · focus:shadow-[0_2px_8px_rgba(139,69,19,0.15)]
+ *   彩色阴影：brown: shadow-[0_4px_12px_rgba(139,69,19,0.2)] · rust: shadow-[0_4px_12px_rgba(201,76,76,0.2)]
+ *   过渡 / 按下态：transition-colors duration-200 · active:opacity-75
+ *   标题字体 / 正文字体 / 等宽字体：font-serif uppercase tracking-widest · font-serif · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-7xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-lg md:text-xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-14 md:py-24 lg:py-32 · px-6 md:px-10 lg:px-16 · p-6 md:p-8
+ *   间距 · sm：gap-3 md:gap-5
+ *   间距 · md：gap-5 md:gap-8
+ *   间距 · lg：gap-8 md:gap-12
+ *   底色 主 / 次：bg-[#f5e6d3] · bg-[#e8d5c0]
+ *   底色 · 强调：bg-[#c94c4c] · bg-[#2e4a3f] · bg-[#d4a373]
+ *   文字 主 / 次 / 弱：text-[#8b4513] · text-[#f5e6d3] · text-[#8b4513]/60
+ *   按钮 · primary：bg-[#8b4513] text-[#f5e6d3]
+ *   按钮 · secondary：bg-transparent text-[#8b4513] border-2 border-[#8b4513]
+ *   按钮 · danger：bg-[#c94c4c] text-[#f5e6d3]
+ *   必须包含 · button：font-serif uppercase tracking-widest · transition-colors duration-200
+ *   必须包含 · card：border-2 border-[#8b4513] · bg-[#f5e6d3] · font-serif
+ *   必须包含 · input：border-2 border-[#8b4513] · bg-transparent · text-[#8b4513] · font-serif · focus:outline-none · focus:bg-[#8b4513]/5 · transition-colors duration-200
+ * ------------------------------------------------------------------ */

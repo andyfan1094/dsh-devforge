@@ -1,0 +1,118 @@
+/*
+ * 孟菲斯风格（Memphis）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/memphis.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --memphis-red: #ff6b6b;
+  --memphis-yellow: #feca57;
+  --memphis-cyan: #48dbfb;
+  --memphis-pink: #ff9ff3;
+  --memphis-green: #1dd1a1;
+  --memphis-purple: #5f27cd;
+}
+
+.memphis-shadow {
+  box-shadow: 6px 6px 0px #000;
+}
+
+.memphis-waves {
+  background-image: url("data:image/svg+xml,%3Csvg width='100' height='20' viewBox='0 0 100 20' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 10 Q25 0 50 10 T100 10' stroke='%23000' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+}
+
+.memphis-dots {
+  background-image: radial-gradient(#000 2px, transparent 2px);
+  background-size: 20px 20px;
+}
+
+.memphis-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    #000 10px,
+    #000 12px
+  );
+}
+
+@keyframes memphis-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes memphis-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.memphis-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.memphis-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: linear-gradient(135deg, rgba(255, 107, 107, 0.05), transparent);
+  pointer-events: none;
+}
+
+.memphis-card:hover::before {
+  opacity: 1;
+}
+
+.memphis-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.memphis-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.memphis-animate-in {
+  animation: memphis-fade-in 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border-4 · border-black · rounded-none · border-solid
+ *   阴影 sm / md / lg / none：shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] md:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] · shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] md:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] · shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] md:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] · focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)]
+ *   彩色阴影：coral: shadow-[5px_5px_0px_0px_rgba(255,107,107,1)] · yellow: shadow-[5px_5px_0px_0px_rgba(254,202,87,1)] · teal: shadow-[5px_5px_0px_0px_rgba(72,219,251,1)]
+ *   过渡 / 按下态：transition-all duration-200 · active:translate-x-[5px] active:translate-y-[5px]
+ *   标题字体 / 正文字体 / 等宽字体：font-black tracking-tight · font-sans · font-mono
+ *   字号 · hero：text-5xl md:text-7xl lg:text-9xl
+ *   字号 · h1：text-4xl md:text-6xl
+ *   字号 · h2：text-3xl md:text-4xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-12 md:py-24 lg:py-32 · px-4 md:px-8 lg:px-16 · p-5 md:p-8
+ *   间距 · sm：gap-3 md:gap-4
+ *   间距 · md：gap-4 md:gap-6
+ *   间距 · lg：gap-6 md:gap-10
+ *   底色 主 / 次：bg-[#fef9ef] · bg-black
+ *   底色 · 强调：bg-[#ff6b6b] · bg-[#feca57] · bg-[#48dbfb] · bg-[#ff9ff3]
+ *   文字 主 / 次 / 弱：text-black · text-white · text-gray-600
+ *   按钮 · primary：bg-[#ff6b6b] text-black
+ *   按钮 · secondary：bg-[#feca57] text-black
+ *   按钮 · danger：bg-red-600 text-white
+ *   必须包含 · button：border-4 · border-black · shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] · hover:translate-x-[3px] hover:translate-y-[3px] · hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] · transition-all duration-200 · font-black
+ *   必须包含 · card：border-4 · border-black · shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] · bg-[#fef9ef]
+ *   必须包含 · input：border-4 · border-black · font-sans · focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] · focus:outline-none
+ * ------------------------------------------------------------------ */

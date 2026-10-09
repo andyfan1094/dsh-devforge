@@ -1,0 +1,114 @@
+/*
+ * 编辑杂志风（Editorial）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/editorial.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 2 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --ed-bg: #F9F8F6;
+  --ed-fg: #1C1C1C;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--ed-bg);
+  color: var(--ed-fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: var(--ed-fg);
+  color: var(--ed-bg);
+}
+
+.hover-underline {
+  position: relative;
+}
+
+.hover-underline::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  transform: scaleX(0);
+  height: 1px;
+  bottom: 0;
+  left: 0;
+  background-color: currentColor;
+  transform-origin: bottom right;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hover-underline:hover::after {
+  transform: scaleX(1);
+  transform-origin: bottom left;
+}
+
+.clip-reveal {
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 1.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.clip-reveal.revealed {
+  clip-path: inset(0% 0 0 0);
+}
+
+@keyframes editorial-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes editorial-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.editorial-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(28, 28, 28, 0.08);
+}
+
+.editorial-animate-in {
+  animation: editorial-fade-in 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-border · rounded-none · border-solid
+ *   阴影 sm / md / lg / none：shadow-none · shadow-none · shadow-none · shadow-none
+ *   阴影 hover / focus：shadow-none · shadow-none
+ *   过渡 / 按下态：transition-colors duration-200 · active:scale-95
+ *   标题字体 / 正文字体 / 等宽字体：font-serif tracking-tight · font-sans · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-7xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 lg:py-32 · px-6 md:px-12 · p-6
+ *   间距 · sm：gap-4
+ *   间距 · md：gap-6 md:gap-8
+ *   间距 · lg：gap-8 md:gap-12
+ *   底色 主 / 次：bg-background · bg-foreground
+ *   底色 · 强调：bg-[#e63946]
+ *   文字 主 / 次 / 弱：text-foreground · text-background · text-muted
+ *   按钮 · primary：bg-foreground text-background
+ *   按钮 · secondary：bg-transparent text-foreground
+ *   必须包含 · button：px-6 py-3 · text-sm tracking-wide · transition-colors
+ *   必须包含 · card：border border-border · hover:border-foreground · transition-colors
+ *   必须包含 · input：border border-border · text-sm · focus:outline-none · focus:border-foreground · transition-colors · placeholder:text-muted
+ * ------------------------------------------------------------------ */

@@ -1,0 +1,14 @@
+{
+  "--memphis-red": "#ff6b6b",
+  "--memphis-yellow": "#feca57",
+  "--memphis-cyan": "#48dbfb",
+  "--memphis-pink": "#ff9ff3",
+  "--memphis-green": "#1dd1a1",
+  "--memphis-purple": "#5f27cd",
+  "--color-primary": "#ff6b6b",
+  "--color-secondary": "#feca57",
+  "--color-accent-1": "#48dbfb",
+  "--color-accent-2": "#ff9ff3",
+  "--color-accent-3": "#1dd1a1",
+  "--color-accent-4": "#5f27cd"
+}

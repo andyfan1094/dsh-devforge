@@ -1,0 +1,12 @@
+{
+  "--accent-pink": "#ff006e",
+  "--accent-green": "#ccff00",
+  "--accent-blue": "#00d9ff",
+  "--accent-yellow": "#ff9500",
+  "--color-primary": "#000000",
+  "--color-secondary": "#ffffff",
+  "--color-accent-1": "#ff006e",
+  "--color-accent-2": "#ccff00",
+  "--color-accent-3": "#00d9ff",
+  "--color-accent-4": "#ff9500"
+}

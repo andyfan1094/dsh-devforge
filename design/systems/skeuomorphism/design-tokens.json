@@ -1,0 +1,12 @@
+{
+  "--skeu-leather": "#8b7355",
+  "--skeu-wood": "#d4c4a8",
+  "--skeu-metal": "#c0c0c0",
+  "--skeu-paper": "#f5f5dc",
+  "--color-primary": "#8b7355",
+  "--color-secondary": "#d4c4a8",
+  "--color-accent-1": "#c9a227",
+  "--color-accent-2": "#5c4033",
+  "--color-accent-3": "#2e5a3c",
+  "--color-accent-4": "#4bc542"
+}

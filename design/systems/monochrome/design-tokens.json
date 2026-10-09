@@ -1,0 +1,14 @@
+{
+  "--monochrome-bg": "#fafafa",
+  "--monochrome-text": "#111111",
+  "--monochrome-muted": "#666666",
+  "--monochrome-subtle": "#999999",
+  "--monochrome-border": "#e5e5e5",
+  "--monochrome-surface": "#f5f5f5",
+  "--color-primary": "#111111",
+  "--color-secondary": "#fafafa",
+  "--color-accent-1": "#666666",
+  "--color-accent-2": "#999999",
+  "--color-accent-3": "#cccccc",
+  "--color-accent-4": "#666666"
+}

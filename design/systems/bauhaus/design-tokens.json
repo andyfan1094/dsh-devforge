@@ -1,0 +1,13 @@
+{
+  "--bauhaus-red": "#ff0000",
+  "--bauhaus-yellow": "#ffcc00",
+  "--bauhaus-blue": "#0000ff",
+  "--bauhaus-black": "#000000",
+  "--bauhaus-white": "#ffffff",
+  "--color-primary": "#000000",
+  "--color-secondary": "#ffffff",
+  "--color-accent-1": "#ff0000",
+  "--color-accent-2": "#ffcc00",
+  "--color-accent-3": "#0000ff",
+  "--color-accent-4": "#6c3b00"
+}

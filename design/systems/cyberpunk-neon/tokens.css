@@ -1,0 +1,113 @@
+/*
+ * 赛博朋克霓虹（Cyberpunk Neon）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/cyberpunk-neon.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+@layer base {
+  body {
+    @apply bg-[#0a0a0f] text-white antialiased;
+    background-image:
+      linear-gradient(transparent 50%, rgba(0, 255, 255, 0.02) 50%);
+    background-size: 100% 4px;
+  }
+
+  h1, h2, h3 {
+    text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+  }
+
+  ::selection {
+    @apply bg-cyan-400 text-black;
+  }
+}
+
+@keyframes neon-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+:root {
+  --cyberpunk-neon-primary: #00ffff;
+  --cyberpunk-neon-secondary: #0a0a0f;
+  --cyberpunk-neon-accent: #ff00ff;
+  --cyberpunk-neon-glow: rgba(0, 255, 255, 0.3);
+}
+
+.cyberpunk-neon-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.cyberpunk-neon-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.05), transparent);
+  pointer-events: none;
+}
+
+.cyberpunk-neon-card:hover::before {
+  opacity: 1;
+}
+
+.cyberpunk-neon-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(0, 255, 255, 0.08);
+}
+
+.cyberpunk-neon-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.cyberpunk-neon-animate-in {
+  animation: cyberpunk-neon-fade-in 0.5s ease-out both;
+}
+
+.cyberpunk-neon-hover-lift { transition: transform 0.3s ease;
+}
+
+.cyberpunk-neon-hover-lift:hover { transform: translateY(-2px);
+}
+
+.cyberpunk-neon-focus { outline: 2px solid var(--cyberpunk-neon-primary, currentColor); outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-cyan-400/30 · rounded-lg · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_0_10px_rgba(0,255,255,0.3)] · shadow-[0_0_15px_rgba(0,255,255,0.4)] · shadow-[0_0_25px_rgba(0,255,255,0.5)] · shadow-none
+ *   阴影 hover / focus：shadow-[0_0_30px_rgba(0,255,255,0.6)] · shadow-[0_0_20px_rgba(0,255,255,0.5)]
+ *   彩色阴影：cyan: shadow-[0_0_20px_rgba(0,255,255,0.5)] · magenta: shadow-[0_0_20px_rgba(255,0,255,0.5)] · yellow: shadow-[0_0_20px_rgba(255,255,0,0.5)]
+ *   过渡 / 按下态：transition-all duration-300 · active:scale-95
+ *   标题字体 / 正文字体 / 等宽字体：font-bold · font-mono · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-8xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 · px-4 md:px-8 · p-6
+ *   间距 · sm：gap-4
+ *   间距 · md：gap-6
+ *   间距 · lg：gap-8
+ *   底色 主 / 次：bg-[#0a0a0f] · bg-gray-950
+ *   底色 · 强调：bg-cyan-400 · bg-fuchsia-500 · bg-yellow-400
+ *   文字 主 / 次 / 弱：text-white · text-cyan-400 · text-gray-400
+ *   按钮 · primary：bg-cyan-400 text-black
+ *   按钮 · secondary：bg-transparent text-cyan-400 border border-cyan-400
+ *   按钮 · danger：bg-red-500 text-white shadow-[0_0_15px_rgba(255,0,0,0.5)]
+ *   必须包含 · button：px-6 py-3 · rounded-lg · font-mono · uppercase tracking-wider · transition-all duration-300
+ *   必须包含 · card：bg-gray-950 · border border-cyan-400/30 · rounded-lg
+ *   必须包含 · input：bg-gray-950 · border border-cyan-400/30 · rounded-lg · text-cyan-400 · font-mono · focus:border-cyan-400 · focus:shadow-[0_0_15px_rgba(0,255,255,0.3)]
+ * ------------------------------------------------------------------ */

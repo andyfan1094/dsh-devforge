@@ -1,0 +1,116 @@
+/*
+ * 材料设计（Material Design）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/material-design.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 3 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --md-primary: #6200ee;
+  --md-primary-variant: #3700b3;
+  --md-secondary: #03dac6;
+  --md-secondary-variant: #018786;
+  --md-background: #fafafa;
+  --md-surface: #ffffff;
+  --md-error: #b00020;
+}
+
+.md-elevation-1 {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+}
+
+.md-elevation-2 {
+  box-shadow: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+}
+
+.md-elevation-3 {
+  box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+}
+
+.md-elevation-4 {
+  box-shadow: 0 14px 28px rgba(0,0,0,0.25), 0 10px 10px rgba(0,0,0,0.22);
+}
+
+.md-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.md-text-field {
+  background: #f5f5f5;
+  border-radius: 4px 4px 0 0;
+  border-bottom: 2px solid #9e9e9e;
+}
+
+.md-text-field:focus {
+  border-bottom-color: var(--md-primary);
+}
+
+@keyframes material-design-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes material-design-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.material-design-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.material-design-card:hover::before {
+  opacity: 1;
+}
+
+.material-design-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(98, 0, 238, 0.08);
+}
+
+.material-design-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.material-design-animate-in {
+  animation: material-design-fade-in 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-[#e0e0e0] · rounded-md · border-solid
+ *   阴影 sm / md / lg / none：shadow-[0_1px_3px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.14)] · shadow-[0_3px_6px_rgba(0,0,0,0.15),0_2px_4px_rgba(0,0,0,0.12)] · shadow-[0_10px_20px_rgba(0,0,0,0.15),0_3px_6px_rgba(0,0,0,0.1)] · shadow-none
+ *   阴影 hover / focus：hover:shadow-[0_14px_28px_rgba(0,0,0,0.18),0_5px_10px_rgba(0,0,0,0.12)] · focus:shadow-[0_3px_6px_rgba(0,0,0,0.15),0_2px_4px_rgba(0,0,0,0.12)]
+ *   彩色阴影：purple: shadow-[0_3px_6px_rgba(98,0,238,0.25)] · teal: shadow-[0_3px_6px_rgba(3,218,198,0.25)]
+ *   过渡 / 按下态：transition-all duration-200 ease-in-out · active:scale-[0.99]
+ *   标题字体 / 正文字体 / 等宽字体：font-sans font-medium tracking-tight · font-sans · font-mono
+ *   字号 · hero：text-4xl md:text-6xl lg:text-7xl
+ *   字号 · h1：text-3xl md:text-5xl
+ *   字号 · h2：text-2xl md:text-3xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs md:text-sm
+ *   区块间距 / 容器内边距 / 卡片内边距：py-10 md:py-16 lg:py-24 · px-4 md:px-6 lg:px-8 · p-4 md:p-6
+ *   间距 · sm：gap-2 md:gap-3
+ *   间距 · md：gap-3 md:gap-4
+ *   间距 · lg：gap-4 md:gap-6
+ *   底色 主 / 次：bg-white · bg-[#f5f5f5]
+ *   底色 · 强调：bg-[#6200ee] · bg-[#03dac6] · bg-[#018786] · bg-[#bb86fc]
+ *   文字 主 / 次 / 弱：text-[#212121] · text-[#757575] · text-[#9e9e9e]
+ *   按钮 · primary：bg-[#6200ee] text-white
+ *   按钮 · secondary：bg-transparent text-[#6200ee] border border-[#6200ee]
+ *   按钮 · danger：bg-[#b00020] text-white
+ *   必须包含 · button：rounded-md · shadow-[0_1px_3px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.14)] · hover:shadow-[0_14px_28px_rgba(0,0,0,0.18),0_5px_10px_rgba(0,0,0,0.12)] · transition-all duration-200 ease-in-out · font-medium
+ *   必须包含 · card：rounded-md · shadow-[0_1px_3px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.14)] · bg-white
+ *   必须包含 · input：rounded-md · border border-[#e0e0e0] · bg-white · font-sans · focus:border-[#6200ee] · focus:outline-none
+ * ------------------------------------------------------------------ */

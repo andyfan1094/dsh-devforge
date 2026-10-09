@@ -1,0 +1,12 @@
+{
+  "--deco-gold": "#d4af37",
+  "--deco-dark": "#1a1a2e",
+  "--deco-navy": "#2d2d44",
+  "--deco-cream": "#f5f5dc",
+  "--color-primary": "#d4af37",
+  "--color-secondary": "#1a1a2e",
+  "--color-accent-1": "#c9a227",
+  "--color-accent-2": "#2d2d44",
+  "--color-accent-3": "#f5f5dc",
+  "--color-accent-4": "#4bc542"
+}

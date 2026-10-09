@@ -1,0 +1,112 @@
+/*
+ * Linear 风格（Linear Style）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/linear-style.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 已剔除 2 项与 aiRules 冲突的内容，明细见 DESIGN.md 第八节。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+@layer base {
+  body {
+    @apply bg-[#0a0a0b] text-white antialiased;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer utilities {
+  .linear-border {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .linear-surface {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .linear-surface-hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .linear-gradient {
+    background: linear-gradient(to right, #5e6ad2, #8b5cf6);
+  }
+}
+
+:root {
+  --linear-style-primary: #5e6ad2;
+  --linear-style-secondary: #0a0a0b;
+  --linear-style-accent: #f2c94c;
+  --linear-style-glow: rgba(94, 106, 210, 0.3);
+}
+
+@keyframes linear-style-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.linear-style-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.linear-style-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: linear-gradient(135deg, rgba(94, 106, 210, 0.05), transparent);
+  pointer-events: none;
+}
+
+.linear-style-card:hover::before {
+  opacity: 1;
+}
+
+.linear-style-frosted {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  background: rgba(94, 106, 210, 0.08);
+}
+
+.linear-style-accent-corner {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2rem), calc(100% - 2rem) 100%, 0 100%);
+}
+
+.linear-style-animate-in {
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-white/10 · rounded-lg · border-solid
+ *   阴影 sm / md / lg / none：shadow-none · shadow-none · shadow-none · shadow-none
+ *   阴影 hover / focus：shadow-none · shadow-none
+ *   过渡 / 按下态：transition-all duration-150 · active:opacity-80
+ *   标题字体 / 正文字体 / 等宽字体：font-sans font-semibold tracking-tight · font-sans text-sm · font-mono
+ *   字号 · hero：text-4xl font-semibold tracking-tight
+ *   字号 · h1：text-2xl font-semibold tracking-tight
+ *   字号 · h2：text-xl font-semibold tracking-tight
+ *   字号 · h3：text-base font-medium tracking-tight
+ *   字号 · body：text-sm
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-12 md:py-20 · px-4 md:px-8 · p-5
+ *   间距 · sm：gap-1.5
+ *   间距 · md：gap-3
+ *   间距 · lg：gap-5
+ *   底色 主 / 次：bg-[#0a0a0b] · bg-white/[0.03]
+ *   底色 · 强调：bg-[#5e6ad2]
+ *   文字 主 / 次 / 弱：text-white · text-zinc-400 · text-zinc-500
+ *   按钮 · primary：bg-gradient-to-r from-[#5e6ad2] to-[#8b5cf6] text-white
+ *   按钮 · secondary：bg-white/[0.03] text-white border border-white/10
+ *   按钮 · danger：bg-[#eb5757] text-white
+ *   必须包含 · button：rounded-lg · font-medium · text-sm · transition-opacity duration-150
+ *   必须包含 · card：rounded-lg · border border-white/10 · bg-white/[0.03]
+ *   必须包含 · input：rounded-lg · border border-white/10 · bg-white/[0.03] · text-white text-sm · focus:outline-none
+ * ------------------------------------------------------------------ */

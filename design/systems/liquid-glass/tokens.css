@@ -1,0 +1,121 @@
+/*
+ * Apple 流动玻璃（Apple Liquid Glass）—— 设计系统 tokens
+ *
+ * 来源：AnxForever/stylekit  lib/styles/liquid-glass.ts 的 globalCss 字段（MIT License, © 2026 AnxForever）
+ * 转换：D:\项目\scripts\convert-stylekit-systems.mjs
+ *
+ * 与 better-design 主题的区别：stylekit 的 token 层是**Tailwind 类名配方**，不是 CSS 变量。
+ * 本文件是该风格 globalCss 里的 CSS 变量与工具类，已按 aiRules 剔除自相矛盾项。
+ * 本套未发现与 aiRules 冲突的内容。
+ */
+
+/* --- 变量与工具类（源自 globalCss，已清洗） --- */
+:root {
+  --liquid-glass-bg: rgba(255, 255, 255, 0.1);
+  --liquid-glass-bg-hover: rgba(255, 255, 255, 0.15);
+  --liquid-glass-blur: 40px;
+  --liquid-glass-saturate: 1.8;
+  --liquid-glass-border-start: #ff6b6b;
+  --liquid-glass-border-mid: #4ecdc4;
+  --liquid-glass-border-end: #a855f7;
+}
+
+.liquid-glass-rainbow-border {
+  background: linear-gradient(
+    135deg,
+    var(--liquid-glass-border-start) 0%,
+    #ffd93d 25%,
+    #6bcb77 50%,
+    var(--liquid-glass-border-mid) 75%,
+    var(--liquid-glass-border-end) 100%
+  );
+}
+
+.liquid-glass {
+  background: var(--liquid-glass-bg);
+  backdrop-filter: blur(var(--liquid-glass-blur)) saturate(var(--liquid-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--liquid-glass-blur)) saturate(var(--liquid-glass-saturate));
+  border-radius: 24px;
+}
+
+.liquid-glass-highlight {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.2),
+    transparent 50%
+  );
+}
+
+@keyframes liquid-morph {
+  0%, 100% { border-radius: 24px; }
+  25% { border-radius: 28px 20px 26px 22px; }
+  50% { border-radius: 22px 26px 20px 28px; }
+  75% { border-radius: 26px 22px 28px 20px; }
+}
+
+.liquid-glass-morph {
+  animation: liquid-morph 8s ease-in-out infinite;
+}
+
+@keyframes liquid-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(168, 85, 247, 0.5); }
+}
+
+.liquid-glass-glow {
+  animation: liquid-glow 3s ease-in-out infinite;
+}
+
+@keyframes rainbow-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.liquid-glass-rainbow-pulse {
+  animation: rainbow-pulse 2s ease-in-out infinite;
+}
+
+.liquid-glass-stack-1 { --liquid-glass-bg: rgba(255, 255, 255, 0.08);
+}
+
+.liquid-glass-stack-2 { --liquid-glass-bg: rgba(255, 255, 255, 0.12);
+}
+
+.liquid-glass-stack-3 { --liquid-glass-bg: rgba(255, 255, 255, 0.16);
+}
+
+.liquid-glass-container {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind 类名配方（源 <slug>-tokens.ts，仅作参考，非 CSS）
+ * 每个视觉位该用哪些 Tailwind 类；裸 CSS 项目请按上方变量自行等价实现。
+ *
+ *   边框宽度 / 颜色 / 圆角 / 风格：border · border-white/20 · rounded-[24px] · border-solid
+ *   阴影 sm / md / lg / none：shadow-lg shadow-black/5 · shadow-xl shadow-black/10 · shadow-2xl shadow-black/15 · shadow-none
+ *   阴影 hover / focus：hover:shadow-xl hover:shadow-black/15 · focus:shadow-[0_0_0_2px_rgba(168,85,247,0.5),0_0_20px_rgba(168,85,247,0.2)]
+ *   彩色阴影：inner: [box-shadow:inset_0_1px_0_rgba(255,255,255,0.4)] · glow: shadow-[0_0_30px_rgba(168,85,247,0.4)] · rainbow: shadow-[0_0_20px_rgba(255,107,107,0.3),0_0_40px_rgba(78,205,196,0.2),0_0_60px_rgba(168,85,247,0.1)] · blue: shadow-[0_0_20px_rgba(0,122,255,0.3)] · pink: shadow-[0_0_20px_rgba(255,45,85,0.3)]
+ *   过渡 / 按下态：transition-all duration-500 ease-out · active:scale-[0.98]
+ *   标题字体 / 正文字体 / 等宽字体：font-black bg-gradient-to-r from-[#a855f7] via-[#ff2d92] to-[#a855f7] bg-clip-text text-transparent · text-white/80 · font-mono text-white/90
+ *   字号 · hero：text-5xl md:text-7xl lg:text-8xl
+ *   字号 · h1：text-4xl md:text-5xl
+ *   字号 · h2：text-3xl md:text-4xl
+ *   字号 · h3：text-xl md:text-2xl
+ *   字号 · body：text-sm md:text-base
+ *   字号 · small：text-xs
+ *   区块间距 / 容器内边距 / 卡片内边距：py-16 md:py-24 · px-6 md:px-8 · p-6 md:p-8
+ *   间距 · sm：gap-4
+ *   间距 · md：gap-6
+ *   间距 · lg：gap-8
+ *   底色 主 / 次：bg-white/10 backdrop-blur-[40px] backdrop-saturate-[1.8] · bg-white/15 backdrop-blur-[40px] backdrop-saturate-[1.8]
+ *   底色 · 强调：bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f0f23] · bg-gradient-to-r from-[#ff2d92] to-[#a855f7] · bg-gradient-to-r from-[#4ecdc4] to-[#6bcb77]
+ *   文字 主 / 次 / 弱：text-white · text-white/80 · text-white/50
+ *   按钮 · primary：bg-gradient-to-r from-[#ff2d92] to-[#a855f7] text-white font-bold
+ *   按钮 · secondary：bg-white/10 text-white backdrop-blur-[40px] backdrop-saturate-[1.8]
+ *   必须包含 · button：bg-white/10 backdrop-blur-[40px] backdrop-saturate-[1.8] · rounded-[20px] · text-white · before:absolute before:inset-0 before:rounded-[20px] before:p-[1px] before:-z-10 · before:bg-gradient-to-r before:from-[#ff6b6b] before:via-[#4ecdc4] before:to-[#a855f7] · after:absolute after:inset-[1px] after:rounded-[19px] after:-z-10 · after:bg-gradient-to-b after:from-white/20 after:to-transparent · hover:bg-white/15 hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] · transition-all duration-500 ease-out
+ *   必须包含 · card：bg-white/10 backdrop-blur-[40px] backdrop-saturate-[1.8] · rounded-[24px] · shadow-xl shadow-black/10 · before:absolute before:inset-0 before:rounded-[24px] before:p-[1px] before:-z-10 · before:bg-gradient-to-br before:from-[#ff6b6b] before:via-[#4ecdc4] before:to-[#a855f7] · after:absolute after:inset-[1px] after:rounded-[23px] after:-z-10 · after:bg-gradient-to-b after:from-white/15 after:to-transparent · [box-shadow:inset_0_1px_0_rgba(255,255,255,0.4)]
+ *   必须包含 · input：bg-white/10 backdrop-blur-[40px] backdrop-saturate-[1.8] · border border-white/20 · rounded-[16px] · text-white placeholder-white/50 · focus:outline-none focus:bg-white/15 · focus:border-transparent · focus:shadow-[0_0_0_2px_rgba(168,85,247,0.5),0_0_20px_rgba(168,85,247,0.2)] · transition-all duration-500 ease-out
+ * ------------------------------------------------------------------ */
