@@ -134,7 +134,9 @@ test('MemoryDreamService：全流程裁决-应用-审计-统计回调', async ()
       assert.equal(input.maxTokens, 8192)
       return '[{"action":"merge","ids":["' + dup1 + '","' + dup2 + '"],"content":"备份：store.db 用 6 位密码加密。","reason":"重复"},{"action":"archive","ids":["' + dup2 + '"],"reason":"已并入"}]'
     },
-    config: () => settings({ dreamEnabled: true, dreamProposalOnly: false }),
+    // 显式留空 provider → 走「跟随宿主默认模型」分支（0.43.0 起默认值是官网 DeepSeek，
+    // 这条用例专门守住「留空即跟随」的语义，故显式置空）。
+    config: () => settings({ dreamEnabled: true, dreamProposalOnly: false, dreamProvider: '', dreamModel: '' }),
     listDomain: (domain) => ragStore.listDomainDocs(domain),
     putDomain: (domain, id, data) => ragStore.putDomainDoc(domain, id, data),
     deleteDomain: (domain, id) => ragStore.deleteDomainDoc(domain, id),

@@ -57,7 +57,7 @@ import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
 import { UserProfileInjectionService, DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './memory/profile.ts'
-import { DEFAULT_MEMORY_SETTINGS, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
+import { DEFAULT_MEMORY_SETTINGS, MEMORY_DEFAULT_ROUTE, makeMemoryRoutes, normalizeMemorySettings, type MemorySettings } from './memory/routes.ts'
 import { WorkflowEngine } from './workflow/engine.ts'
 import { makeWorkflowRoutes } from './workflow/routes.ts'
 import { McpService } from './mcp/service.ts'
@@ -966,16 +966,18 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   dream.start()
   ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
 
+  /** 旧版本面板引导用户填入的专用裁决路由（产品建议值，不是用户本意，故可安全迁移）。 */
+  const LEGACY_ADVISED_PROVIDER = 'minimax-cn'
+
   /**
-   * 一次性迁移（0.43.0「天工造梦一套」）：把记忆的模型路由回归官网默认。
+   * 一次性迁移（0.43.0「天工造梦一套」）：把记忆的模型路由归到官网 DeepSeek。
    *
-   * 背景：旧版本的面板会引导用户把「裁决/沉淀服务商」指到专用路由（典型组合
+   * 背景：旧版本的面板会引导用户把「裁决/沉淀服务商」指到专用路由（产品建议值就是
    * minimax-cn + MiniMax-M2.7-highspeed）。辉哥 2026-10-10 定稿：用户装了插件、登录官网账号
-   * 就应该一套走通，记忆的提炼与做梦裁决不该再绑在某个第三方服务商上。
+   * 就应该一套走通，记忆的提炼与做梦裁决统一用官网原生 provider 的 DeepSeek V4.1 Flash。
    *
-   * 因此升级时把这类存量覆盖清空，回到「跟随宿主默认模型」（登录官网即 tiangong 原生 provider）。
-   * 只做一次（标记落 store.db `memory.route-default-migrated`）：之后用户在面板上重新选的服务商
-   * 会被尊重，不再被这次迁移覆盖——迁移不是永久规则。
+   * 边界：**只迁移旧版本引导写入的 minimax-cn**（那是产品建议、不是用户本意）；用户在面板上
+   * 自己选的其它服务商一律不动。迁移只做一次（标记落 store.db `memory.route-default-migrated`）。
    */
   const migrateMemoryRoutesToDefault = (): void => {
     try {
@@ -983,12 +985,17 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       const current = memorySettingsRead()
       const dream = current.dreamProvider.trim()
       const sediment = current.sedimentProvider.trim()
-      const hadOverride = dream !== '' || sediment !== ''
-      if (hadOverride) {
-        memorySettingsWrite({ ...current, dreamProvider: '', dreamModel: '', sedimentProvider: '', sedimentModel: '' })
-        ctx.logger.info('[dsh-devforge] 记忆模型路由已回归官网默认：清空旧版专用裁决路由（裁决=%s / 沉淀=%s）——记忆提炼与做梦裁决跟随宿主默认模型。', dream === '' ? '未设' : dream, sediment === '' ? '未设' : sediment)
+      const legacyDream = dream === LEGACY_ADVISED_PROVIDER
+      const legacySediment = sediment === LEGACY_ADVISED_PROVIDER
+      if (legacyDream || legacySediment) {
+        memorySettingsWrite({
+          ...current,
+          ...(legacyDream ? { dreamProvider: MEMORY_DEFAULT_ROUTE.provider, dreamModel: MEMORY_DEFAULT_ROUTE.model } : {}),
+          ...(legacySediment ? { sedimentProvider: MEMORY_DEFAULT_ROUTE.provider, sedimentModel: MEMORY_DEFAULT_ROUTE.model } : {}),
+        })
+        ctx.logger.info('[dsh-devforge] 记忆模型路由已归到官网默认：裁决=%s / 沉淀=%s → %s。记忆提炼与做梦裁决改用官网 DeepSeek。', dream === '' ? '未设' : dream, sediment === '' ? '未设' : sediment, MEMORY_DEFAULT_ROUTE.provider + ':' + MEMORY_DEFAULT_ROUTE.model)
       }
-      putSettings(getDb(), 'memory.route-default-migrated', { at: Date.now(), cleared: hadOverride })
+      putSettings(getDb(), 'memory.route-default-migrated', { at: Date.now(), migrated: legacyDream || legacySediment })
     } catch (error) {
       // 迁移失败绝不影响启动：运行时路由解析仍会回退宿主默认并说明原因。
       ctx.logger.warn?.('[dsh-devforge] 记忆路由迁移失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))

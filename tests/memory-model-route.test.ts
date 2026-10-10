@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { RagStore } from '../src/rag/rag-store.ts'
 import { NativeMemoryStore } from '../src/memory/native.ts'
 import { MemoryDreamService } from '../src/memory/dream.ts'
-import { DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
+import { DEFAULT_MEMORY_SETTINGS, MEMORY_DEFAULT_ROUTE } from '../src/memory/routes.ts'
 import { MEMORY_ROUTE_NO_DEFAULT, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute } from '../src/memory/model-route.ts'
 import type { MemorySettings } from '../src/memory/protocol.ts'
 
@@ -205,4 +205,37 @@ test('可用性判据：注册了但声明里查不到模型 → 该服务商视
   // 服务商在目录里但没有模型：回退宿主默认，且原因点明「没有任何可用模型」。
   assert.equal(route.fellBack, true)
   assert.match(route.reason, /没有任何可用模型/)
+})
+
+test('默认路由：记忆提炼/做梦裁决默认走官网 tiangong 的 DeepSeek（辉哥 2026-10-10 定稿）', () => {
+  // 口径：登录官网即一套走通，且记忆用官网的 DeepSeek V4.1 Flash（做梦要严格 JSON 输出，
+  // 格式服从度比宿主默认的 GLM-Flash 更关键）。
+  assert.equal(MEMORY_DEFAULT_ROUTE.provider, 'tiangong')
+  assert.equal(MEMORY_DEFAULT_ROUTE.model, 'DeepSeek V4.1 Flash')
+  assert.equal(DEFAULT_MEMORY_SETTINGS.dreamProvider, MEMORY_DEFAULT_ROUTE.provider)
+  assert.equal(DEFAULT_MEMORY_SETTINGS.dreamModel, MEMORY_DEFAULT_ROUTE.model)
+  assert.equal(DEFAULT_MEMORY_SETTINGS.sedimentProvider, MEMORY_DEFAULT_ROUTE.provider)
+  assert.equal(DEFAULT_MEMORY_SETTINGS.sedimentModel, MEMORY_DEFAULT_ROUTE.model)
+
+  // 默认路由在宿主目录里 → 原样使用（不回退）。
+  const usable = resolveMemoryModelRoute({
+    requestedProvider: DEFAULT_MEMORY_SETTINGS.dreamProvider,
+    requestedModel: DEFAULT_MEMORY_SETTINGS.dreamModel,
+    catalog,
+    fallbackProvider: 'tiangong', fallbackModel: 'GLM-Flash',
+  })
+  assert.equal(usable.fellBack, false)
+  assert.equal(usable.provider, 'tiangong')
+  assert.equal(usable.model, 'DeepSeek V4.1 Flash')
+
+  // 官网 provider 不可用（未登录/未注册）→ 回退宿主默认并说明原因，不硬失败。
+  const degraded = resolveMemoryModelRoute({
+    requestedProvider: DEFAULT_MEMORY_SETTINGS.dreamProvider,
+    requestedModel: DEFAULT_MEMORY_SETTINGS.dreamModel,
+    catalog: new Map([['zhipu', ['glm-5.3']]]),
+    fallbackProvider: 'zhipu', fallbackModel: 'glm-5.3',
+  })
+  assert.equal(degraded.fellBack, true)
+  assert.equal(degraded.provider, 'zhipu')
+  assert.match(degraded.reason, /tiangong/)
 })

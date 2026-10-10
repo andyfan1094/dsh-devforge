@@ -20,8 +20,21 @@ import type { MemoryStatsStore } from './stats.ts'
 import type { MemoryInjectionService } from './inject.ts'
 import { NativeMemoryStore, type NativeMemoryCategory, type NativeMemoryInput, type NativeMemoryPatch, type NativeMemoryMigrationItem } from './native.ts'
 import { DEFAULT_USER_PROFILE, normalizeUserProfile, type MemoryUserProfile } from './profile.ts'
+import { TIANGONG_DEEPSEEK_MODEL_ID } from '../modagentai/provider-declaration.ts'
 import type { MemorySettings } from './protocol.ts'
 export type { MemorySettings }
+
+/**
+ * 记忆提炼/做梦裁决的默认官网路由（0.43.0「天工造梦一套」，辉哥 2026-10-10 定稿：用 DeepSeek）。
+ *
+ * 口径：
+ * - provider 用官网原生 `tiangong`——用户装了插件、登录官网账号即一套走通，不必另配服务商；
+ * - 模型选官网的 DeepSeek V4.1 Flash：做梦要模型严格吐 JSON 决策，格式服从度比默认的 GLM-Flash
+ *   更关键（实测 GLM-Flash 出现「解析重试后成功」）。
+ * - 该 provider 未注册或调用失败时，运行时路由解析会回退宿主默认并说明原因（不硬失败、不静默）；
+ *   用户仍可在面板改（留空 = 跟随宿主默认模型）。
+ */
+export const MEMORY_DEFAULT_ROUTE = { provider: 'tiangong', model: TIANGONG_DEEPSEEK_MODEL_ID } as const
 
 const MEMORY_SETTINGS_KEY = 'memory.settings'
 const MEMORY_PROFILE_KEY = 'memory.profile'
@@ -51,17 +64,15 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   dreamProposalOnly: true,
   dreamIdleMinutes: 10,
   dreamMinIntervalHours: 6,
-  // 模型路由缺省跟随宿主默认模型——登录天工造梦官网后即 tiangong 原生 provider（GLM-Flash /
-  // DeepSeek V4.1 Flash），用户无需另配服务商。0.43.0「天工造梦一套」定稿：面板上的覆盖仅在
-  // 确有需要时使用；一旦它指向宿主目录里不存在的 provider，运行时回退宿主默认并在审计里说明原因。
-  dreamProvider: '',
-  dreamModel: '',
+  // 做梦路由默认走官网 DeepSeek（见 MEMORY_DEFAULT_ROUTE）；留空 = 跟随宿主默认模型。
+  dreamProvider: MEMORY_DEFAULT_ROUTE.provider,
+  dreamModel: MEMORY_DEFAULT_ROUTE.model,
   dreamMaxTokens: 8192,
   dreamMaxEntries: 300,
   dreamMaxChars: 240,
-  // 沉淀模型路由（0.26.6）：空串=跟随全局默认路由；默认路由故障时可在面板指到健康模型。
-  sedimentProvider: '',
-  sedimentModel: '',
+  // 沉淀路由同样默认走官网 DeepSeek（0.26.6 起该路由可独立配置）。
+  sedimentProvider: MEMORY_DEFAULT_ROUTE.provider,
+  sedimentModel: MEMORY_DEFAULT_ROUTE.model,
 }
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
