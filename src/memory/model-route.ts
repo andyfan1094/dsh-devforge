@@ -153,37 +153,3 @@ export function mergeRegisteredCatalog(registered: readonly string[], declared: 
   return catalog
 }
 
-/** findStaleMemoryRoutes 入参。 */
-export interface StaleMemoryRouteInput {
-  dreamProvider: string
-  sedimentProvider: string
-  /** 宿主**真实注册了 adapter** 的 provider 目录（来自 ctx.llm.listProviders，不是配置声明）。 */
-  catalog: ReadonlyMap<string, readonly string[]>
-}
-
-/** findStaleMemoryRoutes 结果。 */
-export interface StaleMemoryRouteResult {
-  /** true = 该覆盖指向的服务商已不在宿主目录，应清空（含配套的 model 字段）。 */
-  staleDream: boolean
-  staleSediment: boolean
-  /** 被清空的服务商名（去重，供日志展示）。 */
-  cleared: string[]
-}
-
-/**
- * 判定哪些记忆路由覆盖是「存量脏配置」（0.43.0 启动自愈的依据）。
- *
- * 红线——**目录为空时一律不清**：catalog 来自 ctx.llm.listProviders()（真实注册），为空说明宿主
- * 模型服务尚未就绪（一个 adapter 都没注册），此时任何覆盖看起来都「不在目录里」，无脑清空会把
- * 用户的有效配置误删。这是本函数被抽成纯函数的首要原因：清的是生产数据，必须能离线证明「不会误清」。
- */
-export function findStaleMemoryRoutes(input: StaleMemoryRouteInput): StaleMemoryRouteResult {
-  const empty: StaleMemoryRouteResult = { staleDream: false, staleSediment: false, cleared: [] }
-  if (input.catalog.size === 0) return empty
-  const dream = input.dreamProvider.trim()
-  const sediment = input.sedimentProvider.trim()
-  const staleDream = dream !== '' && !input.catalog.has(dream)
-  const staleSediment = sediment !== '' && !input.catalog.has(sediment)
-  const cleared = staleDream && staleSediment && dream === sediment ? [dream] : [...(staleDream ? [dream] : []), ...(staleSediment ? [sediment] : [])]
-  return { staleDream, staleSediment, cleared }
-}

@@ -52,7 +52,7 @@ import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { MemoryGovernanceService } from './memory/governance.ts'
 import { MemoryRecallService } from './memory/recall.ts'
-import { findStaleMemoryRoutes, formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
+import { formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
 import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
@@ -967,51 +967,32 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
 
   /**
-   * 存量脏配置自愈（0.43.0「天工造梦一套」）。
+   * 一次性迁移（0.43.0「天工造梦一套」）：把记忆的模型路由回归官网默认。
    *
-   * 老安装的 memory.settings 里可能留着一个已不存在的服务商覆盖（生产实况：minimax-cn 指向
-   * 未注册 adapter 的路由）。运行时解析能保证「不失败」（回退宿主默认），但面板上仍挂着一个
-   * 永远不可用的选择，用户也无从知道该清掉它。这里在 llm-pi-ai 就绪后把这类覆盖清空，
-   * 让它真正回到「跟随宿主默认模型」——登录官网即一套走通。
+   * 背景：旧版本的面板会引导用户把「裁决/沉淀服务商」指到专用路由（典型组合
+   * minimax-cn + MiniMax-M2.7-highspeed）。辉哥 2026-10-10 定稿：用户装了插件、登录官网账号
+   * 就应该一套走通，记忆的提炼与做梦裁决不该再绑在某个第三方服务商上。
    *
-   * 防误清（关键红线）：只在**目录非空**且该服务商确实不在目录里时才清。
-   * 目录为空说明宿主模型服务尚未就绪，此时清空会把用户的有效配置误删。
-   * 返回 true = 已作判定（含「无需改动」）；false = 宿主未就绪，交给调度重试。
+   * 因此升级时把这类存量覆盖清空，回到「跟随宿主默认模型」（登录官网即 tiangong 原生 provider）。
+   * 只做一次（标记落 store.db `memory.route-default-migrated`）：之后用户在面板上重新选的服务商
+   * 会被尊重，不再被这次迁移覆盖——迁移不是永久规则。
    */
-  const healMemoryRouteOverrides = (): boolean => {
+  const migrateMemoryRoutesToDefault = (): void => {
     try {
-      const catalog = memoryRouteCatalog()
-      if (catalog.size === 0) return false
+      if (getSettings(getDb(), 'memory.route-default-migrated') !== undefined) return
       const current = memorySettingsRead()
-      const stale = findStaleMemoryRoutes({
-        dreamProvider: current.dreamProvider,
-        sedimentProvider: current.sedimentProvider,
-        catalog,
-      })
-      if (!stale.staleDream && !stale.staleSediment) return true
-      memorySettingsWrite({
-        ...current,
-        ...(stale.staleDream ? { dreamProvider: '', dreamModel: '' } : {}),
-        ...(stale.staleSediment ? { sedimentProvider: '', sedimentModel: '' } : {}),
-      })
-      ctx.logger.info('[dsh-devforge] 记忆模型路由已回归默认：清空失效的服务商覆盖（%s）——记忆提炼与做梦裁决跟随宿主默认模型。', stale.cleared.join('、'))
-      return true
-    } catch (error) {
-      // 自愈失败绝不影响启动：运行时路由解析仍会回退宿主默认。
-      ctx.logger.warn?.('[dsh-devforge] 记忆路由自愈失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))
-      return true
-    }
-  }
-  /** 自愈带重试：llm-pi-ai 未就绪时目录为空，等宿主模型服务就绪后再判定（与启动补齐同节奏）。 */
-  const scheduleMemoryRouteHeal = (): void => {
-    void (async () => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (healMemoryRouteOverrides()) return
-        const scope = autoEnsureTimerScope
-        if (scope === undefined) return
-        try { await scope.wait(5_000).done } catch { return }
+      const dream = current.dreamProvider.trim()
+      const sediment = current.sedimentProvider.trim()
+      const hadOverride = dream !== '' || sediment !== ''
+      if (hadOverride) {
+        memorySettingsWrite({ ...current, dreamProvider: '', dreamModel: '', sedimentProvider: '', sedimentModel: '' })
+        ctx.logger.info('[dsh-devforge] 记忆模型路由已回归官网默认：清空旧版专用裁决路由（裁决=%s / 沉淀=%s）——记忆提炼与做梦裁决跟随宿主默认模型。', dream === '' ? '未设' : dream, sediment === '' ? '未设' : sediment)
       }
-    })()
+      putSettings(getDb(), 'memory.route-default-migrated', { at: Date.now(), cleared: hadOverride })
+    } catch (error) {
+      // 迁移失败绝不影响启动：运行时路由解析仍会回退宿主默认并说明原因。
+      ctx.logger.warn?.('[dsh-devforge] 记忆路由迁移失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))
+    }
   }
 
   // ---- 镜像自动同步（0.33.5）：修复「镜像只同步一次后永久脱节」----
@@ -1351,8 +1332,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     previousTimerScope?.cancelAll()
     // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
     scheduleAutoEnsureModels()
-    // 记忆路由自愈与补齐同节奏启动：清掉指向不存在服务商的存量覆盖（0.43.0「官网一套」）。
-    scheduleMemoryRouteHeal()
+    // 记忆路由一次性迁移（0.43.0「官网一套」）：把旧版专用裁决路由覆盖清空，回归宿主默认模型。
+    migrateMemoryRoutesToDefault()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
     safeActivate(ctx, 'OpenAI 生图工具', () => { disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled === true && value.openai?.enabled !== false }, openAiService).dispose })
     // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。

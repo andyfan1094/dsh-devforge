@@ -17,7 +17,7 @@ import { RagStore } from '../src/rag/rag-store.ts'
 import { NativeMemoryStore } from '../src/memory/native.ts'
 import { MemoryDreamService } from '../src/memory/dream.ts'
 import { DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
-import { MEMORY_ROUTE_NO_DEFAULT, findStaleMemoryRoutes, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute } from '../src/memory/model-route.ts'
+import { MEMORY_ROUTE_NO_DEFAULT, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute } from '../src/memory/model-route.ts'
 import type { MemorySettings } from '../src/memory/protocol.ts'
 
 const catalog = new Map<string, readonly string[]>([
@@ -170,48 +170,11 @@ test('做梦集成：宿主默认模型未就绪 → 明确落 failed，不做�
   assert.equal(called, 0)
 })
 
-test('自愈判定：目录为空时绝不清（宿主未就绪，防误清用户有效配置）', () => {
-  const stale = findStaleMemoryRoutes({
-    dreamProvider: 'minimax-cn',
-    sedimentProvider: 'minimax-cn',
-    catalog: new Map(),
-  })
-  assert.equal(stale.staleDream, false)
-  assert.equal(stale.staleSediment, false)
-  assert.deepEqual(stale.cleared, [])
-})
-
-test('自愈判定：目录非空且服务商确实缺失才清，有效的保留', () => {
-  const stale = findStaleMemoryRoutes({
-    dreamProvider: 'minimax-cn',
-    sedimentProvider: 'tiangong',
-    catalog,
-  })
-  assert.equal(stale.staleDream, true)
-  assert.equal(stale.staleSediment, false)
-  assert.deepEqual(stale.cleared, ['minimax-cn'])
-
-  const healthy = findStaleMemoryRoutes({ dreamProvider: 'tiangong', sedimentProvider: '', catalog })
-  assert.equal(healthy.staleDream, false)
-  assert.equal(healthy.staleSediment, false)
-  assert.deepEqual(healthy.cleared, [])
-})
-
-test('自愈判定：两个字段指向同一失效服务商时，日志名去重', () => {
-  const stale = findStaleMemoryRoutes({
-    dreamProvider: 'minimax-cn',
-    sedimentProvider: 'minimax-cn',
-    catalog,
-  })
-  assert.equal(stale.staleDream, true)
-  assert.equal(stale.staleSediment, true)
-  assert.deepEqual(stale.cleared, ['minimax-cn'])
-})
-
-test('可用性判据：声明齐全但未注册 adapter 的服务商（生产 minimax-cn 实况）必须判为不可用', () => {
-  // 生产实况：minimax-cn 在 llm-pi-ai 里声明了 apiKeyEnv 与四个模型，宿主侧却没有注册 adapter，
-  // 调用直接报 no adapter registered for provider "minimax-cn"。
-  // 只看配置声明会把它判成「可用」——运行时不回退、自愈不清空，两项修复同时失灵。
+test('可用性判据：声明齐全但未注册 adapter 的服务商必须判为不可用', () => {
+  // 注意：这是「配置声明 ≠ 可用」的口径护栏（配置里写了、宿主没注册时不能当可用）。
+  // 生产实况补记：minimax-cn 最终被证实**是**注册可用的（2026-10-10 暂存实测做梦成功），
+  // 生产那条 no adapter registered 属历史状态；辉哥定稿「官网一套」后，记忆路由已改为
+  // 升级时一次性回归宿主默认，不再依赖本判据做自愈。
   const declared = modelCatalogFromSection({
     providers: {
       'minimax-cn': { models: [{ id: 'MiniMax-M3' }, { id: 'MiniMax-M2.7-highspeed' }] },
@@ -222,7 +185,7 @@ test('可用性判据：声明齐全但未注册 adapter 的服务商（生产 m
   assert.equal(available.has('minimax-cn'), false)
   assert.deepEqual(available.get('tiangong'), ['GLM-Flash'])
 
-  // 运行时会回退宿主默认，而不是把 minimax-cn 直传宿主换来 NO_ADAPTER。
+  // 未注册的 provider 会被判为不在目录 → 回退宿主默认并说明原因（不硬失败、不静默）。
   const route = resolveMemoryModelRoute({
     requestedProvider: 'minimax-cn', requestedModel: 'MiniMax-M2.7-highspeed',
     catalog: available, fallbackProvider: 'tiangong', fallbackModel: 'GLM-Flash',
@@ -230,12 +193,6 @@ test('可用性判据：声明齐全但未注册 adapter 的服务商（生产 m
   assert.equal(route.fellBack, true)
   assert.equal(route.provider, 'tiangong')
   assert.match(route.reason, /minimax-cn/)
-
-  // 自愈也会判定它是脏配置——这才是能真正清掉生产残留的那条路径。
-  const stale = findStaleMemoryRoutes({ dreamProvider: 'minimax-cn', sedimentProvider: 'tiangong', catalog: available })
-  assert.equal(stale.staleDream, true)
-  assert.equal(stale.staleSediment, false)
-  assert.deepEqual(stale.cleared, ['minimax-cn'])
 })
 
 test('可用性判据：注册了但声明里查不到模型 → 该服务商视为无可用模型', () => {
