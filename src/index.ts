@@ -765,7 +765,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   const ragService = new RagService(ragStore, ragEmbedders)
   const nativeMemory = new NativeMemoryStore(ragStore)
   const memoryGovernance = new MemoryGovernanceService(ragStore, nativeMemory)
-  const memoryRecall = new MemoryRecallService(nativeMemory, ragService, ragStore)
+  // 负记忆层（P1-5）：召回侧接上治理服务持有的 memory.rejected，命中被否定的说法时回吐警示。
+  const memoryRecall = new MemoryRecallService(nativeMemory, ragService, ragStore, memoryGovernance.negatives)
   // 官网账号登录后向量服务自动对接官网（辉哥 2026-09-23 定稿）：已登录且当前渠道非官网时迁移，
   // 幂等（已是 modagentai 跳过）；模型名与 ark 渠道一致（vectorKey 相同）→ 向量缓存全命中零重嵌。
   // 失败静默（启动不阻塞）：面板可手动切。

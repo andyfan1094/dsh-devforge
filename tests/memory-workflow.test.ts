@@ -528,13 +528,15 @@ describe('记忆持久化统计（0.17.14 可观测修复）', () => {
       assert.ok(second.lastInjectPreview.includes('关键事实'))
     } finally { closeAllDb(); rmSync(dir, { recursive: true, force: true }) }
   })
-  test('decideDetailed：未启用与无命中分别给出 reason，与注入统计口径对齐', async () => {
+  test('decideDetailed：未启用与无命中分别给出 reason，无命中明确标盲区', async () => {
     const disabled = new MemoryInjectionService(fakeRag(), () => ({ ...SETTINGS, enabled: false }))
     assert.equal((await disabled.decideDetailed([{ content: [{ type: 'text', text: '服务器地址' }] }])).reason, 'disabled')
     const noHit = new MemoryInjectionService(fakeRag({ search: async () => [] }), () => SETTINGS)
     const decision = await noHit.decideDetailed([{ content: [{ type: 'text', text: '服务器地址' }] }])
-    assert.equal(decision.text, undefined)
+    // 0.43.0 P1-6：无命中不再沉默——沉默会被模型当成「世上没有」，转而凭猜测作答。
     assert.equal(decision.reason, 'no-hit')
+    assert.equal(decision.qualification, 'BLINDSPOT')
+    assert.ok(decision.text?.includes('盲区'), '检索过但没找到时必须明说这是盲区')
   })
 })
 

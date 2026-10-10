@@ -6,10 +6,12 @@
  */
 import { createHash } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { checkMemoryAdmission } from './admission.ts'
 import type { MemoryGovernanceService } from './governance.ts'
 import { memoryScopeMatches } from './scope.ts'
 import type { NativeMemoryStore } from './native.ts'
-import type { MemoryEvidence, MemoryScopeContext, NativeMemoryCategory, NativeMemoryEntry } from './protocol.ts'
+import type { MemoryCandidate, MemoryEvidence, MemoryQualification, MemoryScopeContext, NativeMemoryCategory, NativeMemoryEntry, RejectedMemory } from './protocol.ts'
+import { pickNegativeCoverage } from './negatives.ts'
 
 function text(value: string): Array<{ type: 'text'; text: string }> { return [{ type: 'text', text: value }] }
 
@@ -41,12 +43,62 @@ const entrySchema = {
   },
 } as const
 
-type MemoryToolOutput = { ok: boolean; action: string; entry?: NativeMemoryEntry; entries?: NativeMemoryEntry[]; count?: number; message?: string }
+/**
+ * 工具输出。
+ *
+ * `ok` 只表示「工具这次执行没出错」，**不代表记忆记住了**；`committed` 才是
+ * 「本次是否真的落盘为长期记忆」（0.43.0 P1-4，契约移植自灵枢 dsh-memory）。
+ * 重复（deduped）、待审核（pending/needs-resolution）、被拒（rejected）一律 committed:false，
+ * 且在 `missing` 里写清要怎么补才能落盘——绝不把「受理」当「保存成功」。
+ */
+type MemoryToolOutput = { ok: boolean; action: string; committed?: boolean; pendingReason?: string; missing?: string[]; entry?: NativeMemoryEntry; entries?: NativeMemoryEntry[]; qualifications?: Array<{ id: string; qualification: MemoryQualification; reason: string }>; count?: number; message?: string }
+
+/**
+ * 检索结果的四态资格（P1-6）：显式检索这条路上没有注入层的说明文字，
+ * 全靠这里告诉调用方「能不能直接采信」。负覆盖一律 REJECT，证据与相似度都够才 ACCEPT，
+ * 其余 DEFER——不确定就给待确认，绝不把弱证据包装成定论。
+ */
+function gradeSearchHits(hits: Array<{ entry: NativeMemoryEntry; score: number }>, negatives: RejectedMemory[] | undefined): Array<{ id: string; qualification: MemoryQualification; reason: string }> {
+  const topScore = hits.reduce((max, hit) => Math.max(max, hit.score), 0)
+  return hits.map((hit) => {
+    const negative = negatives === undefined ? undefined : pickNegativeCoverage(negatives, hit.entry.content)
+    if (negative !== undefined) return { id: hit.entry.id, qualification: 'REJECT' as const, reason: '该说法已被否定：' + (negative.reason === '' ? '无原因说明' : negative.reason) }
+    const trusted = hit.entry.trust === 'confirmed' || hit.entry.trust === 'verified'
+    if (trusted && hit.score >= topScore * 0.8) return { id: hit.entry.id, qualification: 'ACCEPT' as const, reason: '证据与相似度足够' }
+    return { id: hit.entry.id, qualification: 'DEFER' as const, reason: trusted ? '相似度不足，采用前请确认' : '证据等级偏低（' + hit.entry.trust + '），采用前请确认' }
+  })
+}
+
+/** 未落盘时给出可照做的补齐清单：拒绝必须能修，而不是一句失败（P1-7）。 */
+function resolutionMissing(candidate: MemoryCandidate): string[] {
+  const missing: string[] = []
+  if (candidate.state === 'needs-resolution') {
+    const existing = candidate.conflictIds.length > 0 ? '（冲突记忆：' + candidate.conflictIds.join('、') + '）' : ''
+    missing.push('冲突处理：这条与现有事实冲突' + existing + '。请说明是取代旧事实，还是并存的不同维度（可传 memoryKey 标明同一事实键）')
+  }
+  if (candidate.state === 'rejected') missing.push('写入被拒：' + (candidate.resolutionReason ?? '未说明原因'))
+  if (missing.length === 0) missing.push('请补充更明确的来源证据（source/sourceId）后重试，或到记忆工作台审核该候选：' + candidate.id)
+  return missing
+}
 
 function render(value: MemoryToolOutput): string {
+  // 未落盘必须写在最前面：调用方读到的第一句就该是「没记住」，而不是「已写入」。
+  if (value.committed === false) {
+    const head = value.message ?? '本次写入未落盘'
+    const missing = value.missing ?? []
+    return missing.length > 0 ? head + '\n需要补：\n- ' + missing.join('\n- ') : head
+  }
   if (value.message !== undefined) return value.message
   if (value.entry !== undefined) return '已' + (value.action === 'delete' ? '删除' : value.action === 'save' ? '写入' : '更新') + '内置长期记忆：' + value.entry.content
-  if (value.entries !== undefined) return value.entries.length === 0 ? '（暂无匹配的内置长期记忆）' : value.entries.map((entry, index) => `${index + 1}. [${entry.category}] ${entry.content}${entry.pinned === true ? '（常驻）' : ''}`).join('\n')
+  if (value.entries !== undefined) {
+    if (value.entries.length === 0) return '（暂无匹配的内置长期记忆）'
+    // P1-6：检索结果带上四态资格，被否定与把握不足的条目必须显式标注。
+    const marks = new Map((value.qualifications ?? []).map((item) => [item.id, item.qualification + '：' + item.reason]))
+    return value.entries.map((entry, index) => {
+      const mark = marks.get(entry.id)
+      return `${index + 1}. [${entry.category}] ${entry.content}${entry.pinned === true ? '（常驻）' : ''}${mark === undefined ? '' : '（⚠ ' + mark + '）'}`
+    }).join('\n')
+  }
   return value.ok ? '操作完成' : '操作失败'
 }
 
@@ -127,7 +179,7 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
       limit: { type: 'integer', description: 'list/search 返回条数。' },
     },
     output: {
-      schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, action: { type: 'string', required: true }, entry: entrySchema, entries: { type: 'array', items: entrySchema }, count: { type: 'integer' }, message: { type: 'string' } } },
+      schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true }, action: { type: 'string', required: true }, committed: { type: 'boolean' }, pendingReason: { type: 'string' }, missing: { type: 'array', items: { type: 'string' } }, entry: entrySchema, entries: { type: 'array', items: entrySchema }, qualifications: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string', required: true }, qualification: { type: 'string', required: true, enum: ['ACCEPT', 'DEFER', 'BLINDSPOT', 'REJECT'] }, reason: { type: 'string', required: true } } } }, count: { type: 'integer' }, message: { type: 'string' } } },
       render: (_args, value: MemoryToolOutput) => text(render(value)),
     },
     async execute(args, exec): Promise<MemoryToolOutput> {
@@ -143,8 +195,10 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
         }
         if (action === 'search') {
           if (!args.query) return { ok: false, action, message: 'search 需要 query' }
-          const entries = store.search(args.query, { limit: args.limit, category: args.category, ...scopeOptions })
-          return { ok: true, action, entries, count: entries.length }
+          const hits = store.searchDetailed(args.query, { limit: args.limit, category: args.category, ...scopeOptions })
+          const entries = hits.map((hit) => hit.entry)
+          const negatives = options?.governance?.negatives.list({ scope, isolateScope: scopeOptions.isolateScope })
+          return { ok: true, action, entries, qualifications: gradeSearchHits(hits, negatives), count: entries.length }
         }
         if (action === 'get') {
           if (!args.id) return { ok: false, action, message: 'get 需要 id' }
@@ -152,8 +206,11 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           return entry === undefined || !visible(entry) ? { ok: false, action, message: '当前作用域内记忆不存在：' + args.id } : { ok: true, action, entry }
         }
         if (action === 'save') {
-          if (!args.content) return { ok: false, action, message: 'save 需要 content' }
-          if (options?.governance === undefined) return { ok: true, action, entry: store.create({ content: args.content, category: args.category, tags: args.tags, source: args.source ?? 'agent', sourceId: args.sourceId, importance: args.importance, pinned: args.pinned === true }) }
+          if (!args.content) return { ok: false, action, committed: false, message: 'save 需要 content', missing: ['content：必填，写明要记住的具体事实'] }
+          // 0.43.0 P1-7：写入前过受理闸门，拒绝时给出可照做的缺失清单（自动沉淀不经此闸门）。
+          const admission = checkMemoryAdmission({ content: args.content })
+          if (!admission.admitted) return { ok: false, action, committed: false, message: '记忆写入被拒：' + admission.reason, missing: admission.missing }
+          if (options?.governance === undefined) return { ok: true, action, committed: true, entry: store.create({ content: args.content, category: args.category, tags: args.tags, source: args.source ?? 'agent', sourceId: args.sourceId, importance: args.importance, pinned: args.pinned === true }) }
           const verified = verifyLatestUserRequest(exec, args.content, 'save')
           const verifiedSourceId = verified.explicit && verified.evidence !== undefined
             ? ['direct-user', verified.evidence.sessionId, verified.evidence.messageId, verified.evidence.digest].filter(Boolean).join(':')
@@ -161,43 +218,53 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           const candidateInput = { content: args.content, category: args.category, tags: args.tags, importance: args.importance, scope, source: 'agent-proposal', sourceId: verifiedSourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] }
           if (verified.explicit && verified.evidence !== undefined) {
             const accepted = options.governance.acceptExplicitUser(candidateInput)
-            if (accepted.entry !== undefined && args.pinned === true && accepted.entry.pinned !== true) return { ok: true, action, entry: store.update(accepted.entry.id, { pinned: true }) }
-            if (accepted.entry !== undefined) return { ok: true, action, entry: accepted.entry }
-            return { ok: true, action, message: '已识别用户明确保存请求，但与现有事实冲突，已进入待审核候选：' + accepted.candidate.id }
+            if (accepted.entry !== undefined && args.pinned === true && accepted.entry.pinned !== true) return { ok: true, action, committed: true, entry: store.update(accepted.entry.id, { pinned: true }) }
+            if (accepted.entry !== undefined) {
+              // deduped：内容与现有记忆等价，没有新增落盘——不能报成「保存成功」。
+              if (accepted.candidate.state === 'deduped') return { ok: true, action, committed: false, pendingReason: 'duplicate', entry: accepted.entry, message: '该内容与现有记忆重复，未新增（已有记忆 id=' + accepted.entry.id + '）：' + accepted.entry.content }
+              return { ok: true, action, committed: true, entry: accepted.entry }
+            }
+            return { ok: true, action, committed: false, pendingReason: 'conflict', message: '已识别用户明确保存请求，但与现有事实冲突，未落盘，已进入待审核候选：' + accepted.candidate.id, missing: resolutionMissing(accepted.candidate) }
           }
           // 全自动路径（辉哥 2026-09-10 决策）：无明确指令的写入也直接激活，证据链决定信任等级。
           const auto = options.governance.activateAuto(candidateInput)
-          if (auto.entry !== undefined && args.pinned === true && auto.entry.pinned !== true) return { ok: true, action, entry: store.update(auto.entry.id, { pinned: true }) }
-          if (auto.entry !== undefined) return { ok: true, action, entry: auto.entry }
-          return { ok: true, action, message: '已自动激活候选记忆：' + auto.candidate.id }
+          if (auto.entry !== undefined && args.pinned === true && auto.entry.pinned !== true) return { ok: true, action, committed: true, entry: store.update(auto.entry.id, { pinned: true }) }
+          if (auto.entry !== undefined) {
+            if (auto.candidate.state === 'deduped') return { ok: true, action, committed: false, pendingReason: 'duplicate', entry: auto.entry, message: '该内容与现有记忆重复，未新增（已有记忆 id=' + auto.entry.id + '）：' + auto.entry.content }
+            return { ok: true, action, committed: true, entry: auto.entry }
+          }
+          const pendingReason = auto.candidate.state === 'rejected' ? 'rejected' : 'pending'
+          return { ok: true, action, committed: false, pendingReason, message: (pendingReason === 'rejected' ? '写入被拒，未落盘，候选：' : '未落盘，已进入待审核候选：') + auto.candidate.id, missing: resolutionMissing(auto.candidate) }
         }
         if (action === 'update') {
-          if (!args.id) return { ok: false, action, message: 'update 需要 id' }
-          if (args.content === undefined && args.category === undefined && args.tags === undefined && args.source === undefined && args.sourceId === undefined && args.importance === undefined && args.pinned === undefined) return { ok: false, action, message: 'update 至少需要一个要修改的字段' }
+          if (!args.id) return { ok: false, action, committed: false, message: 'update 需要 id' }
+          if (args.content === undefined && args.category === undefined && args.tags === undefined && args.source === undefined && args.sourceId === undefined && args.importance === undefined && args.pinned === undefined) return { ok: false, action, committed: false, message: 'update 至少需要一个要修改的字段' }
           const current = store.get(args.id)
-          if (current === undefined || !visible(current)) return { ok: false, action, message: '当前作用域内记忆不存在：' + args.id }
+          if (current === undefined || !visible(current)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
           const requestedContent = args.content ?? current.content
           const verified = verifyLatestUserRequest(exec, requestedContent, 'update')
           if (options?.governance !== undefined && !verified.explicit) {
             // 全自动路径：更新类写入也直接激活，同 memoryKey 旧事实自动取代。
             const auto = options.governance.activateAuto({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] })
-            return auto.entry !== undefined ? { ok: true, action, entry: auto.entry } : { ok: true, action, message: '更新已自动激活为候选：' + auto.candidate.id }
+            return auto.entry !== undefined
+              ? { ok: true, action, committed: auto.candidate.state !== 'deduped', ...(auto.candidate.state === 'deduped' ? { pendingReason: 'duplicate', message: '更新后内容与现有记忆重复，未落盘（已有 id=' + auto.entry.id + '）' } : {}), entry: auto.entry }
+              : { ok: true, action, committed: false, pendingReason: 'pending', message: '更新未落盘，已进入待审核候选：' + auto.candidate.id, missing: resolutionMissing(auto.candidate) }
           }
           const verifiedSourceId = verified.evidence === undefined ? args.sourceId : ['direct-user', verified.evidence.sessionId, verified.evidence.messageId, verified.evidence.digest].filter(Boolean).join(':')
           const governed = options?.governance === undefined ? {} : { source: 'user-confirmed', sourceId: verifiedSourceId, trust: 'confirmed' as const, confidence: 1, evidence: verified.evidence === undefined ? current.evidence : [...current.evidence, verified.evidence] }
           const patch = Object.fromEntries(Object.entries({ content: args.content, category: args.category, tags: args.tags, source: args.source, sourceId: args.sourceId, importance: args.importance, pinned: args.pinned, ...governed }).filter(([, value]) => value !== undefined))
-          return { ok: true, action, entry: store.update(args.id, patch) }
+          return { ok: true, action, committed: true, entry: store.update(args.id, patch) }
         }
         if (action === 'delete') {
-          if (!args.id) return { ok: false, action, message: 'delete 需要 id' }
+          if (!args.id) return { ok: false, action, committed: false, message: 'delete 需要 id' }
           const entry = store.get(args.id)
-          if (entry === undefined || !visible(entry)) return { ok: false, action, message: '当前作用域内记忆不存在：' + args.id }
-          if (options?.governance !== undefined && !verifyLatestUserRequest(exec, entry.content, 'delete').explicit) return { ok: false, action, message: '归档未通过 Host 用户确认校验，请明确说明要删除的记忆内容或在记忆工作台操作' }
-          return { ok: true, action, entry: store.archive(args.id, true), message: '已软归档内置长期记忆：' + args.id }
+          if (entry === undefined || !visible(entry)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
+          if (options?.governance !== undefined && !verifyLatestUserRequest(exec, entry.content, 'delete').explicit) return { ok: false, action, committed: false, message: '归档未通过 Host 用户确认校验，请明确说明要删除的记忆内容或在记忆工作台操作', missing: ['用户确认：请在消息里明确说明要删除的记忆内容（归档是不可逆状态变更，必须有用户原话证据）'] }
+          return { ok: true, action, committed: true, entry: store.archive(args.id, true), message: '已软归档内置长期记忆：' + args.id }
         }
-        return { ok: false, action, message: '不支持的 memory_manage action：' + action }
+        return { ok: false, action, committed: false, message: '不支持的 memory_manage action：' + action }
       } catch (error) {
-        return { ok: false, action, message: '内置长期记忆操作失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 200) }
+        return { ok: false, action, committed: false, message: '内置长期记忆操作失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 200) }
       }
     },
   })

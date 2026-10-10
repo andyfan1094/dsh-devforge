@@ -17,7 +17,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSearchHit } from '../rag/protocol.ts'
 import type { RagService } from '../rag/service.ts'
-import type { MemoryRecallTrace, MemoryScopeContext, MemorySettings, NativeMemoryEntry } from './protocol.ts'
+import type { MemoryQualification, MemoryRecallTrace, MemoryScopeContext, MemorySearchHit, MemorySettings, NativeMemoryEntry } from './protocol.ts'
 import type { MemoryGovernanceService } from './governance.ts'
 import type { MemoryRecallService } from './recall.ts'
 import type { NativeMemoryStore } from './native.ts'
@@ -95,13 +95,38 @@ function entryDateStamp(entry: NativeMemoryEntry): string {
   return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
 }
 
+/**
+ * 单条命中的资格判定（0.43.0 P1-6，契约移植自灵枢 dsh-memory 的四态资格）。
+ * - 负记忆层命中 → REJECT：这条说法已被明确否定，不得采用；
+ * - 分数与证据都够 → ACCEPT：可直接采用；
+ * - 其余 → DEFER：命中了但把握不够，采用前必须确认。
+ * 不确定就降级为「待确认」，绝不把弱证据包装成确定结论。
+ */
+function qualifyHit(hit: MemorySearchHit, topScore: number, threshold: number): { qualification: MemoryQualification; reason: string } {
+  if (hit.negative !== undefined) {
+    return { qualification: 'REJECT', reason: '该说法已被否定（' + hit.negative.kind + '）：' + (hit.negative.reason === '' ? '无原因说明' : hit.negative.reason) }
+  }
+  const strong = hit.score >= Math.max(threshold, topScore * 0.8)
+  const trusted = hit.entry.trust === 'confirmed' || hit.entry.trust === 'verified'
+  if (strong && trusted) return { qualification: 'ACCEPT', reason: '证据与相似度足够' }
+  return { qualification: 'DEFER', reason: trusted ? '相似度不足，采用前请确认' : '证据等级偏低（' + hit.entry.trust + '），采用前请确认' }
+}
+
+/** 资格标注文本：ACCEPT 不标注（避免每轮注入被说明文字淹没），只标需要警惕的两种。 */
+function qualificationMark(qualification: MemoryQualification, reason: string): string {
+  if (qualification === 'REJECT') return '⚠ 该说法已被否定，不得采用：' + reason
+  if (qualification === 'DEFER') return '待确认：' + reason
+  return ''
+}
+
 /** 渲染内置记忆条目快照（导出供单测校验格式与预算）：
  * - 每条带更新日期：模型可据此判断时效（旧事实不冒充现状）；
  * - 整条装入预算，装不下整条就停止（绝不截半条——半条比缺条更误导）；
- * - 仅当首条单独超预算时才截断首条，保证有内容可注入。 */
+ * - 仅当首条单独超预算时才截断首条，保证有内容可注入；
+ * - `marks` 携带资格标注（P1-6）：被否定的说法与低把握命中必须在行内声明。 */
 interface RenderedEntries { text: string; includedIds: Set<string> }
 
-function renderNativeContextDetailed(entries: NativeMemoryEntry[], maxChars: number): RenderedEntries {
+function renderNativeContextDetailed(entries: NativeMemoryEntry[], maxChars: number, marks?: Map<string, string>): RenderedEntries {
   if (entries.length === 0 || maxChars <= 0) return { text: '', includedIds: new Set() }
   const header = '[内置长期记忆] 以下是检索到的长期记忆候选，可能与当前问题无关，请自行取舍；版本号、路径、发布状态等可变事实以条目日期与实时核验为准：'
   const lines: string[] = [header]
@@ -109,7 +134,8 @@ function renderNativeContextDetailed(entries: NativeMemoryEntry[], maxChars: num
   let used = header.length
   for (const entry of entries) {
     const stamp = entryDateStamp(entry)
-    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.source + ' · ' + entry.category + '] ' + entry.content
+    const mark = marks?.get(entry.id) ?? ''
+    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.source + ' · ' + entry.category + '] ' + entry.content + (mark === '' ? '' : '（' + mark + '）')
     if (used + line.length + 1 > maxChars) {
       if (includedIds.size === 0) {
         lines.push(line.slice(0, Math.max(0, maxChars - header.length - 1)))
@@ -192,8 +218,16 @@ export function renderProjectProfile(entries: NativeMemoryEntry[], label: string
   return renderProjectProfileDetailed(entries, label, maxChars).text
 }
 
-/** 注入决策明细：text 为空时 reason 说明跳过原因；traceId 可关联人工反馈。 */
-export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit'; traceId?: string }
+/**
+ * 盲区声明（P1-6 BLINDSPOT）：确实检索过、但记忆库里没有相关内容时明确告知。
+ * 沉默会让模型把「记忆里没有」当成「世上没有」，转而凭猜测作答——这是四态资格里的盲区，
+ * 不是普通的不注入。
+ */
+export const BLINDSPOT_NOTICE = '[长期记忆盲区] 本轮已检索记忆库，但没有找到与当前话题相关的长期记忆。不要凭猜测作答：需要事实时请先核实，或明确说明这是未知项。'
+
+/** 注入决策明细：text 为空时 reason 说明跳过原因；traceId 可关联人工反馈。
+ * `qualification` 是本轮召回的整体资格（四态，P1-6）：ACCEPT / DEFER / BLINDSPOT / REJECT。 */
+export interface InjectDecision { text?: string; reason?: 'disabled' | 'no-hit'; qualification?: MemoryQualification; traceId?: string }
 
 export interface MemoryInjectionOptions {
   recall?: MemoryRecallService
@@ -279,10 +313,13 @@ export class MemoryInjectionService {
     let nativeEntries: NativeMemoryEntry[] = []
     let nativeScores = new Map<string, number>()
     let nativeLayers = new Map<string, 'native' | 'semantic'>()
+    /** 原始命中：资格判定要读负覆盖标记，而负覆盖只存在于 hit 上（P1-6）。 */
+    let nativeHits: MemorySearchHit[] = []
     try {
       if (this.recall !== undefined) {
         const result = await this.recall.recall({ query, scope, isolateScope: settings.scopeIsolation !== false, semantic: settings.semanticRecall !== false, semanticWeight: settings.semanticWeight ?? 0.35, threshold: settings.threshold, limit: settings.topK })
         degradedLayers.push(...result.degradedLayers)
+        nativeHits = result.hits
         nativeEntries = result.hits.map((hit) => hit.entry)
         nativeScores = new Map(result.hits.map((hit) => [hit.entry.id, hit.score]))
         nativeLayers = new Map(result.hits.map((hit) => [hit.entry.id, hit.lexicalScore === 0 && hit.semanticScore > 0 ? 'semantic' as const : 'native' as const]))
@@ -291,11 +328,23 @@ export class MemoryInjectionService {
         const topScore = ranked[0]?.score ?? 0
         const floor = Math.max(settings.threshold, topScore * RELATIVE_KEEP_RATIO)
         const hits = ranked.filter((hit) => hit.score >= floor)
+        nativeHits = hits
         nativeEntries = hits.map((hit) => hit.entry)
         nativeScores = new Map(hits.map((hit) => [hit.entry.id, hit.score]))
         nativeLayers = new Map(hits.map((hit) => [hit.entry.id, 'native' as const]))
       }
     } catch (error) { degradedLayers.push('native:' + (error instanceof Error ? error.message : String(error)).slice(0, 120)) }
+
+    // P1-6 四态资格：逐条判定并生成行内标注（ACCEPT 不标注，省预算也降噪）。
+    const qualificationMarks = new Map<string, string>()
+    const hitQualifications: MemoryQualification[] = []
+    const topScoreForQualify = nativeHits.reduce((max, hit) => Math.max(max, hit.score), 0)
+    for (const hit of nativeHits) {
+      const graded = qualifyHit(hit, topScoreForQualify, settings.threshold)
+      hitQualifications.push(graded.qualification)
+      const mark = qualificationMark(graded.qualification, graded.reason)
+      if (mark !== '') qualificationMarks.set(hit.entry.id, mark)
+    }
 
     if (pinnedEntries.length > 0) {
       const pinnedIds = new Set(pinnedEntries.map((entry) => entry.id))
@@ -316,7 +365,8 @@ export class MemoryInjectionService {
 
     if (pinnedEntries.length === 0 && profileEntries.length === 0 && mirrorHits.length === 0 && nativeEntries.length === 0) {
       trace(degradedLayers.length > 0 ? 'degraded' : 'no-hit', [], degradedLayers)
-      return { reason: 'no-hit', traceId }
+      // P1-6 盲区（BLINDSPOT）：确实检索过却一无所获时必须明说——沉默等于放任模型自由发挥。
+      return { text: BLINDSPOT_NOTICE, reason: 'no-hit', qualification: 'BLINDSPOT', traceId }
     }
 
     const pinnedRendered = renderPinnedContextDetailed(pinnedEntries, PINNED_MAX_CHARS)
@@ -324,7 +374,7 @@ export class MemoryInjectionService {
     const profileIds = new Set(profileRendered.includedIds)
     const nativeForRender = nativeEntries.filter((entry) => !profileIds.has(entry.id))
     let remaining = settings.maxChars
-    const nativeRendered = renderNativeContextDetailed(nativeForRender, remaining)
+    const nativeRendered = renderNativeContextDetailed(nativeForRender, remaining, qualificationMarks)
     remaining = Math.max(0, remaining - nativeRendered.text.length)
     const ragText = renderMemoryContext(mirrorHits, remaining)
     const combined = [pinnedRendered.text, profileRendered.text, nativeRendered.text, ragText].filter((part) => part !== '').join('\n---\n')
@@ -335,7 +385,9 @@ export class MemoryInjectionService {
       ...mirrorHits.map((hit) => ({ entryId: hit.chunkId, layer: 'mirror' as const, score: hit.score, included: ragText.includes(hit.text), ...(ragText.includes(hit.text) ? {} : { skipReason: 'mirror-budget' }) })),
     ]
     trace(degradedLayers.length > 0 ? 'degraded' : 'hit', hits, degradedLayers)
-    return combined === '' ? { reason: 'no-hit', traceId } : { text: combined, traceId }
+    // 本轮召回的整体资格：有可用的就给 ACCEPT，全是待确认给 DEFER，全被否定给 REJECT。
+    const overall: MemoryQualification = hitQualifications.includes('ACCEPT') ? 'ACCEPT' : hitQualifications.includes('DEFER') ? 'DEFER' : hitQualifications.length > 0 ? 'REJECT' : 'BLINDSPOT'
+    return combined === '' ? { reason: 'no-hit', qualification: 'BLINDSPOT', traceId } : { text: combined, traceId, qualification: overall }
   }
 
   async decide(messages: readonly unknown[]): Promise<string | undefined> {

@@ -389,6 +389,44 @@ export interface MemoryRecallFeedback {
   createdAt: number
 }
 
+/**
+ * 负记忆类型（0.43.0 P1-5，契约移植自灵枢 dsh-memory）：
+ * - rejected：被人工明确拒绝；
+ * - falsified：被后续事实证伪；
+ * - superseded：被新事实推翻。
+ */
+export type MemoryNegativeKind = 'rejected' | 'falsified' | 'superseded'
+
+/**
+ * 负记忆：明确「不该被采用」的说法，存 `memory.rejected` 域。
+ *
+ * 它不参与正常召回注入（不是可用的知识），只在召回命中相似内容时回吐警示，
+ * 防止已被否定的错误说法继续冒充答案。作用域与正记忆同规则过滤。
+ */
+export interface RejectedMemory {
+  id: string
+  /** 被否定的说法正文（用于相似比对）。 */
+  content: string
+  /** 否定原因，人类可读，会回吐给模型。 */
+  reason: string
+  kind: MemoryNegativeKind
+  scope: MemoryScopeContext
+  rejectedAt: number
+  /** 谁否定的：user / dream / system。 */
+  actor: string
+  /** 来源候选或记忆 id，便于追溯。 */
+  sourceId?: string
+}
+
+/**
+ * 召回资格（0.43.0 P1-6，契约移植自灵枢 dsh-memory 的四态资格判定）：
+ * - ACCEPT：证据与相似度都够，可直接采用；
+ * - DEFER：命中了但把握不够，采用前必须确认；
+ * - BLINDSPOT：记忆库里没有相关内容，这是盲区——不要凭猜测作答；
+ * - REJECT：该说法已被否定（负记忆层命中），不得采用。
+ */
+export type MemoryQualification = 'ACCEPT' | 'DEFER' | 'BLINDSPOT' | 'REJECT'
+
 /** 召回明细：保留各分量，便于解释为什么命中和安全调参。 */
 export interface MemorySearchHit {
   entry: NativeMemoryEntry
@@ -399,6 +437,8 @@ export interface MemorySearchHit {
   scopeScore: number
   matchedTerms: string[]
   entityHits: string[]
+  /** 负覆盖命中：该说法已被否定，注入时必须回吐警示（P1-5）。 */
+  negative?: { id: string; kind: MemoryNegativeKind; reason: string }
 }
 
 /** 记忆库质量统计；不把单纯注入次数冒充有效率。 */

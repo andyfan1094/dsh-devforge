@@ -19,6 +19,7 @@ import type {
   NativeMemoryEntry,
 } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
+import { MemoryNegativeStore } from './negatives.ts'
 
 export const MEMORY_CANDIDATE_DOMAIN = 'memory.candidate'
 export const MEMORY_EPISODE_DOMAIN = 'memory.episode'
@@ -150,9 +151,12 @@ function parseEpisode(data: unknown, id: string): MemoryEpisode | undefined {
 export class MemoryGovernanceService {
   private readonly rag: RagStore
   private readonly native: NativeMemoryStore
+  /** 负记忆层（P1-5）：被拒绝/证伪/推翻的说法落 memory.rejected，召回时作负覆盖提示。 */
+  readonly negatives: MemoryNegativeStore
   constructor(rag: RagStore, native: NativeMemoryStore) {
     this.rag = rag
     this.native = native
+    this.negatives = new MemoryNegativeStore(rag)
   }
 
   /** 创建候选并在写入前标记精确重复与同 claim 冲突。 */
@@ -233,6 +237,8 @@ export class MemoryGovernanceService {
       const rejected = { ...candidate, state: 'rejected' as const, resolvedAt: now, resolutionReason: clip(input.reason, 500) || '人工拒绝' }
       this.rag.withDomainTransaction(() => {
         this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, candidate.id, rejected)
+        // P1-5 负记忆层：被否定的说法必须显式落层，否则下次还会被当成新知识重新提上来。
+        this.negatives.record({ id: 'rej-' + candidate.id, content: candidate.content, reason: rejected.resolutionReason ?? '人工拒绝', kind: 'rejected', scope: candidate.scope, actor: 'user', sourceId: candidate.id })
         this.audit('reject', [candidate.id], rejected.resolutionReason ?? '')
       })
       return { candidate: rejected }

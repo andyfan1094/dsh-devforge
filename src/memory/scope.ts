@@ -30,8 +30,11 @@ export function resolveMemoryScope(cwd: string | undefined, projects: readonly P
   return { kind: 'workspace', id: target, label: target.split('/').pop() ?? target }
 }
 
-/** 判断条目是否允许进入当前会话召回。全局记忆始终可见，项目/工作区必须精确匹配。 */
-export function memoryScopeMatches(entry: NativeMemoryEntry, current: MemoryScopeContext, isolate: boolean): boolean {
+/**
+ * 判断条目是否允许进入当前会话召回。全局记忆始终可见，项目/工作区必须精确匹配。
+ * 只依赖条目的 `scope` 字段，因此记忆条目与负记忆条目共用同一套过滤规则。
+ */
+export function memoryScopeMatches(entry: { scope: MemoryScopeContext }, current: MemoryScopeContext, isolate: boolean): boolean {
   if (!isolate) return true
   if (entry.scope.kind === 'global') return true
   if (entry.scope.kind !== current.kind) return false

@@ -14,6 +14,7 @@ import type { RagEmbedder, RagService } from '../rag/service.ts'
 import { vectorKey } from '../rag/embedder.ts'
 import type { MemoryScopeContext, MemorySearchHit } from './protocol.ts'
 import type { NativeMemoryStore } from './native.ts'
+import { pickNegativeCoverage, type MemoryNegativeStore } from './negatives.ts'
 
 export interface MemoryRecallResult {
   hits: MemorySearchHit[]
@@ -50,13 +51,16 @@ export class MemoryRecallService {
   private readonly native: NativeMemoryStore
   private readonly rag: RagService
   private readonly store: RagStore
+  /** 负记忆层（可选）：用于召回负覆盖提示；缺省时不做负覆盖。 */
+  private readonly negatives?: MemoryNegativeStore
   /** query 向量缓存：vectorKey(model, query) → 向量。 */
   private readonly queryCache = new Map<string, { vector: Float32Array; at: number }>()
 
-  constructor(native: NativeMemoryStore, rag: RagService, store: RagStore) {
+  constructor(native: NativeMemoryStore, rag: RagService, store: RagStore, negatives?: MemoryNegativeStore) {
     this.native = native
     this.rag = rag
     this.store = store
+    this.negatives = negatives
   }
 
   async recall(input: { query: string; scope: MemoryScopeContext; isolateScope: boolean; semantic: boolean; semanticWeight: number; threshold: number; limit: number }): Promise<MemoryRecallResult> {
@@ -131,7 +135,15 @@ export class MemoryRecallService {
     const scoreFloor = Math.max(0, Math.min(1, input.threshold), topScore * 0.55)
     const hits = ranked.filter((hit) => hit.score >= scoreFloor).slice(0, limit)
 
-    return { hits, degradedLayers }
+    // P1-5 负覆盖：命中被否定过的说法时回吐警示，防止已被拒绝/证伪的错记忆继续冒充答案。
+    // 负层一次取回后在内存比对，绝不逐条回库（负记忆本身不参与召回排序）。
+    const negatives = this.negatives === undefined ? [] : this.negatives.list({ scope: input.scope, isolateScope: input.isolateScope })
+    const guarded = negatives.length === 0 ? hits : hits.map((hit) => {
+      const negative = pickNegativeCoverage(negatives, hit.entry.content)
+      return negative === undefined ? hit : { ...hit, negative: { id: negative.id, kind: negative.kind, reason: negative.reason } }
+    })
+
+    return { hits: guarded, degradedLayers }
   }
 
   /** 取 query 向量：命中缓存直接复用，避免同一问题反复走远程嵌入。 */
