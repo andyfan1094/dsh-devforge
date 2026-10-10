@@ -17,7 +17,7 @@ import { RagStore } from '../src/rag/rag-store.ts'
 import { NativeMemoryStore } from '../src/memory/native.ts'
 import { MemoryDreamService } from '../src/memory/dream.ts'
 import { DEFAULT_MEMORY_SETTINGS } from '../src/memory/routes.ts'
-import { MEMORY_ROUTE_NO_DEFAULT, modelCatalogFromSection, resolveMemoryModelRoute } from '../src/memory/model-route.ts'
+import { MEMORY_ROUTE_NO_DEFAULT, findStaleMemoryRoutes, modelCatalogFromSection, resolveMemoryModelRoute } from '../src/memory/model-route.ts'
 import type { MemorySettings } from '../src/memory/protocol.ts'
 
 const catalog = new Map<string, readonly string[]>([
@@ -168,4 +168,42 @@ test('做梦集成：宿主默认模型未就绪 → 明确落 failed，不做�
   assert.equal(run.status, 'failed')
   assert.equal(run.error, MEMORY_ROUTE_NO_DEFAULT)
   assert.equal(called, 0)
+})
+
+test('自愈判定：目录为空时绝不清（宿主未就绪，防误清用户有效配置）', () => {
+  const stale = findStaleMemoryRoutes({
+    dreamProvider: 'minimax-cn',
+    sedimentProvider: 'minimax-cn',
+    catalog: new Map(),
+  })
+  assert.equal(stale.staleDream, false)
+  assert.equal(stale.staleSediment, false)
+  assert.deepEqual(stale.cleared, [])
+})
+
+test('自愈判定：目录非空且服务商确实缺失才清，有效的保留', () => {
+  const stale = findStaleMemoryRoutes({
+    dreamProvider: 'minimax-cn',
+    sedimentProvider: 'tiangong',
+    catalog,
+  })
+  assert.equal(stale.staleDream, true)
+  assert.equal(stale.staleSediment, false)
+  assert.deepEqual(stale.cleared, ['minimax-cn'])
+
+  const healthy = findStaleMemoryRoutes({ dreamProvider: 'tiangong', sedimentProvider: '', catalog })
+  assert.equal(healthy.staleDream, false)
+  assert.equal(healthy.staleSediment, false)
+  assert.deepEqual(healthy.cleared, [])
+})
+
+test('自愈判定：两个字段指向同一失效服务商时，日志名去重', () => {
+  const stale = findStaleMemoryRoutes({
+    dreamProvider: 'minimax-cn',
+    sedimentProvider: 'minimax-cn',
+    catalog,
+  })
+  assert.equal(stale.staleDream, true)
+  assert.equal(stale.staleSediment, true)
+  assert.deepEqual(stale.cleared, ['minimax-cn'])
 })

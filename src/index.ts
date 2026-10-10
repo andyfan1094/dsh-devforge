@@ -52,7 +52,7 @@ import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { MemoryGovernanceService } from './memory/governance.ts'
 import { MemoryRecallService } from './memory/recall.ts'
-import { formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
+import { findStaleMemoryRoutes, formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
 import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
@@ -957,18 +957,18 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       const catalog = modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai')))
       if (catalog.size === 0) return false
       const current = memorySettingsRead()
-      const staleDream = current.dreamProvider !== '' && !catalog.has(current.dreamProvider)
-      const staleSediment = current.sedimentProvider !== '' && !catalog.has(current.sedimentProvider)
-      if (!staleDream && !staleSediment) return true
-      const cleared: string[] = []
-      if (staleDream) cleared.push(current.dreamProvider)
-      if (staleSediment && !staleDream) cleared.push(current.sedimentProvider)
+      const stale = findStaleMemoryRoutes({
+        dreamProvider: current.dreamProvider,
+        sedimentProvider: current.sedimentProvider,
+        catalog,
+      })
+      if (!stale.staleDream && !stale.staleSediment) return true
       memorySettingsWrite({
         ...current,
-        ...(staleDream ? { dreamProvider: '', dreamModel: '' } : {}),
-        ...(staleSediment ? { sedimentProvider: '', sedimentModel: '' } : {}),
+        ...(stale.staleDream ? { dreamProvider: '', dreamModel: '' } : {}),
+        ...(stale.staleSediment ? { sedimentProvider: '', sedimentModel: '' } : {}),
       })
-      ctx.logger.info('[dsh-devforge] 记忆模型路由已回归默认：清空失效的服务商覆盖（%s）——记忆提炼与做梦裁决跟随宿主默认模型。', cleared.join('、'))
+      ctx.logger.info('[dsh-devforge] 记忆模型路由已回归默认：清空失效的服务商覆盖（%s）——记忆提炼与做梦裁决跟随宿主默认模型。', stale.cleared.join('、'))
       return true
     } catch (error) {
       // 自愈失败绝不影响启动：运行时路由解析仍会回退宿主默认。
