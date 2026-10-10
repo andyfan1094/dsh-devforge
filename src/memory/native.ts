@@ -250,6 +250,20 @@ function trustScore(trust: MemoryTrust): number {
   return 0.35
 }
 
+/**
+ * 反馈回路的评分分量（0.43.0 P2-10，契约移植自灵枢 dsh-memory）：
+ * 把 helpfulCount/harmfulCount 真正接进召回排序——否则反馈只是一堆没人读的死计数。
+ * 做拉普拉斯平滑、幅度封顶 ±0.04：样本少时不放大结论，也不允许反馈压过词法/语义相关度
+ * （相关度才是召回的驱动力，反馈只做微调，避免少数差评把正确记忆挤出召回）。
+ */
+function feedbackScore(entry: { helpfulCount: number; harmfulCount: number }): number {
+  const helpful = Math.max(0, entry.helpfulCount)
+  const harmful = Math.max(0, entry.harmfulCount)
+  const total = helpful + harmful
+  if (total === 0) return 0
+  return ((helpful - harmful) / (total + 2)) * 0.04
+}
+
 /** 内置记忆 CRUD、版本元数据和可解释词法检索门面。 */
 export class NativeMemoryStore {
   private readonly rag: RagStore
@@ -457,7 +471,7 @@ export class NativeMemoryStore {
       const matchedTerms = terms.filter((term) => haystack.includes(term))
       const entityHits = entities.filter((entity) => haystack.includes(entity)).slice(0, 2)
       const lexicalScore = matchedTerms.length / terms.length + entityHits.length * 0.3 + recencyBoost(entry.updatedAt, now)
-      const qualityScore = trustScore(entry.trust) * 0.08 + entry.confidence * 0.04 + entry.importance * 0.001
+      const qualityScore = trustScore(entry.trust) * 0.08 + entry.confidence * 0.04 + entry.importance * 0.001 + feedbackScore(entry)
       const scopeScore = entry.scope.kind === 'global' ? 0 : 0.03
       return { entry, effectiveHits: matchedTerms.length + (entityHits.length > 0 ? 1 : 0), hit: { entry, score: lexicalScore + qualityScore + scopeScore, lexicalScore, semanticScore: 0, qualityScore, scopeScore, matchedTerms, entityHits } }
     }).filter((item) => item.effectiveHits >= minHits).sort((a, b) => b.hit.score - a.hit.score || b.entry.updatedAt - a.entry.updatedAt || (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0))
@@ -482,7 +496,11 @@ export class NativeMemoryStore {
     }
   }
 
-  /** 反馈只累计质量事实；useful 不会自动改变排序、信任、作用域或钉选。 */
+  /**
+   * 反馈只累计质量事实，并作为召回微调分量参与排序（P2-10：helpfulCount/harmfulCount
+   * 通过 feedbackScore 进 qualityScore）。它不改变信任等级、作用域或钉选——
+   * 差评要真降权请走隔离或拒绝，不要指望反馈把一条记忆判死。
+   */
   markFeedback(id: string, helpful: boolean): void {
     const meta = this.getMeta(id)
     if (meta === undefined) throw new Error('记忆不存在：' + id)
