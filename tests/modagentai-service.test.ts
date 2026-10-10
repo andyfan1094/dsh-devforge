@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
-import { tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
+import { tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
 import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
@@ -44,12 +44,15 @@ function makeCtx(providers: Record<string, unknown>, opts: { token?: string } = 
   return { service: new ModagentaiService(ctx as never, openai as never), state }
 }
 
+/** 历史版本写入的上下文窗口（256K）；升级后应被启动自愈改写为 TIANGONG_CONTEXT_WINDOW。 */
+const LEGACY_CONTEXT_WINDOW = 262_144
+
 const LEGACY_TIANGONG = {
   apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
   displayName: '天工造梦',
   api: 'openai-completions',
   baseURL: 'https://modagentai.com/api/gw/v1',
-  models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }],
+  models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: LEGACY_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }],
 }
 
 test('档位判定：旧三档落后，五档不落后，未注册不触发', () => {
@@ -63,29 +66,55 @@ test('档位判定：旧三档落后，五档不落后，未注册不触发', ()
   assert.equal(tiangongEffortsOutdated({ models: [{ id: 'GLM-Flash', reasoningEfforts: false }] }), true)
 })
 
+test('容量判定：旧 256K 视为落后，200K 不落后，未注册不触发', () => {
+  assert.equal(tiangongCapacityOutdated({
+    models: [{ id: 'GLM-Flash', contextWindow: LEGACY_CONTEXT_WINDOW }],
+  }), true, '旧 256K 应判落后')
+  assert.equal(tiangongCapacityOutdated({
+    models: [{ id: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: LEGACY_CONTEXT_WINDOW }],
+  }), true, 'DeepSeek 条目旧 256K 同样判落后')
+  assert.equal(tiangongCapacityOutdated({
+    models: [{ id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW }],
+    defaultContextWindow: LEGACY_CONTEXT_WINDOW,
+  }), true, 'provider 级默认容量是旧值也判落后')
+  assert.equal(tiangongCapacityOutdated({
+    models: [
+      { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW },
+      { id: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW },
+    ],
+    defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
+  }), false, '已是 200K 不落后')
+  assert.equal(tiangongCapacityOutdated({
+    models: [{ id: 'GLM-Flash', contextWindow: 150_000 }],
+  }), false, '用户手动填写的其它容量不算落后（启动流程不覆盖人工设置）')
+  assert.equal(tiangongCapacityOutdated(undefined), false)
+  assert.equal(tiangongCapacityOutdated({}), false)
+  assert.equal(tiangongCapacityOutdated({ models: [{ id: 'Other', contextWindow: LEGACY_CONTEXT_WINDOW }] }), false, '非天工造梦模型不看容量')
+})
+
 test('声明判定：五档但缺 DeepSeek V4.1 Flash 视为落后；完整声明不触发', () => {
   const fiveTierNoDeepseek = {
-    models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
+    models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
   }
   assert.equal(tiangongEffortsOutdated(fiveTierNoDeepseek), false, '档位判定不看 DeepSeek')
   assert.equal(tiangongDeclarationOutdated(fiveTierNoDeepseek), true, '缺 DeepSeek 条目应判落后')
   assert.equal(tiangongDeclarationOutdated({
     models: [
-      { id: 'GLM-Flash', reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
-      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
     ],
   }), true, 'DeepSeek 旧声明缺 image（2026-09-27 实测支持看图）应判落后')
   assert.equal(tiangongDeclarationOutdated({
     models: [
-      { id: 'GLM-Flash', reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
-      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+      { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
     ],
-  }), false, '完整声明（含 image）不落后')
+  }), false, '完整声明（含 image 与 200K 容量）不落后')
   assert.equal(tiangongDeclarationOutdated(undefined), false)
   assert.equal(tiangongDeclarationOutdated({}), false)
 })
 
-test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下文按辉哥定稿压 200 多 K）', async () => {
+test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下文按辉哥定稿 200K）', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
   try {
@@ -94,7 +123,7 @@ test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下�
       displayName: '天工造梦',
       api: 'openai-completions',
       baseURL: 'https://modagentai.com/api/gw/v1',
-      models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
+      models: [{ id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
     }
     const { service, state } = makeCtx({ tiangong: fiveTierNoDeepseek })
     await service.migrateLegacyGateway()
@@ -103,11 +132,46 @@ test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下�
     const models = (state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number; reasoningEfforts?: Record<string, string> }> }).models
     const deepseek = models.find((m) => m.id === TIANGONG_DEEPSEEK_MODEL_ID)
     assert.ok(deepseek, '应写入 DeepSeek V4.1 Flash 模型条目')
-    assert.equal(deepseek.contextWindow, 262144, '上下文 262144（200 多 K，不声明 1M）')
+    assert.equal(deepseek.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文 200000（200K，不声明 1M 也不贴 256K）')
     assert.deepEqual(deepseek.input, ['text', 'image'], 'input 必须带 image（2026-09-27 实测上游支持看图）')
     assert.equal(deepseek.reasoningEfforts?.low, 'low')
     assert.equal(deepseek.reasoningEfforts?.high, 'high')
     assert.equal(deepseek.reasoningEfforts?.max, 'max')
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：声明完整但上下文仍是旧 256K 时自动压到 200K（已安装插件升级即自动校正）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // 0.42.0 及更早版本登录后写入的形态：档位与看图声明都对，只有容量是 256K。
+    const legacyCapacity = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: LEGACY_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: LEGACY_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      ],
+      defaultContextWindow: LEGACY_CONTEXT_WINDOW,
+    }
+    const { service, state } = makeCtx({ tiangong: legacyCapacity })
+    await service.migrateLegacyGateway()
+    const setMutation = state.mutations.find((m) => m.op === 'set' && m.path[1] === 'tiangong')
+    assert.ok(setMutation, '旧 256K 声明应触发自愈刷新')
+    const written = state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number }>; defaultContextWindow?: number }
+    assert.equal(written.defaultContextWindow, TIANGONG_CONTEXT_WINDOW, 'provider 级默认容量同步改写')
+    for (const model of written.models) {
+      assert.equal(model.contextWindow, TIANGONG_CONTEXT_WINDOW, model.id + ' 上下文应压到 200K')
+    }
     state.mutations.length = 0
     await service.migrateLegacyGateway()
     assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
@@ -128,8 +192,8 @@ test('启动自愈：DeepSeek 旧声明缺 image 时自动刷新补齐看图能�
       api: 'openai-completions',
       baseURL: 'https://modagentai.com/api/gw/v1',
       models: [
-        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: 262144, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
-        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: 262144, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
       ],
     }
     const { service, state } = makeCtx({ tiangong: deepseekTextOnly })
@@ -143,6 +207,31 @@ test('启动自愈：DeepSeek 旧声明缺 image 时自动刷新补齐看图能�
     state.mutations.length = 0
     await service.migrateLegacyGateway()
     assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：声明已是 200K 完整版时不写入（升级过的安装不被反复改写）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    const current = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      ],
+      defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
+    }
+    const { service, state } = makeCtx({ tiangong: current })
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '已是新版声明不应产生任何写入')
   } finally {
     closeAllDb()
     delete process.env.DSH_HOME

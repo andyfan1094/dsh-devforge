@@ -12,7 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
+import { TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -22,7 +22,11 @@ const TIANGONG_PROVIDER_ID = 'tiangong'
 /** 旧 OpenAI 中转体系生成的 provider id（迁移时清理）。 */
 const LEGACY_GATEWAY_PROVIDER_ID = 'openai-gateway-modagentai'
 
-/** 天工造梦原生 provider 声明（GLM-Flash，实测上下文贴 256K；openai-completions 协议走 /chat/completions）。 */
+/**
+ * 天工造梦原生 provider 声明（GLM-Flash + DeepSeek V4.1 Flash；openai-completions 协议走 /chat/completions）。
+ * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-10 定稿 200K）；
+ * 插件升级后若旧声明仍是 256K，由 migrateLegacyGateway 的启动自愈自动改写。
+ */
 const TIANGONG_PROVIDER: Record<string, unknown> = {
   apiKeyEnv: MODAGENTAI_GW_KEY_REF,
   displayName: '天工造梦',
@@ -31,19 +35,19 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
   models: [{
     id: 'GLM-Flash',
     name: 'GLM-Flash',
-    contextWindow: 262144,
+    contextWindow: TIANGONG_CONTEXT_WINDOW,
     input: ['text', 'image'],
     reasoningEfforts: TIANGONG_REASONING_EFFORTS,
   }, {
-    // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿压到 200 多 K（不声明 1M，防长上下文高消耗）。
+    // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿声明 200K（不声明 1M，防长上下文高消耗）。
     // 2026-09-27 实测上游支持图像输入（发图识别颜色正常），input 必须带 image，否则 DSH 发送前剥图。
     id: TIANGONG_DEEPSEEK_MODEL_ID,
     name: TIANGONG_DEEPSEEK_MODEL_ID,
-    contextWindow: 262144,
+    contextWindow: TIANGONG_CONTEXT_WINDOW,
     input: ['text', 'image'],
     reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
   }],
-  defaultContextWindow: 262144,
+  defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
   defaultMaxTokens: 32768,
   defaultInput: ['text', 'image'],
   retryPolicy: {
@@ -495,7 +499,9 @@ export class ModagentaiService {
 
   /**
    * 启动自愈：检测到旧 OpenAI 中转体系残留（openai-gateway-modagentai）且用户已登录时，
-   * 自动迁移到 tiangong 原生 provider。幂等：无残留或未登录时不做任何写入。
+   * 自动迁移到 tiangong 原生 provider；已注册的 tiangong 声明落后（档位/看图声明/上下文容量）
+   * 时自动改写为新版声明——已安装插件升级后无需手动重登或重配，重启即自动校正。
+   * 幂等：无残留、声明无变化或未登录时不做任何写入。
    * 供启动自动补齐调度调用（llm-pi-ai 未就绪时抛错，由调度重试）。
    */
   async migrateLegacyGateway(): Promise<void> {
@@ -503,14 +509,14 @@ export class ModagentaiService {
     if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
     const section = descriptor.value as { providers?: Record<string, unknown> } | undefined
     const providers = section?.providers ?? {}
-    // 旧中转残留需要迁移；已注册的 tiangong 声明若落后（档位缺 xhigh/max 或缺 DeepSeek 模型条目）同样要刷新。
+    // 旧中转残留需要迁移；已注册声明若落后（档位缺 xhigh/max、缺 DeepSeek 条目、缺看图声明，或上下文仍是旧 256K）同样要刷新。
     const hasLegacy = providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined
     if (!hasLegacy && !tiangongDeclarationOutdated(providers[TIANGONG_PROVIDER_ID])) return
     const token = await this.readToken()
     if (token === '') return
     this.ctx.logger?.info?.(hasLegacy
       ? '[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider'
-      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash）')
+      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash/上下文压到 200K）')
     await this.applyGateway()
   }
 
