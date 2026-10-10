@@ -72,7 +72,9 @@ export class MemoryRecallService {
       try {
         const settings = this.rag.getSettings()
         const embedder = this.rag.pickEmbedder(settings)
-        const entries = this.native.list({ limit: 1000, scope: input.scope, isolateScope: input.isolateScope })
+        // 0.43.0：原为 list({ limit: 1000 })。语义路径要逐条算余弦，旧写法把候选硬截到最近
+        // 1000 条——超过千条的旧记忆永远无法被语义召回命中（词法侧是全量扫），库越大盲区越大。
+        const entries = this.native.listForSemanticRecall({ scope: input.scope, isolateScope: input.isolateScope })
         const model = settings.embedding.model
         const keys = entries.map((entry) => vectorKey(model, entry.content))
         // 一次批量取回全部已缓存向量：逐条取在千条规模下是本轮召回最大的本地开销。

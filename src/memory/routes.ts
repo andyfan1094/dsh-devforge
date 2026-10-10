@@ -51,7 +51,9 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   dreamProposalOnly: true,
   dreamIdleMinutes: 10,
   dreamMinIntervalHours: 6,
-  // 模型路由缺省跟随会话默认模型；建议配置专用裁决路由（如 minimax-cn + MiniMax-M2.7-highspeed）。
+  // 模型路由缺省跟随宿主默认模型——登录天工造梦官网后即 tiangong 原生 provider（GLM-Flash /
+  // DeepSeek V4.1 Flash），用户无需另配服务商。0.43.0「天工造梦一套」定稿：面板上的覆盖仅在
+  // 确有需要时使用；一旦它指向宿主目录里不存在的 provider，运行时回退宿主默认并在审计里说明原因。
   dreamProvider: '',
   dreamModel: '',
   dreamMaxTokens: 8192,

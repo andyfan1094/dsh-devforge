@@ -11,6 +11,7 @@
  * - 裁决失败只记审计与计数，绝不影响会话与写入主链路。
  */
 import { randomUUID } from 'node:crypto'
+import { formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, type MemoryModelRoute } from './model-route.ts'
 import type { NativeMemoryEntry, NativeMemoryStore } from './native.ts'
 import type { MemoryDreamDecision, MemoryDreamRun, MemorySettings } from './protocol.ts'
 
@@ -245,6 +246,12 @@ export interface MemoryDreamServiceDeps {
   deleteDomain: (domain: string, id: string) => void
   /** true 时只记录治理建议，模型无权直接修改或归档活跃记忆。 */
   proposalOnly?: boolean
+  /**
+   * 模型路由解析（0.43.0「天工造梦一套」）：面板请求的服务商/模型在宿主目录里不可用时，
+   * 回退宿主默认并给出中文原因——绝不让配置错误表现为「裁决模型调用失败」这种远因报错。
+   * 缺省 = 恒等透传（测试与旧接线保持原行为）。
+   */
+  resolveRoute?: (input: { provider: string; model: string }) => MemoryModelRoute
 }
 
 /** 记忆库做梦服务：定时 tick 三重门槛触发，单轮全流程裁决-应用-审计。 */
@@ -262,6 +269,7 @@ export class MemoryDreamService {
   private readonly putDomain: (domain: string, id: string, data: unknown) => void
   private readonly deleteDomain: (domain: string, id: string) => void
   private readonly proposalOnly: boolean
+  private readonly resolveRoute: ((input: { provider: string; model: string }) => MemoryModelRoute) | undefined
 
   constructor(deps: MemoryDreamServiceDeps) {
     this.native = deps.native
@@ -272,6 +280,8 @@ export class MemoryDreamService {
     this.putDomain = deps.putDomain
     this.deleteDomain = deps.deleteDomain
     this.proposalOnly = deps.proposalOnly === true
+    // 未注入解析器（测试 / 旧接线）时保持原行为：请求值原样透传，空串即交给 generate 的宿主默认路径。
+    this.resolveRoute = deps.resolveRoute
   }
 
   /** 启动定时巡检（60s 一次，进程空闲不占事件循环：unref）。 */
@@ -340,15 +350,28 @@ export class MemoryDreamService {
       }
       const provider = settings.dreamProvider.trim()
       const model = settings.dreamModel.trim()
-      run.model = provider !== '' && model !== '' ? provider + ':' + model : '会话默认模型'
+      // 路由解析先行（0.43.0「天工造梦一套」）：接线层注入解析器时，面板配的服务商/模型在宿主
+      // 目录里不可用就回退宿主默认（登录官网即 tiangong）并留下中文原因，而不是把无效 provider
+      // 直传宿主，换来一句离根因很远的 "no adapter registered for provider"。
+      // 未注入解析器（测试/旧接线）则保持原行为：请求值原样透传，空串 = 交给宿主默认路径。
+      const resolved = this.resolveRoute?.({ provider, model })
+      if (resolved !== undefined && (resolved.provider === '' || resolved.model === '')) {
+        run.error = MEMORY_ROUTE_NO_DEFAULT
+        return run
+      }
+      const route: MemoryModelRoute = resolved ?? {
+        provider, model, fellBack: false, reason: '', requestedProvider: provider, requestedModel: model,
+      }
+      run.model = formatMemoryRoute(route.provider, route.model) || '会话默认模型'
+      if (route.fellBack) run.routeFallback = route.reason
       let raw: string
       try {
         raw = await this.generate({
           system: buildDreamSystemPrompt(),
           user: buildDreamUserPrompt(snapshot, settings.dreamMaxChars),
           maxTokens: settings.dreamMaxTokens,
-          ...(provider !== '' ? { provider } : {}),
-          ...(model !== '' ? { model } : {}),
+          ...(route.provider !== '' ? { provider: route.provider } : {}),
+          ...(route.model !== '' ? { model: route.model } : {}),
         })
       } catch (error) {
         run.error = '裁决模型调用失败：' + (error instanceof Error ? error.message : String(error)).slice(0, 200)
@@ -366,8 +389,8 @@ export class MemoryDreamService {
             system: buildDreamSystemPrompt(),
             user: buildDreamUserPrompt(snapshot, settings.dreamMaxChars) + '\n\n补充硬性要求：上一次输出无法解析（' + firstMessage.slice(0, 120) + '）。请严格只输出 JSON 数组本身：第一个字符必须是 [，最后一个字符必须是 ]，不要输出任何解释、思考过程或代码块围栏。',
             maxTokens: settings.dreamMaxTokens,
-            ...(provider !== '' ? { provider } : {}),
-            ...(model !== '' ? { model } : {}),
+            ...(route.provider !== '' ? { provider: route.provider } : {}),
+            ...(route.model !== '' ? { model: route.model } : {}),
           })
           decisions = parseDreamDecisions(retryRaw)
           run.retried = true

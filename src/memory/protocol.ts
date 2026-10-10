@@ -494,6 +494,11 @@ export interface MemoryDreamRun {
   status: 'ok' | 'degraded' | 'failed' | 'skipped'
   /** 实际使用的模型路由（provider:model；skipped 时为空串）。 */
   model: string
+  /**
+   * 路由回退原因（0.43.0「天工造梦一套」）：面板配的服务商/模型在宿主目录里不可用时，
+   * 自动回退宿主默认并在此留下中文原因——让「配置问题」在审计里一眼可见，不被误读成模型故障。
+   */
+  routeFallback?: string
   /** true=首次解析失败后重试一次成功（观测模型是否经常不听格式指令）。 */
   retried?: boolean
   /** 快照条数。 */

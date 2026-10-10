@@ -317,6 +317,21 @@ export class NativeMemoryStore {
     return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true) && (options?.category === undefined || entry.category === options.category)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
   }
 
+  /**
+   * 语义召回候选全集（0.43.0 修复召回盲区）。
+   *
+   * 背景：list() 的 limit 被 Math.min(1000, …) 硬截断，而语义路径要对候选逐条算余弦再排序——
+   * 于是 4825 条记忆里只有**最近 1000 条**参与语义召回（词法路径是全量扫）。更早的记忆永远
+   * 无法被语义路径命中，且库越大盲区越大：这正是「库里明明有、就是搜不到」的根因。
+   *
+   * 这里放开 1000 截断。新增成本只有「批量取向量 + 逐条余弦」——条目内容本就由 all() 全量驻留，
+   * 所以不会额外放大内存；cap 只用于兜住极端库（默认一万条，覆盖当前规模两倍余量）。
+   */
+  listForSemanticRecall(options?: { scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
+    const cap = 10_000
+    return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap)
+  }
+
   /** 常驻记忆也遵守项目作用域，项目红线不会泄露到其他仓库。 */
   listPinned(options?: { limit?: number; scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(20, Math.floor(options?.limit ?? 6)))

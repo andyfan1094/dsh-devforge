@@ -30,6 +30,16 @@ export const MEMORY_PENDING_DOMAIN = 'memory.pending-window'
 const CATEGORIES = new Set<NativeMemoryCategory>(['preference', 'decision', 'fact', 'insight', 'context', 'general'])
 const MAX_TRACES = 500
 const MAX_EPISODES = 500
+/**
+ * 审计域保留上限（0.43.0）。
+ * 生产实况：memory.audit 9485 条、无任何裁剪调用，比记忆本体（4825 条）还大——只写不清的域
+ * 最终会把 store.db 与跨端备份一起撑大。裁剪助手 trimDomain 本就在本文件里，之前只是没人调用。
+ */
+const MAX_AUDIT = 2_000
+/** 审计裁剪节流：每 N 次审计写入才实扫一次（近万条的全表排序不能每条审计都做）。 */
+const AUDIT_TRIM_EVERY = 100
+/** 单次裁剪上限：存量积压渐进收敛，避免某一次审计写入承担上万次删除而卡住治理链路。 */
+const AUDIT_TRIM_MAX_DELETE = 500
 
 export interface MemoryCandidateInput {
   content: string
@@ -403,13 +413,32 @@ export class MemoryGovernanceService {
     for (const id of ids) this.rag.deleteDomainDoc(MEMORY_PENDING_DOMAIN, id)
   }
 
+  /** 审计裁剪节流计数（进程内；累计满 AUDIT_TRIM_EVERY 次写入触发一次实扫）。 */
+  private auditWrites = 0
+
   private audit(action: string, ids: string[], reason: string): void {
     const id = randomUUID()
     this.rag.putDomainDoc(MEMORY_AUDIT_DOMAIN, id, { id, action, ids, reason: reason.slice(0, 500), createdAt: Date.now() })
+    // 0.43.0：审计域此前只写不裁（生产实况 9485 条无界增长）。
+    // 节流 + 单次上限：既不放过无界增长，也不让某一次审计写入承担上万次删除。
+    this.auditWrites += 1
+    if (this.auditWrites % AUDIT_TRIM_EVERY !== 0) return
+    try {
+      this.trimDomain(MEMORY_AUDIT_DOMAIN, MAX_AUDIT, 'createdAt', AUDIT_TRIM_MAX_DELETE)
+    } catch {
+      // 裁剪失败绝不影响治理主链路：计数继续走，下次触发会重试。
+    }
   }
 
-  private trimDomain(domain: string, limit: number, timeField: string): void {
+  private trimDomain(domain: string, limit: number, timeField: string, maxDelete = Number.POSITIVE_INFINITY): void {
     const rows = this.rag.listDomainDocs(domain).map((row) => ({ id: row.id, time: typeof (row.data as Record<string, unknown> | null)?.[timeField] === 'number' ? (row.data as Record<string, number>)[timeField] : 0 })).sort((a, b) => b.time - a.time)
-    for (const row of rows.slice(limit)) this.rag.deleteDomainDoc(domain, row.id)
+    const overflow = rows.slice(limit)
+    if (overflow.length === 0) return
+    // rows 是时间降序（新→旧），故 overflow 的**尾部**才是最旧的。单次限删必须从最旧一端删起，
+    // 否则会出现「次旧的被删掉、最旧的反而一直留着」——规模越大越明显（被测试抓到的真实缺陷）。
+    const victims = Number.isFinite(maxDelete)
+      ? overflow.slice(Math.max(0, overflow.length - Math.floor(maxDelete)))
+      : overflow
+    for (const victim of victims) this.rag.deleteDomainDoc(domain, victim.id)
   }
 }

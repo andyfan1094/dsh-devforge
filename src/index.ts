@@ -52,6 +52,7 @@ import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { MemoryGovernanceService } from './memory/governance.ts'
 import { MemoryRecallService } from './memory/recall.ts'
+import { formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
 import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
@@ -814,6 +815,28 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   }
   ragService.setRerankLlm((system, user) => generateText({ system, user, maxTokens: 500 }))
 
+  /**
+   * 记忆模型路由解析（0.43.0「天工造梦一套」）。
+   *
+   * 登录天工造梦官网后，宿主默认模型即 tiangong 原生 provider；记忆的提炼与做梦裁决缺省跟随它，
+   * 用户无需另配服务商（面板上的「裁决/沉淀服务商」只是可选覆盖）。
+   * 旧实现会把覆盖值直传 llm.stream——一旦它指向宿主目录里不存在的 provider（存量残留：minimax-cn），
+   * 换来 `no adapter registered for provider` 这种离根因很远的报错，整轮整理直接失败、归档长期为 0。
+   *
+   * 这里统一解析：不可用 → 回退宿主默认 + 中文原因（回退可见，绝不静默、绝不假装成功）。
+   */
+  const resolveMemoryRoute = (request: { provider: string; model: string }): MemoryModelRoute => {
+    const selectionHost = ctx as unknown as { agentDefaultModel?: { currentSelection?: () => { provider: string; model: string } } }
+    const selection = selectionHost.agentDefaultModel?.currentSelection?.()
+    return resolveMemoryModelRoute({
+      requestedProvider: request.provider,
+      requestedModel: request.model,
+      catalog: modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai'))),
+      fallbackProvider: selection?.provider ?? '',
+      fallbackModel: selection?.model ?? '',
+    })
+  }
+
   /** 记忆提炼单次输出预算（候选 5 条 + task 复盘 JSON）。 */
   const REFLECT_BASE_TOKENS = 700
   /** 被 token 上限截断时的自动扩容倍数：700 → 1400 → 2800，都用满仍失败才交给批次重试。 */
@@ -862,10 +885,14 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   // 持久化统计：沉淀/注入累计口径跨重启，修复"计数器内存态重启清零"的可观测缺陷。
   const memoryStats = new MemoryStatsStore(ragService, memoryKbId)
   const sediment = new MemorySedimentService(ragService, memoryKbId, (system, user) => {
-    // 沉淀路由可独立配置（0.26.6）：全局默认路由故障（503 等）时，面板指到健康模型即可，不再被聊天路由绑架。
+    // 沉淀路由可独立配置（0.26.6）；0.43.0 起统一走路由解析：配的服务商在宿主目录里不可用时
+    // 回退宿主默认（登录官网即 tiangong）并留原因，而不是把无效 provider 直传宿主。
     const route = memorySettingsRead()
+    const resolved = resolveMemoryRoute({ provider: route.sedimentProvider, model: route.sedimentModel })
+    if (resolved.provider === '' || resolved.model === '') throw new Error(MEMORY_ROUTE_NO_DEFAULT)
+    if (resolved.fellBack) ctx.logger.info('[dsh-devforge] 记忆沉淀路由回退：%s', resolved.reason)
     // token 预算与截断扩容重试都在 generateReflectionText 内部（0.29.4）：复盘不能因一次截断整批作废。
-    return generateReflectionText({ system, user, ...(route.sedimentProvider !== '' ? { provider: route.sedimentProvider } : {}), ...(route.sedimentModel !== '' ? { model: route.sedimentModel } : {}) })
+    return generateReflectionText({ system, user, provider: resolved.provider, model: resolved.model })
   }, () => {
     const settings = memorySettingsRead()
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
@@ -880,6 +907,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     native: nativeMemory,
     // generateText 已支持 provider/model 覆盖：做梦路由可独立于会话默认模型（裁决不被聊天路由牵连）。
     generate: generateText,
+    // 0.43.0「天工造梦一套」：面板配的服务商/模型在宿主目录里不可用时回退宿主默认并留原因。
+    resolveRoute: resolveMemoryRoute,
     config: () => {
       const settings = memorySettingsRead()
       return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
@@ -902,10 +931,62 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         : run.proposals !== undefined
           ? '快照 ' + run.snapshot + ' 条，产生治理建议 ' + run.proposals.length + ' 条（仅建议不落库，等待人工审核）' + (run.retried === true ? '（解析重试后成功）' : '')
           : '快照 ' + run.snapshot + ' 条，归档 ' + run.archived + '，合并 ' + run.merged + ' 组，修订 ' + run.updated + '，跳过 ' + run.skipped.length + (run.retried === true ? '（解析重试后成功）' : '')
-    memoryStats.update((prev) => ({ ...prev, dreamTotal: prev.dreamTotal + 1, lastDreamAt: run.finishedAt, lastDreamStatus: run.status, lastDreamSummary: summary.slice(0, 200) }))
+    // 路由回退要出现在面板块上：否则「配错服务商」会被误读成模型故障（0.43.0）。
+    const withFallback = run.routeFallback === undefined || run.routeFallback === ''
+      ? summary
+      : summary + '｜路由回退：' + run.routeFallback
+    memoryStats.update((prev) => ({ ...prev, dreamTotal: prev.dreamTotal + 1, lastDreamAt: run.finishedAt, lastDreamStatus: run.status, lastDreamSummary: withFallback.slice(0, 300) }))
   }
   dream.start()
   ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
+
+  /**
+   * 存量脏配置自愈（0.43.0「天工造梦一套」）。
+   *
+   * 老安装的 memory.settings 里可能留着一个已不存在的服务商覆盖（生产实况：minimax-cn 指向
+   * 未注册 adapter 的路由）。运行时解析能保证「不失败」（回退宿主默认），但面板上仍挂着一个
+   * 永远不可用的选择，用户也无从知道该清掉它。这里在 llm-pi-ai 就绪后把这类覆盖清空，
+   * 让它真正回到「跟随宿主默认模型」——登录官网即一套走通。
+   *
+   * 防误清（关键红线）：只在**目录非空**且该服务商确实不在目录里时才清。
+   * 目录为空说明宿主模型服务尚未就绪，此时清空会把用户的有效配置误删。
+   * 返回 true = 已作判定（含「无需改动」）；false = 宿主未就绪，交给调度重试。
+   */
+  const healMemoryRouteOverrides = (): boolean => {
+    try {
+      const catalog = modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai')))
+      if (catalog.size === 0) return false
+      const current = memorySettingsRead()
+      const staleDream = current.dreamProvider !== '' && !catalog.has(current.dreamProvider)
+      const staleSediment = current.sedimentProvider !== '' && !catalog.has(current.sedimentProvider)
+      if (!staleDream && !staleSediment) return true
+      const cleared: string[] = []
+      if (staleDream) cleared.push(current.dreamProvider)
+      if (staleSediment && !staleDream) cleared.push(current.sedimentProvider)
+      memorySettingsWrite({
+        ...current,
+        ...(staleDream ? { dreamProvider: '', dreamModel: '' } : {}),
+        ...(staleSediment ? { sedimentProvider: '', sedimentModel: '' } : {}),
+      })
+      ctx.logger.info('[dsh-devforge] 记忆模型路由已回归默认：清空失效的服务商覆盖（%s）——记忆提炼与做梦裁决跟随宿主默认模型。', cleared.join('、'))
+      return true
+    } catch (error) {
+      // 自愈失败绝不影响启动：运行时路由解析仍会回退宿主默认。
+      ctx.logger.warn?.('[dsh-devforge] 记忆路由自愈失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))
+      return true
+    }
+  }
+  /** 自愈带重试：llm-pi-ai 未就绪时目录为空，等宿主模型服务就绪后再判定（与启动补齐同节奏）。 */
+  const scheduleMemoryRouteHeal = (): void => {
+    void (async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (healMemoryRouteOverrides()) return
+        const scope = autoEnsureTimerScope
+        if (scope === undefined) return
+        try { await scope.wait(5_000).done } catch { return }
+      }
+    })()
+  }
 
   // ---- 镜像自动同步（0.33.5）：修复「镜像只同步一次后永久脱节」----
   // 生产实况：Mnemon 侧 40 篇、镜像库仅 12 篇且停在 2026-09-02 首次手动同步。
@@ -1244,6 +1325,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     previousTimerScope?.cancelAll()
     // 必须等所有能力配置同步完成后再异步迁移/补齐；提前启动会被本段默认值覆盖。
     scheduleAutoEnsureModels()
+    // 记忆路由自愈与补齐同节奏启动：清掉指向不存在服务商的存量覆盖（0.43.0「官网一套」）。
+    scheduleMemoryRouteHeal()
     // OpenAI 中转站只注册一个全局 generate_image；聊天协议继续由 llm-pi-ai 承载。
     safeActivate(ctx, 'OpenAI 生图工具', () => { disposeOpenAiTools = activateOpenAiGenerateImage(ctx, { enabled: value.enabled === true && value.openai?.enabled !== false }, openAiService).dispose })
     // MiniMax 官方工具：联网搜索/图像理解，凭据走受管引用，绝不落明文。
