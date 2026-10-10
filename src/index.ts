@@ -52,7 +52,7 @@ import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
 import { MemoryGovernanceService } from './memory/governance.ts'
 import { MemoryRecallService } from './memory/recall.ts'
-import { findStaleMemoryRoutes, formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
+import { findStaleMemoryRoutes, formatMemoryRoute, MEMORY_ROUTE_NO_DEFAULT, mergeRegisteredCatalog, modelCatalogFromSection, resolveMemoryModelRoute, type MemoryModelRoute } from './memory/model-route.ts'
 import { resolveMemoryScope } from './memory/scope.ts'
 import { NativeMemoryStore } from './memory/native.ts'
 import { memoryManageTool } from './memory/tools.ts'
@@ -825,13 +825,39 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
    *
    * 这里统一解析：不可用 → 回退宿主默认 + 中文原因（回退可见，绝不静默、绝不假装成功）。
    */
+  /** 宿主真实注册了 adapter 的 provider id 集合（与面板模型目录同口径）。 */
+  const registeredProviderIds = (): string[] => {
+    const llm = ctx.get('llm') as { listProviders?: () => Array<{ id?: unknown }> } | undefined
+    const providers = llm?.listProviders?.()
+    if (!Array.isArray(providers)) return []
+    return providers.flatMap((item) => typeof item?.id === 'string' && item.id !== '' ? [item.id] : [])
+  }
+
+  /**
+   * 记忆路由可用性目录（0.43.0）。
+   *
+   * 权威依据是 **ctx.llm.listProviders()**——宿主真正注册了 adapter 的 provider，与面板模型目录
+   * （src/model-catalog.ts）同口径；**不是** llm-pi-ai 的配置声明。
+   *
+   * 生产踩坑（2026-10-10）：minimax-cn 在配置里声明齐全（apiKeyEnv + 四个模型），但宿主侧没有
+   * 注册 adapter，调用直接报 no adapter registered for provider "minimax-cn"。若只看配置声明，
+   * 它会被判成「可用」——运行时不回退、自愈不清空，两项修复同时失灵。这是本次最关键的修正。
+   *
+   * 模型名仍取 llm-pi-ai 的声明（listProviders 只给 id/name）；声明里查不到时该 provider 视为
+   * 「无模型」，由路由解析按「服务商下没有可用模型」处理（回退宿主默认，不静默）。
+   */
+  const memoryRouteCatalog = (): Map<string, string[]> => mergeRegisteredCatalog(
+    registeredProviderIds(),
+    modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai'))),
+  )
+
   const resolveMemoryRoute = (request: { provider: string; model: string }): MemoryModelRoute => {
     const selectionHost = ctx as unknown as { agentDefaultModel?: { currentSelection?: () => { provider: string; model: string } } }
     const selection = selectionHost.agentDefaultModel?.currentSelection?.()
     return resolveMemoryModelRoute({
       requestedProvider: request.provider,
       requestedModel: request.model,
-      catalog: modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai'))),
+      catalog: memoryRouteCatalog(),
       fallbackProvider: selection?.provider ?? '',
       fallbackModel: selection?.model ?? '',
     })
@@ -954,7 +980,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
    */
   const healMemoryRouteOverrides = (): boolean => {
     try {
-      const catalog = modelCatalogFromSection(readSettingsSection(ctx, settingsNamespace('llm-pi-ai')))
+      const catalog = memoryRouteCatalog()
       if (catalog.size === 0) return false
       const current = memorySettingsRead()
       const stale = findStaleMemoryRoutes({

@@ -44,7 +44,7 @@ export interface MemoryModelRouteInput {
   requestedProvider: string
   /** 面板请求的模型（空串 = 跟随该服务商的可用模型）。 */
   requestedModel: string
-  /** 宿主当前可用 provider 目录：服务商 id → 该服务商可用模型 id 列表。 */
+  /** 宿主**真实注册了 adapter** 的 provider 目录：服务商 id → 该服务商可用模型 id 列表。 */
   catalog: ReadonlyMap<string, readonly string[]>
   /** 宿主默认路由（agent-default-model 当前选择）。 */
   fallbackProvider: string
@@ -107,8 +107,12 @@ export function resolveMemoryModelRoute(input: MemoryModelRouteInput): MemoryMod
 }
 
 /**
- * 从 llm-pi-ai 设置段解析可用 provider 目录（服务商 id → 模型 id 列表）。
- * 结构异常一律返回空表（调用方据此走「宿主默认」路径，不因脏结构炸掉记忆链路）。
+ * 从 llm-pi-ai 设置段解析「声明」的 provider 与模型名（服务商 id → 模型 id 列表）。
+ *
+ * 注意：这是**声明**，不等于可用——生产踩坑（2026-10-10）：minimax-cn 在配置里声明齐全
+ * （apiKeyEnv + 四个模型）却没有注册 adapter，调用直接报 no adapter registered。
+ * 可用性判据必须用宿主真实注册结果（ctx.llm.listProviders），本函数只负责提供模型名。
+ * 结构异常一律返回空表（不因脏结构炸掉记忆链路）。
  */
 export function modelCatalogFromSection(section: unknown): Map<string, string[]> {
   const catalog = new Map<string, string[]>()
@@ -131,11 +135,29 @@ export function modelCatalogFromSection(section: unknown): Map<string, string[]>
   return catalog
 }
 
+/**
+ * 合并「宿主真实注册的 provider」与「llm-pi-ai 声明的模型名」，得到记忆路由的可用性目录。
+ *
+ * 只有真实注册的 provider 才算可用（哪怕它声明得再齐全）；模型名取声明（listProviders 只给
+ * id/name），声明里查不到就给空列表 = 该 provider 没有可用模型，由路由解析回退宿主默认。
+ *
+ * @param registered - ctx.llm.listProviders() 给出的 provider id（真实注册）。
+ * @param declared - modelCatalogFromSection() 解析出的声明模型名。
+ */
+export function mergeRegisteredCatalog(registered: readonly string[], declared: ReadonlyMap<string, readonly string[]>): Map<string, string[]> {
+  const catalog = new Map<string, string[]>()
+  for (const id of registered) {
+    if (typeof id !== 'string' || id === '') continue
+    catalog.set(id, [...(declared.get(id) ?? [])])
+  }
+  return catalog
+}
+
 /** findStaleMemoryRoutes 入参。 */
 export interface StaleMemoryRouteInput {
   dreamProvider: string
   sedimentProvider: string
-  /** 宿主当前可用 provider 目录。 */
+  /** 宿主**真实注册了 adapter** 的 provider 目录（来自 ctx.llm.listProviders，不是配置声明）。 */
   catalog: ReadonlyMap<string, readonly string[]>
 }
 
@@ -151,9 +173,9 @@ export interface StaleMemoryRouteResult {
 /**
  * 判定哪些记忆路由覆盖是「存量脏配置」（0.43.0 启动自愈的依据）。
  *
- * 红线——**目录为空时一律不清**：catalog 为空说明宿主模型服务尚未就绪（或 llm-pi-ai 还没写出
- * 任何 provider），此时任何覆盖看起来都「不在目录里」，无脑清空会把用户的有效配置误删。
- * 这是本函数被抽成纯函数的首要原因：清的是生产数据，必须能离线被测试证明「不会误清」。
+ * 红线——**目录为空时一律不清**：catalog 来自 ctx.llm.listProviders()（真实注册），为空说明宿主
+ * 模型服务尚未就绪（一个 adapter 都没注册），此时任何覆盖看起来都「不在目录里」，无脑清空会把
+ * 用户的有效配置误删。这是本函数被抽成纯函数的首要原因：清的是生产数据，必须能离线证明「不会误清」。
  */
 export function findStaleMemoryRoutes(input: StaleMemoryRouteInput): StaleMemoryRouteResult {
   const empty: StaleMemoryRouteResult = { staleDream: false, staleSediment: false, cleared: [] }
