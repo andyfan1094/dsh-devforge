@@ -312,9 +312,14 @@ export class NativeMemoryStore {
     this.cacheMeta(meta)
   }
 
+  /**
+   * 列表（更新时间降序）。
+   * 并列必须按 id 裁决：同毫秒连续写入的多条记忆否则顺序随负载漂移，而注入侧的档案卡是
+   * 「整条装入、装不下即停」，长条目一旦排到前面，就会把后面的短条目一起挡掉（测试曾偶发失败）。
+   */
   list(options?: { limit?: number; category?: NativeMemoryCategory; scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(1000, Math.floor(options?.limit ?? 100)))
-    return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true) && (options?.category === undefined || entry.category === options.category)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true) && (options?.category === undefined || entry.category === options.category)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, limit)
   }
 
   /**
@@ -329,13 +334,13 @@ export class NativeMemoryStore {
    */
   listForSemanticRecall(options?: { scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
     const cap = 10_000
-    return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap)
+    return this.all().filter((entry) => this.isRecallable(entry, options?.scope, options?.isolateScope === true)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, cap)
   }
 
   /** 常驻记忆也遵守项目作用域，项目红线不会泄露到其他仓库。 */
   listPinned(options?: { limit?: number; scope?: MemoryScopeContext; isolateScope?: boolean }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(20, Math.floor(options?.limit ?? 6)))
-    return this.all().filter((entry) => entry.pinned === true && this.isRecallable(entry, options?.scope, options?.isolateScope === true)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    return this.all().filter((entry) => entry.pinned === true && this.isRecallable(entry, options?.scope, options?.isolateScope === true)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, limit)
   }
 
   get(id: string): NativeMemoryEntry | undefined {
@@ -455,7 +460,7 @@ export class NativeMemoryStore {
       const qualityScore = trustScore(entry.trust) * 0.08 + entry.confidence * 0.04 + entry.importance * 0.001
       const scopeScore = entry.scope.kind === 'global' ? 0 : 0.03
       return { entry, effectiveHits: matchedTerms.length + (entityHits.length > 0 ? 1 : 0), hit: { entry, score: lexicalScore + qualityScore + scopeScore, lexicalScore, semanticScore: 0, qualityScore, scopeScore, matchedTerms, entityHits } }
-    }).filter((item) => item.effectiveHits >= minHits).sort((a, b) => b.hit.score - a.hit.score || b.entry.updatedAt - a.entry.updatedAt)
+    }).filter((item) => item.effectiveHits >= minHits).sort((a, b) => b.hit.score - a.hit.score || b.entry.updatedAt - a.entry.updatedAt || (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0))
     return result.slice(0, Math.max(1, Math.min(200, Math.floor(options?.limit ?? 20)))).map((item) => item.hit)
   }
 
@@ -485,7 +490,7 @@ export class NativeMemoryStore {
   }
 
   dreamSnapshot(limit: number): NativeMemoryEntry[] {
-    return this.all().filter((entry) => this.isRecallable(entry)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.floor(limit)))
+    return this.all().filter((entry) => this.isRecallable(entry)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, Math.max(1, Math.floor(limit)))
   }
 
   activityFingerprint(): { count: number; maxUpdatedAt: number } {
@@ -526,13 +531,13 @@ export class NativeMemoryStore {
   listArchived(options?: { limit?: number; states?: Array<'archived' | 'superseded' | 'quarantined'> }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(1000, Math.floor(options?.limit ?? 100)))
     const states = new Set(options?.states ?? ['archived'])
-    return this.all().filter((entry) => entry.state !== 'active' && states.has(entry.state)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    return this.all().filter((entry) => entry.state !== 'active' && states.has(entry.state)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, limit)
   }
 
   /** 全部条目供治理统计使用；调用方不得把该结果直接注入模型。 */
   listAll(options?: { limit?: number }): NativeMemoryEntry[] {
     const limit = Math.max(1, Math.min(10_000, Math.floor(options?.limit ?? 10_000)))
-    return this.all().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    return this.all().sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, limit)
   }
 
   listMetas(): MemoryEntryMeta[] {

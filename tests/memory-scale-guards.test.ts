@@ -29,21 +29,22 @@ function cleanup(dir: string): void {
   rmSync(dir, { recursive: true, force: true })
 }
 
-test('审计域裁剪：节流触发后按最旧优先删，单次不超过 500 条', () => {
+test('审计域裁剪：节流触发后一次收敛到上限，且从最旧一端删起', () => {
   const { governance, ragStore, dir } = makeRig()
   try {
-    // 造 2600 条历史审计，模拟生产实况的无界增长。
+    // 造 2600 条历史审计，模拟生产实况的无界增长（生产重启时实测 9563 条）。
     for (let index = 0; index < 2600; index += 1) {
       ragStore.putDomainDoc(MEMORY_AUDIT_DOMAIN, 'audit-seed-' + index, { id: 'audit-seed-' + index, action: 'seed', ids: [], reason: '', createdAt: index })
     }
     assert.equal(ragStore.listDomainDocs(MEMORY_AUDIT_DOMAIN).length, 2600)
-    // 100 次真实审计写入 = 一个节流窗口（AUDIT_TRIM_EVERY）。
-    for (let index = 0; index < 100; index += 1) {
+    // 20 次真实审计写入 = 一个节流窗口（AUDIT_TRIM_EVERY）。
+    for (let index = 0; index < 20; index += 1) {
       governance.propose({ content: '审计裁剪测试条目 ' + index, scope: { kind: 'global' }, source: 'session-reflection', sourceId: 'trim:' + index })
     }
     const rows = ragStore.listDomainDocs(MEMORY_AUDIT_DOMAIN)
-    // 2600 历史 + 100 新写 − 单次上限 500（MAX_AUDIT_TRIM_DELETE）= 2200。
-    assert.equal(rows.length, 2200)
+    // 2600 历史 + 20 新写 → 一次裁剪收敛到上限 2000：存量积压必须一次清掉，
+    // 否则「单次限删 500」会让近万条的存量要上千次写入才回落，等于修复很久以后才生效。
+    assert.equal(rows.length, 2000)
     // 裁掉的是最旧的一批（createdAt 最小），最新写入与近期历史保留。
     assert.equal(rows.some((row) => row.id === 'audit-seed-0'), false)
     assert.equal(rows.some((row) => row.id === 'audit-seed-2599'), true)

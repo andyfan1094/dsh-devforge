@@ -457,8 +457,13 @@ test('项目档案卡：整条装入预算，装不下即停且钉选剔除防�
   const { store, governance, dir } = makeRig()
   try {
     store.create({ content: '项目钉选规则A', scope: { kind: 'project', id: 'p1' }, pinned: true }, 'pin-1')
-    store.create({ content: '项目事实A', scope: { kind: 'project', id: 'p1' } }, 'pa-1')
+    // 三条必须跨毫秒，且**短条目最后创建**：档案卡按更新时间降序整条装入、装不下即停，
+    // 长条目一旦排到前面就会把后面的短条目一起挡掉——连续创建落在同一毫秒时顺序还会漂移，
+    // 本用例曾因此在并发跑测试时偶发失败（产品侧的「即停」是有意设计，故在测试里固定时序）。
+    await new Promise((resolve) => setTimeout(resolve, 3))
     store.create({ content: '项目长事实C'.repeat(400), scope: { kind: 'project', id: 'p1' } }, 'pa-2')
+    await new Promise((resolve) => setTimeout(resolve, 3))
+    store.create({ content: '项目事实A', scope: { kind: 'project', id: 'p1' } }, 'pa-1')
     const injection = new MemoryInjectionService(fakeRagService('fail'), () => SETTINGS, store, undefined, { governance, scopeOfAgent: () => ({ kind: 'global' }) })
     const decision = await injection.decideDetailed([{ role: 'user', content: [{ type: 'text', text: '项目相关话题' }] }], { scope: { kind: 'project', id: 'p1', label: 'P1' }, sessionId: 's-prof3', turn: 1 })
     assert.ok(decision.text !== undefined)

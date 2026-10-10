@@ -36,10 +36,14 @@ const MAX_EPISODES = 500
  * 最终会把 store.db 与跨端备份一起撑大。裁剪助手 trimDomain 本就在本文件里，之前只是没人调用。
  */
 const MAX_AUDIT = 2_000
-/** 审计裁剪节流：每 N 次审计写入才实扫一次（近万条的全表排序不能每条审计都做）。 */
-const AUDIT_TRIM_EVERY = 100
-/** 单次裁剪上限：存量积压渐进收敛，避免某一次审计写入承担上万次删除而卡住治理链路。 */
-const AUDIT_TRIM_MAX_DELETE = 500
+/**
+ * 审计裁剪节流：每 N 次审计写入才实扫一次（近万条的全表排序不能每条审计都做）。
+ *
+ * 生产调参（2026-10-10，重启后实测）：初版取 100 次 + 单次限删 500，但生产存量已达 9563 条，
+ * 按那个节奏要上千次审计写入才收敛到上限——等于修复「很久以后才生效」。改为 20 次触发、
+ * 一次收紧到上限，生产在几十次治理写入内就能回到 2000 条；此后每次只删超出的一小截，开销恒定。
+ */
+const AUDIT_TRIM_EVERY = 20
 
 export interface MemoryCandidateInput {
   content: string
@@ -420,11 +424,11 @@ export class MemoryGovernanceService {
     const id = randomUUID()
     this.rag.putDomainDoc(MEMORY_AUDIT_DOMAIN, id, { id, action, ids, reason: reason.slice(0, 500), createdAt: Date.now() })
     // 0.43.0：审计域此前只写不裁（生产实况 9485 条无界增长）。
-    // 节流 + 单次上限：既不放过无界增长，也不让某一次审计写入承担上万次删除。
+    // 节流触发 + 一次收紧到上限：既不放过无界增长，也不让每条审计都做近万条的全表排序。
     this.auditWrites += 1
     if (this.auditWrites % AUDIT_TRIM_EVERY !== 0) return
     try {
-      this.trimDomain(MEMORY_AUDIT_DOMAIN, MAX_AUDIT, 'createdAt', AUDIT_TRIM_MAX_DELETE)
+      this.trimDomain(MEMORY_AUDIT_DOMAIN, MAX_AUDIT, 'createdAt')
     } catch {
       // 裁剪失败绝不影响治理主链路：计数继续走，下次触发会重试。
     }
