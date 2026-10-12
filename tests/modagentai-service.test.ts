@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
-import { tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
+import { tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
 import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
@@ -104,12 +104,16 @@ test('声明判定：五档但缺 DeepSeek V4.1 Flash 视为落后；完整声�
       { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
     ],
   }), true, 'DeepSeek 旧声明缺 image（2026-09-27 实测支持看图）应判落后')
-  assert.equal(tiangongDeclarationOutdated({
+  const complete = {
     models: [
       { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
       { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_KIMI_EFFORTS } },
     ],
-  }), false, '完整声明（含 image 与 200K 容量）不落后')
+  }
+  assert.equal(tiangongDeclarationOutdated(complete), false, '完整声明（含 image、200K 容量与 Kimi-K3）不落后')
+  // 2026-10-12 新增 Kimi-K3：老账号声明里没有这一条，启动自愈必须判定落后并自动补齐。
+  assert.equal(tiangongDeclarationOutdated({ models: complete.models.slice(0, 2) }), true, '缺 Kimi-K3 条目应判落后（老账号自动补齐）')
   assert.equal(tiangongDeclarationOutdated(undefined), false)
   assert.equal(tiangongDeclarationOutdated({}), false)
 })
@@ -182,6 +186,46 @@ test('启动自愈：声明完整但上下文仍是旧 256K 时自动压到 200K
   }
 })
 
+test('启动自愈：老账号声明（无 Kimi-K3）自动补齐 Kimi-K3 条目', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // 2026-10-12 之前登录写入的形态：GLM-Flash 与 DeepSeek V4.1 Flash 都完整，只缺 Kimi-K3。
+    const noKimi = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+      ],
+      defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
+    }
+    const { service, state } = makeCtx({ tiangong: noKimi })
+    await service.migrateLegacyGateway()
+    const setMutation = state.mutations.find((m) => m.op === 'set' && m.path[1] === 'tiangong')
+    assert.ok(setMutation, '缺 Kimi-K3 应触发自愈刷新（已登录老账号无需重装插件）')
+    const models = (state.providers.tiangong as {
+      models: Array<{ id: string; contextWindow?: number; input?: string[]; reasoningEfforts?: Record<string, string> }>
+    }).models
+    const kimi = models.find((m) => m.id === TIANGONG_KIMI_MODEL_ID)
+    assert.ok(kimi, '应写入 Kimi-K3 模型条目')
+    assert.equal(kimi.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文按惯例声明 200K')
+    assert.deepEqual(kimi.input, ['text', 'image'], 'input 必须带 image')
+    assert.equal(kimi.reasoningEfforts?.low, 'low')
+    assert.equal(kimi.reasoningEfforts?.high, 'high')
+    assert.equal(kimi.reasoningEfforts?.max, 'max')
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('启动自愈：DeepSeek 旧声明缺 image 时自动刷新补齐看图能力', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
@@ -226,6 +270,7 @@ test('启动自愈：声明已是 200K 完整版时不写入（升级过的安�
       models: [
         { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
         { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+        { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_KIMI_EFFORTS } },
       ],
       defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
     }

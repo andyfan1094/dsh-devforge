@@ -12,7 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
+import { TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -23,9 +23,11 @@ const TIANGONG_PROVIDER_ID = 'tiangong'
 const LEGACY_GATEWAY_PROVIDER_ID = 'openai-gateway-modagentai'
 
 /**
- * 天工造梦原生 provider 声明（GLM-Flash + DeepSeek V4.1 Flash；openai-completions 协议走 /chat/completions）。
+ * 天工造梦原生 provider 声明（GLM-Flash + DeepSeek V4.1 Flash + Kimi-K3；
+ * openai-completions 协议走 /chat/completions）。
  * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-10 定稿 200K）；
- * 插件升级后若旧声明仍是 256K，由 migrateLegacyGateway 的启动自愈自动改写。
+ * 插件升级后若旧声明仍是 256K，或缺少任一内置模型（如 2026-10-12 新增的 Kimi-K3），
+ * 由 migrateLegacyGateway 的启动自愈自动补齐。
  */
 const TIANGONG_PROVIDER: Record<string, unknown> = {
   apiKeyEnv: MODAGENTAI_GW_KEY_REF,
@@ -46,6 +48,15 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
     contextWindow: TIANGONG_CONTEXT_WINDOW,
     input: ['text', 'image'],
     reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
+  }, {
+    // Kimi-K3（2026-10-12 辉哥要求对外提供）：站点 GATEWAY_MODEL_MAP 同名透传，
+    // 再由 ark-gateway 的 workbuddy 池映射为上游 cn:kimi-k3-1。
+    // 官方原生 1M 上下文，声明侧按惯例低报 200K；图像与思考档位按「与 DeepSeek 同档」处理。
+    id: TIANGONG_KIMI_MODEL_ID,
+    name: TIANGONG_KIMI_MODEL_ID,
+    contextWindow: TIANGONG_CONTEXT_WINDOW,
+    input: ['text', 'image'],
+    reasoningEfforts: TIANGONG_KIMI_EFFORTS,
   }],
   defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
   defaultMaxTokens: 32768,
@@ -516,7 +527,7 @@ export class ModagentaiService {
     if (token === '') return
     this.ctx.logger?.info?.(hasLegacy
       ? '[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider'
-      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash/上下文压到 200K）')
+      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash 与 Kimi-K3/上下文压到 200K）')
     await this.applyGateway()
   }
 
