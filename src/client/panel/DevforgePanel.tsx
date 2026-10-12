@@ -45,8 +45,8 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
   const [density, setDensity] = useState<'compact' | 'cozy'>(() => (localStorage.getItem('dsh-devforge-density') === 'cozy' ? 'cozy' : 'compact'))
   /** 插件版本号，标题旁展示。 */
   const [version, setVersion] = useState('')
-  /** 插件 + DSH 本体更新检查状态：面板打开即检查，聚合驱动「插件更新」页签红点。 */
-  const [updateState, setUpdateState] = useState<UpdateCheckState>({ loading: false, enabled: true, items: [], harness: null, error: '' })
+  /** 插件更新检查状态：面板打开即检查，聚合驱动「插件更新」页签红点。 */
+  const [updateState, setUpdateState] = useState<UpdateCheckState>({ loading: false, enabled: true, items: [], error: '' })
 
   /** 插件版本号，标题旁展示：面板打开即取一次，失败静默（仅影响标题角标）。 */
   useEffect(() => {
@@ -54,36 +54,27 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
   }, [api])
 
   /**
-   * 并发检查插件登记源与 DSH 本体；任一路失败只落状态不阻塞另一路。
+   * 检查插件登记源；失败只落状态不阻塞。
    * 检查期间 loading=true，红点熄灭，避免慢请求或失败误亮。
    */
   const refreshUpdates = useCallback(async (): Promise<void> => {
     setUpdateState((prev) => ({ ...prev, loading: true, error: '' }))
-    const [pluginRes, harnessRes] = await Promise.allSettled([api.checkPluginUpdates(), api.checkHarnessUpdate()])
-    const next: UpdateCheckState = { loading: false, enabled: true, items: [], harness: null, error: '' }
-    if (pluginRes.status === 'fulfilled') {
-      next.enabled = pluginRes.value.enabled
-      next.items = pluginRes.value.items
-    } else {
-      next.error = pluginRes.reason instanceof Error ? pluginRes.reason.message : String(pluginRes.reason)
+    try {
+      const result = await api.checkPluginUpdates()
+      setUpdateState({ loading: false, enabled: result.enabled, items: result.items, error: '' })
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason)
+      setUpdateState((prev) => ({ ...prev, loading: false, error: message }))
     }
-    if (harnessRes.status === 'fulfilled') {
-      next.harness = harnessRes.value
-    } else {
-      // 本体接口异常时给占位 error 项：红点不亮，但页面能看到失败原因。
-      const message = harnessRes.reason instanceof Error ? harnessRes.reason.message : String(harnessRes.reason)
-      next.harness = { installed: '', latest: '', latestTag: '', repo: 'deepseek-ai/deepseek-harness', tagUrl: 'https://github.com/deepseek-ai/deepseek-harness/tags', status: 'error', reason: message, upgrade: null }
-    }
-    setUpdateState(next)
   }, [api])
 
-  // 挂载即自动检查更新（含 DSH 本体）；页签内「检查更新」按钮复用同一回调。
+  // 挂载即自动检查更新；页签内「检查更新」按钮复用同一回调。
   useEffect(() => {
     void refreshUpdates()
   }, [refreshUpdates])
 
-  /** 红点聚合：插件或 DSH 本体任一确认可更新才亮；加载中与检查失败一律不亮。 */
-  const updateDot = !updateState.loading && (updateState.items.some((item) => item.status === 'update-available') || updateState.harness?.status === 'update-available')
+  /** 红点聚合：插件确认可更新才亮；加载中与检查失败一律不亮。 */
+  const updateDot = !updateState.loading && updateState.items.some((item) => item.status === 'update-available')
 
   /** 切换密度档并持久化；样式侧由 .panel[data-density] 的 token 覆盖生效。 */
   const applyDensity = (next: 'compact' | 'cozy'): void => {
