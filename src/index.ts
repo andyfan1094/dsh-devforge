@@ -603,14 +603,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     void (async () => {
       // 启动自动补齐一律 restore=false（默认不传参）：ensure* 会按 deleted-models 墓碑跳过
       // 用户删除过的模型，防止「删掉即复活」；面板手动补齐才传 restore=true 全量恢复并清墓碑。
+      // 0.46.1 辉哥定稿：启动只自动注入天工造梦（tiangong），智谱/MiniMax/方舟/硅基流动/
+      // OpenAI 中转一律不再随插件启动写入模型——用户没有配置的套餐不该凭空出现在模型设置里；
+      // 这些套餐的模型补齐改为仅由面板对应页签的手动「补齐模型」按钮触发（restore 路由不变）。
       const ensureProviders = [
-        () => openAiService.ensureProvider(),
-        () => arkService.ensureModels(),
-        () => arkService.ensureCodingModels(),
-        () => zhipuService.ensureModels(),
-        () => zhipuService.ensureOfficialModels(),
-        () => minimaxService.ensureModels(),
-        () => siliconFlowService.ensureModels(),
         () => modagentaiService.migrateLegacyGateway(),
       ]
       // 停机安全：重试等待必须 unref 且可取消。
