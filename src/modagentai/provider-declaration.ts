@@ -80,17 +80,17 @@ export function tiangongCapacityOutdated(provider: unknown): boolean {
  * （旧安装升级后需启动自愈补齐；2026-09-27 实测上游支持图像输入，2026-10-10 上下文压到 200K）。
  * 未注册或结构异常返回 false（交给迁移/注册流程处理）。
  */
-export function tiangongDeclarationOutdated(provider: unknown): boolean {
+export function tiangongDeclarationOutdated(provider: unknown, expectedIds: readonly string[] = TIANGONG_DECLARED_MODEL_IDS): boolean {
   if (provider === undefined || provider === null || typeof provider !== 'object') return false
   const models = (provider as { models?: unknown }).models
   if (!Array.isArray(models)) return false
   if (tiangongEffortsOutdated(provider)) return true
   if (tiangongCapacityOutdated(provider)) return true
-  // 内置声明的每个模型都要在已注册声明里出现；缺任一条（含 2026-10-12 新增的 Kimi-K3）即触发自愈重写。
+  // 期望清单里的每个模型都要在已注册声明里出现；缺任一条（内置清单默认值，或站点目录）即触发自愈重写。
   const declared = new Set(models
     .filter((m) => m !== null && typeof m === 'object')
     .map((m) => String((m as { id?: unknown }).id)))
-  if (TIANGONG_DECLARED_MODEL_IDS.some((id) => !declared.has(id))) return true
+  if (expectedIds.some((id) => !declared.has(id))) return true
   const deepseek = models.find((m) => m !== null && typeof m === 'object' && (m as { id?: unknown }).id === TIANGONG_DEEPSEEK_MODEL_ID)
   // 旧声明只写 ['text'] 会令 DSH 发送前剥图，缺 image 视为落后并触发自愈刷新。
   if (deepseek !== undefined) {
@@ -98,4 +98,109 @@ export function tiangongDeclarationOutdated(provider: unknown): boolean {
     if (!Array.isArray(input) || !input.includes('image')) return true
   }
   return false
+}
+
+// —— 站点模型目录（「已登录账号自动同步官方模型」，辉哥 2026-10-12 定稿） ——
+
+/** 站点模型目录条目（GET /api/gw/model-catalog 的 data.models 元素，已规整）。 */
+export interface TiangongCatalogEntry {
+  id: string
+  contextWindow: number
+  input: string[]
+  reasoningEfforts: string[]
+}
+
+/**
+ * 思考档位数组 → DSH 声明用的 Record 形态（'low' → { low: 'low' }）。
+ * 站点目录下发数组、DSH 声明用对象，这里是两者唯一的转换点。
+ */
+export function effortsRecordFromList(list: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of list) if (item !== '') out[item] = item
+  return out
+}
+
+/**
+ * 防御式解析站点下发的模型目录。
+ * 任何结构异常一律返回空数组——调用方据此回退内置声明，绝不因站点改版而把模型清单写坏。
+ * 单项兜底：窗口缺失/非正数回退 200K；input 缺失回退 text+image；档位缺失回退 low/high/max。
+ */
+export function parseTiangongCatalog(payload: unknown): TiangongCatalogEntry[] {
+  const models = (payload as { data?: { models?: unknown } } | null | undefined)?.data?.models
+  if (!Array.isArray(models)) return []
+  const out: TiangongCatalogEntry[] = []
+  for (const item of models) {
+    if (item === null || typeof item !== 'object') continue
+    const raw = item as Record<string, unknown>
+    const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+    // 空 id 与重复 id 都丢弃：模型名是声明里的主键
+    if (id === '' || out.some((entry) => entry.id === id)) continue
+    const contextWindow = typeof raw.contextWindow === 'number' && Number.isFinite(raw.contextWindow) && raw.contextWindow > 0
+      ? Math.trunc(raw.contextWindow)
+      : TIANGONG_CONTEXT_WINDOW
+    const input = Array.isArray(raw.input)
+      ? raw.input.filter((value): value is string => typeof value === 'string' && value !== '')
+      : []
+    const efforts = Array.isArray(raw.reasoningEfforts)
+      ? raw.reasoningEfforts.filter((value): value is string => typeof value === 'string' && value !== '')
+      : []
+    out.push({
+      id,
+      contextWindow,
+      // 站点没给 input 就按「文本+图像」兜底（与内置声明一致），但不允许出现空输入集
+      input: input.length > 0 ? input : ['text', 'image'],
+      reasoningEfforts: efforts.length > 0 ? efforts : ['low', 'high', 'max'],
+    })
+  }
+  return out
+}
+
+/**
+ * 判断已注册声明是否落后于站点目录：站点目录里的模型缺条目，或能力
+ * （上下文窗口 / 输入模态 / 思考档位）与站点下发不一致。
+ * 目录为空（未登录或站点不可达）时返回 false，交给内置判定处理。
+ */
+export function tiangongCatalogOutdated(provider: unknown, catalog: readonly TiangongCatalogEntry[]): boolean {
+  if (catalog.length === 0) return false
+  if (provider === undefined || provider === null || typeof provider !== 'object') return false
+  const models = (provider as { models?: unknown }).models
+  if (!Array.isArray(models)) return false
+  for (const entry of catalog) {
+    const found = models.find((m) => m !== null && typeof m === 'object' && (m as { id?: unknown }).id === entry.id)
+    if (found === undefined) return true
+    const model = found as Record<string, unknown>
+    if (model.contextWindow !== entry.contextWindow) return true
+    const input = Array.isArray(model.input) ? model.input : []
+    for (const kind of entry.input) if (!input.includes(kind)) return true
+    const efforts = model.reasoningEfforts
+    if (efforts === null || typeof efforts !== 'object' || Array.isArray(efforts)) return true
+    const keys = Object.keys(efforts as Record<string, unknown>)
+    if (entry.reasoningEfforts.some((key) => !keys.includes(key))) return true
+  }
+  return false
+}
+
+/**
+ * 用站点目录重建模型清单：站点模型按站点下发的能力落地（档位数组转 Record），
+ * 站点未下发的内置模型按内置条目补齐。目录为空时等价于纯内置清单。
+ *
+ * 说明：tiangong provider 由插件托管（登录时写入、登出时整体移除），
+ * 因此这里以「站点目录 ∪ 内置兜底」为准，不保留用户在设置里手加的条目。
+ */
+export function buildTiangongModels(
+  catalog: readonly TiangongCatalogEntry[],
+  fallback: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const fromCatalog = catalog.map((entry) => ({
+    id: entry.id,
+    name: entry.id,
+    contextWindow: entry.contextWindow,
+    input: [...entry.input],
+    reasoningEfforts: effortsRecordFromList(entry.reasoningEfforts),
+  }))
+  const catalogIds = new Set(catalog.map((entry) => entry.id))
+  const extras = fallback
+    .filter((model) => !catalogIds.has(String(model.id)))
+    .map((model) => ({ ...model }))
+  return [...fromCatalog, ...extras]
 }

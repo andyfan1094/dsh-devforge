@@ -9,11 +9,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
-import { tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
+import { buildTiangongModels, parseTiangongCatalog, tiangongCatalogOutdated, tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
 import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
-function makeCtx(providers: Record<string, unknown>, opts: { token?: string } = {}) {
+function makeCtx(providers: Record<string, unknown>, opts: { token?: string; catalog?: unknown } = {}) {
   const state = {
     providers: { ...providers } as Record<string, unknown>,
     mutations: [] as Array<{ op: string; path: string[] }>,
@@ -41,7 +41,11 @@ function makeCtx(providers: Record<string, unknown>, opts: { token?: string } = 
     logger: { info() {}, warn() {} },
   }
   const openai = { removeEndpoint: async () => {} }
-  return { service: new ModagentaiService(ctx as never, openai as never), state }
+  const service = new ModagentaiService(ctx as never, openai as never)
+  // 单测绝不联网：站点目录拉取默认打桩为「离线」（空数组 → 退化为内置清单）；
+  // 验证「官网目录优先」的用例通过 opts.catalog 注入站点响应。
+  service.fetchOfficialCatalog = async () => (opts.catalog === undefined ? [] : parseTiangongCatalog(opts.catalog))
+  return { service, state }
 }
 
 /** 历史版本写入的上下文窗口（256K）；升级后应被启动自愈改写为 TIANGONG_CONTEXT_WINDOW。 */
@@ -573,6 +577,177 @@ test('updateProfile：官网业务错误透传 error 文案与状态码', async 
     })
   } finally {
     stub.restore()
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// —— 站点模型目录同步（辉哥 2026-10-12 定稿：已登录账号自动同步官方模型）——
+// 站点 GET /api/gw/model-catalog 下发当前开放的模型与能力；插件启动/登录时拉一次，
+// 官网新增或调整模型只需改站点配置，不必再改插件发新版。
+
+/** 站点目录响应样例（形态与站点 model-catalog.bll 的 { ok, data: { models } } 一致）。 */
+function catalogPayload(models: Array<Record<string, unknown>>): unknown {
+  return { ok: true, data: { models } }
+}
+
+test('站点目录解析：结构异常一律返回空数组（回退内置清单）', () => {
+  assert.deepEqual(parseTiangongCatalog(undefined), [])
+  assert.deepEqual(parseTiangongCatalog(null), [])
+  assert.deepEqual(parseTiangongCatalog({}), [])
+  assert.deepEqual(parseTiangongCatalog({ data: {} }), [])
+  assert.deepEqual(parseTiangongCatalog({ data: { models: 'nope' } }), [])
+  assert.deepEqual(parseTiangongCatalog({ data: { models: [null, 1, 'x'] } }), [])
+  assert.deepEqual(parseTiangongCatalog({ data: { models: [{ id: '   ' }] } }), [], '空 id 丢弃')
+})
+
+test('站点目录解析：缺字段逐项兜底，重复 id 只留首条', () => {
+  const entries = parseTiangongCatalog(catalogPayload([
+    { id: 'A' },
+    { id: 'B', contextWindow: 0, input: [], reasoningEfforts: [] },
+    { id: 'A', contextWindow: 999 },
+  ]))
+  assert.deepEqual(entries.map((e) => e.id), ['A', 'B'], '重复 id 只保留首条')
+  assert.equal(entries[0]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '窗口缺失回退 200K')
+  assert.deepEqual(entries[0]?.input, ['text', 'image'], 'input 缺失回退 text+image')
+  assert.deepEqual(entries[0]?.reasoningEfforts, ['low', 'high', 'max'], '档位缺失回退三档')
+  assert.equal(entries[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '非正数窗口回退 200K')
+})
+
+test('目录判定：站点新增模型或缺能力判落后，完全一致不落后', () => {
+  const provider = {
+    models: [{ id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } }],
+  }
+  const entry = (over: Record<string, unknown> = {}) => parseTiangongCatalog(catalogPayload([{
+    id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'max'], ...over,
+  }]))[0]!
+  assert.equal(tiangongCatalogOutdated(provider, [entry()]), false, '站点与声明能力一致不落后')
+  assert.equal(tiangongCatalogOutdated(provider, [entry({ contextWindow: 128_000 })]), true, '站点调整窗口判落后')
+  assert.equal(tiangongCatalogOutdated(provider, [entry({ reasoningEfforts: ['low', 'high', 'max', 'ultra'] })]), true, '站点出现声明里没有的档位判落后')
+  assert.equal(tiangongCatalogOutdated(provider, [entry({ input: ['text'] })]), false, '站点放宽要求（不再要求 image）不判落后')
+  assert.equal(tiangongCatalogOutdated(provider, parseTiangongCatalog(catalogPayload([{ id: 'Future-Model' }]))), true, '站点新增模型判落后')
+  assert.equal(tiangongCatalogOutdated(provider, []), false, '目录为空交给内置判定')
+  assert.equal(tiangongCatalogOutdated(undefined, [entry()]), false, '未注册 provider 不判定')
+})
+
+test('模型清单组装：站点能力优先，站点未下发的内置模型补齐', () => {
+  const models = buildTiangongModels(parseTiangongCatalog(catalogPayload([
+    { id: 'GLM-Flash', contextWindow: 128_000, input: ['text'], reasoningEfforts: ['low', 'high'] },
+  ])), [
+    { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW },
+    { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW },
+  ])
+  assert.deepEqual(models.map((m) => m.id), ['GLM-Flash', TIANGONG_KIMI_MODEL_ID])
+  assert.equal(models[0]?.contextWindow, 128_000, '站点下发的窗口优先于内置值')
+  assert.deepEqual(models[0]?.input, ['text'])
+  assert.deepEqual(models[0]?.reasoningEfforts, { low: 'low', high: 'high' }, '档位数组转 DSH Record 形态')
+  assert.equal(models[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '站点未下发的内置模型按内置补齐')
+})
+
+test('fetchOfficialCatalog：令牌为空不发请求，非 2xx 与异常都返回空数组', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    const { service } = makeCtx({}, { token: '' })
+    // 恢复真实实现：makeCtx 默认把该方法打桩为「离线」
+    service.fetchOfficialCatalog = ModagentaiService.prototype.fetchOfficialCatalog.bind(service)
+    const stub = stubFetch(() => new Response('{}', { status: 200 }))
+    stub.install()
+    try {
+      assert.deepEqual(await service.fetchOfficialCatalog(), [], '无令牌返回空数组')
+      assert.equal(stub.calls.length, 0, '未登录不应打官网')
+      const { service: logged } = makeCtx({})
+      logged.fetchOfficialCatalog = ModagentaiService.prototype.fetchOfficialCatalog.bind(logged)
+      assert.deepEqual(await logged.fetchOfficialCatalog(), [], '空 body 结构不符 → 空数组')
+      assert.equal(stub.calls.length, 1)
+      assert.equal(stub.calls[0]?.url, 'https://modagentai.com/api/gw/model-catalog')
+      const headers = stub.calls[0]?.init?.headers as Record<string, string>
+      assert.equal(headers.authorization, 'Bearer session-token', '复用会话令牌鉴权')
+    } finally {
+      stub.restore()
+    }
+    const unauthorized = stubFetch(() => new Response('unauthorized', { status: 401 }))
+    unauthorized.install()
+    try {
+      const { service: s } = makeCtx({})
+      s.fetchOfficialCatalog = ModagentaiService.prototype.fetchOfficialCatalog.bind(s)
+      assert.deepEqual(await s.fetchOfficialCatalog(), [], '401 返回空数组')
+    } finally {
+      unauthorized.restore()
+    }
+    const boom = stubFetch(() => { throw new Error('network down') })
+    boom.install()
+    try {
+      const { service: s } = makeCtx({})
+      s.fetchOfficialCatalog = ModagentaiService.prototype.fetchOfficialCatalog.bind(s)
+      assert.deepEqual(await s.fetchOfficialCatalog(), [], '网络异常返回空数组，不抛出')
+    } finally {
+      boom.restore()
+    }
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：官网目录新增模型时自动写入（站点能力优先，老账号免重登）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // 老账号现状：三个内置模型、能力齐备，与新目录的差别只有「官网多了一个新模型」
+    const complete = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+        { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_KIMI_EFFORTS } },
+      ],
+      defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
+    }
+    const { service, state } = makeCtx({ tiangong: complete }, {
+      catalog: catalogPayload([
+        { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'max'] },
+        { id: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: ['low', 'high', 'max'] },
+        { id: 'Future-Model', contextWindow: 500_000, input: ['text'], reasoningEfforts: ['low', 'max'] },
+      ]),
+    })
+    await service.migrateLegacyGateway()
+    assert.ok(state.mutations.some((m) => m.op === 'set' && m.path[1] === 'tiangong'), '站点新增模型应触发声明写入')
+    const models = (state.providers.tiangong as { models: Array<Record<string, unknown>> }).models
+    assert.deepEqual(models.map((m) => m.id), ['GLM-Flash', TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_MODEL_ID, 'Future-Model'], '官网新模型自动补进声明末尾')
+    const future = models.find((m) => m.id === 'Future-Model')
+    assert.equal(future?.contextWindow, 500_000, '新模型能力直接来自站点')
+    assert.deepEqual(future?.reasoningEfforts, { low: 'low', max: 'max' })
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：站点不可达时退化为内置三模型声明（离线兜底）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // makeCtx 默认把目录拉取打桩为空数组，等价于「未登录或官网不可达」；
+    // 给一份历史旧声明（只有 GLM-Flash 且是 256K），验证离线时也按内置清单补齐。
+    const { service, state } = makeCtx({ tiangong: LEGACY_TIANGONG })
+    await service.migrateLegacyGateway()
+    assert.ok(state.mutations.some((m) => m.op === 'set' && m.path[1] === 'tiangong'), '旧声明在离线时也应被内置清单纠正')
+    const models = (state.providers.tiangong as { models: Array<Record<string, unknown>> }).models
+    assert.deepEqual(models.map((m) => m.id), ['GLM-Flash', TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_MODEL_ID], '离线仍声明三个官方模型')
+    assert.equal(models[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW)
+    assert.deepEqual(models[2]?.input, ['text', 'image'])
+  } finally {
     closeAllDb()
     delete process.env.DSH_HOME
     rmSync(home, { recursive: true, force: true })

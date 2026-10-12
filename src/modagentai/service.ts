@@ -12,7 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, tiangongDeclarationOutdated } from './provider-declaration.ts'
+import { buildTiangongModels, parseTiangongCatalog, tiangongCatalogOutdated, tiangongDeclarationOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, type TiangongCatalogEntry } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -23,41 +23,46 @@ const TIANGONG_PROVIDER_ID = 'tiangong'
 const LEGACY_GATEWAY_PROVIDER_ID = 'openai-gateway-modagentai'
 
 /**
- * 天工造梦原生 provider 声明（GLM-Flash + DeepSeek V4.1 Flash + Kimi-K3；
+ * 内置兜底模型清单（GLM-Flash + DeepSeek V4.1 Flash + Kimi-K3）。
+ * 站点目录（GET /api/gw/model-catalog）可用时以站点为准，不可用（未登录/断网/改版）时用本清单，
+ * 保证任何情况下三个官方模型都声明得出来。
+ */
+const TIANGONG_BUILTIN_MODELS: Record<string, unknown>[] = [{
+  id: 'GLM-Flash',
+  name: 'GLM-Flash',
+  contextWindow: TIANGONG_CONTEXT_WINDOW,
+  input: ['text', 'image'],
+  reasoningEfforts: TIANGONG_REASONING_EFFORTS,
+}, {
+  // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿声明 200K（不声明 1M，防长上下文高消耗）。
+  // 2026-09-27 实测上游支持图像输入（发图识别颜色正常），input 必须带 image，否则 DSH 发送前剥图。
+  id: TIANGONG_DEEPSEEK_MODEL_ID,
+  name: TIANGONG_DEEPSEEK_MODEL_ID,
+  contextWindow: TIANGONG_CONTEXT_WINDOW,
+  input: ['text', 'image'],
+  reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
+}, {
+  // Kimi-K3（2026-10-12 辉哥要求对外提供）：站点 GATEWAY_MODEL_MAP 同名透传，
+  // 再由 ark-gateway 的 workbuddy 池映射为上游 cn:kimi-k3-1。
+  // 官方原生 1M 上下文，声明侧按惯例低报 200K；图像与思考档位按「与 DeepSeek 同档」处理。
+  id: TIANGONG_KIMI_MODEL_ID,
+  name: TIANGONG_KIMI_MODEL_ID,
+  contextWindow: TIANGONG_CONTEXT_WINDOW,
+  input: ['text', 'image'],
+  reasoningEfforts: TIANGONG_KIMI_EFFORTS,
+}]
+
+/**
+ * 天工造梦原生 provider 声明模板（models 由 buildTiangongProvider 注入；
  * openai-completions 协议走 /chat/completions）。
  * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-10 定稿 200K）；
- * 插件升级后若旧声明仍是 256K，或缺少任一内置模型（如 2026-10-12 新增的 Kimi-K3），
- * 由 migrateLegacyGateway 的启动自愈自动补齐。
+ * 插件升级或官网调整模型后，由 migrateLegacyGateway 的启动自愈自动改写声明。
  */
-const TIANGONG_PROVIDER: Record<string, unknown> = {
+const TIANGONG_PROVIDER_SHELL: Record<string, unknown> = {
   apiKeyEnv: MODAGENTAI_GW_KEY_REF,
   displayName: '天工造梦',
   api: 'openai-completions',
   baseURL: MODAGENTAI_GW_BASE,
-  models: [{
-    id: 'GLM-Flash',
-    name: 'GLM-Flash',
-    contextWindow: TIANGONG_CONTEXT_WINDOW,
-    input: ['text', 'image'],
-    reasoningEfforts: TIANGONG_REASONING_EFFORTS,
-  }, {
-    // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿声明 200K（不声明 1M，防长上下文高消耗）。
-    // 2026-09-27 实测上游支持图像输入（发图识别颜色正常），input 必须带 image，否则 DSH 发送前剥图。
-    id: TIANGONG_DEEPSEEK_MODEL_ID,
-    name: TIANGONG_DEEPSEEK_MODEL_ID,
-    contextWindow: TIANGONG_CONTEXT_WINDOW,
-    input: ['text', 'image'],
-    reasoningEfforts: TIANGONG_DEEPSEEK_EFFORTS,
-  }, {
-    // Kimi-K3（2026-10-12 辉哥要求对外提供）：站点 GATEWAY_MODEL_MAP 同名透传，
-    // 再由 ark-gateway 的 workbuddy 池映射为上游 cn:kimi-k3-1。
-    // 官方原生 1M 上下文，声明侧按惯例低报 200K；图像与思考档位按「与 DeepSeek 同档」处理。
-    id: TIANGONG_KIMI_MODEL_ID,
-    name: TIANGONG_KIMI_MODEL_ID,
-    contextWindow: TIANGONG_CONTEXT_WINDOW,
-    input: ['text', 'image'],
-    reasoningEfforts: TIANGONG_KIMI_EFFORTS,
-  }],
   defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
   defaultMaxTokens: 32768,
   defaultInput: ['text', 'image'],
@@ -67,6 +72,15 @@ const TIANGONG_PROVIDER: Record<string, unknown> = {
     retryableCodes: ['RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE'],
     backoff: { initialDelayMs: 1000, maxDelayMs: 120000, jitterRatio: 0.2 },
   },
+}
+
+/**
+ * 组装 tiangong provider 声明：站点目录里的模型按站点下发的能力落地，
+ * 站点未下发的内置模型由内置条目补齐。
+ * @param catalog 站点下发的模型目录；为空数组表示未登录或站点不可达（退化为纯内置清单）
+ */
+function buildTiangongProvider(catalog: readonly TiangongCatalogEntry[]): Record<string, unknown> {
+  return { ...TIANGONG_PROVIDER_SHELL, models: buildTiangongModels(catalog, TIANGONG_BUILTIN_MODELS) }
 }
 
 /** 设置段变更操作（与宿主 settings.mutate 对齐的最小类型）。 */
@@ -154,6 +168,32 @@ export class ModagentaiService {
   /** 面板官网登录态出口（0.40.1）：插件更新等能力复用同一份会话令牌，免重复配账号。 */
   async readSessionToken(): Promise<string> {
     return await this.readToken()
+  }
+
+  /**
+   * 拉取站点模型目录（GET /api/gw/model-catalog）：官网当前开放的模型及其能力元数据。
+   *
+   * 这是「已登录账号自动同步官方模型」的数据源（辉哥 2026-10-12 定稿）：以后官网新增或调整模型
+   * 只改站点配置，插件在启动与登录时拉一次即可自动跟上，不必再走「改插件 → 升版本 → 用户升级」。
+   *
+   * 令牌为空、网络失败、HTTP 非 2xx 或结构不符，一律返回空数组，由内置清单兜底——
+   * 同步失败绝不允许阻断登录或启动流程。
+   * @param token 会话令牌；省略时读本机受管凭据
+   * @returns 规整后的模型目录（失败为空数组）
+   */
+  async fetchOfficialCatalog(token?: string): Promise<TiangongCatalogEntry[]> {
+    const value = token ?? await this.readToken()
+    if (value === '') return []
+    try {
+      const res = await fetch(SITE + '/api/gw/model-catalog', {
+        headers: { authorization: 'Bearer ' + value, 'user-agent': 'DeepSeek-Harness/1.0' },
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+      if (!res.ok) return []
+      return parseTiangongCatalog(await res.json().catch(() => null))
+    } catch {
+      return []
+    }
   }
 
   /**
@@ -510,8 +550,9 @@ export class ModagentaiService {
 
   /**
    * 启动自愈：检测到旧 OpenAI 中转体系残留（openai-gateway-modagentai）且用户已登录时，
-   * 自动迁移到 tiangong 原生 provider；已注册的 tiangong 声明落后（档位/看图声明/上下文容量）
-   * 时自动改写为新版声明——已安装插件升级后无需手动重登或重配，重启即自动校正。
+   * 自动迁移到 tiangong 原生 provider；已注册的 tiangong 声明落后于官网目录
+   * （缺模型条目 / 档位缺 xhigh·max / 缺看图声明 / 上下文容量不符）时自动改写为新版声明——
+   * 已安装插件升级、或官网新增与调整模型后，都无需手动重登或重配，重启 DSH 即自动校正。
    * 幂等：无残留、声明无变化或未登录时不做任何写入。
    * 供启动自动补齐调度调用（llm-pi-ai 未就绪时抛错，由调度重试）。
    */
@@ -520,19 +561,32 @@ export class ModagentaiService {
     if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
     const section = descriptor.value as { providers?: Record<string, unknown> } | undefined
     const providers = section?.providers ?? {}
-    // 旧中转残留需要迁移；已注册声明若落后（档位缺 xhigh/max、缺 DeepSeek 条目、缺看图声明，或上下文仍是旧 256K）同样要刷新。
-    const hasLegacy = providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined
-    if (!hasLegacy && !tiangongDeclarationOutdated(providers[TIANGONG_PROVIDER_ID])) return
     const token = await this.readToken()
+    // 已登录才拉站点目录；未登录退化为内置清单判定（仍能校正历史遗留的旧声明）。
+    // 有站点目录时以站点为准：官网新增模型、调整窗口或档位，重启即自动跟上（辉哥 2026-10-12 定稿）。
+    const catalog = token === '' ? [] : await this.fetchOfficialCatalog(token)
+    const provider = providers[TIANGONG_PROVIDER_ID]
+    const outdated = (catalog.length > 0
+      ? tiangongDeclarationOutdated(provider, catalog.map((entry) => entry.id))
+      : tiangongDeclarationOutdated(provider))
+      || tiangongCatalogOutdated(provider, catalog)
+    // 旧中转残留需要迁移；声明落后同样要刷新。
+    const hasLegacy = providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined
+    if (!hasLegacy && !outdated) return
     if (token === '') return
     this.ctx.logger?.info?.(hasLegacy
       ? '[dsh-devforge] 检测到旧中转路由，自动迁移到天工造梦原生 provider'
-      : '[dsh-devforge] 天工造梦模型声明落后，自动刷新（补齐档位/新增 DeepSeek V4.1 Flash 与 Kimi-K3/上下文压到 200K）')
+      : '[dsh-devforge] 天工造梦模型声明落后于官网目录，自动刷新（补齐档位 / 新增模型 / 同步上下文）')
     await this.applyGateway()
   }
 
   /** 直写 llm-pi-ai 段：注册/移除 tiangong 原生 provider，并清理旧 openai-gateway- 前缀路由。 */
-  private async writeTiangongProvider(remove: boolean): Promise<void> {    for (let attempt = 0; attempt < 2; attempt += 1) {
+  private async writeTiangongProvider(remove: boolean): Promise<void> {
+    // 站点目录只在「需要写入」时拉一次：登出（remove）不拉，避免用户已登出还打官网。
+    // 拉取失败退化为内置清单，因此断网时写入的仍是可用的三模型声明。
+    const catalog = remove ? [] : await this.fetchOfficialCatalog(await this.readToken())
+    const desired = buildTiangongProvider(catalog)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       const descriptor = this.ctx.settings.describe().find((item) => item.ns === LLM_PI_AI_NAMESPACE)
       if (descriptor === undefined) throw new ModagentaiServiceError('DSH 模型设置服务尚未注册 llm-pi-ai。', 409)
       const current = descriptor.value as { providers?: Record<string, unknown> } | undefined
@@ -540,8 +594,8 @@ export class ModagentaiService {
       const mutations: SettingsMutation[] = []
       if (remove) {
         if (providers[TIANGONG_PROVIDER_ID] !== undefined) mutations.push({ op: 'unset', path: ['providers', TIANGONG_PROVIDER_ID] })
-      } else if (!deepEqualJson(TIANGONG_PROVIDER, providers[TIANGONG_PROVIDER_ID])) {
-        mutations.push({ op: 'set', path: ['providers', TIANGONG_PROVIDER_ID], value: TIANGONG_PROVIDER })
+      } else if (!deepEqualJson(desired, providers[TIANGONG_PROVIDER_ID])) {
+        mutations.push({ op: 'set', path: ['providers', TIANGONG_PROVIDER_ID], value: desired })
       }
       if (providers[LEGACY_GATEWAY_PROVIDER_ID] !== undefined) mutations.push({ op: 'unset', path: ['providers', LEGACY_GATEWAY_PROVIDER_ID] })
       if (mutations.length === 0) return
