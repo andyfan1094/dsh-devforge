@@ -1,6 +1,6 @@
 {
   "name": "dsh-devforge",
-  "version": "0.46.1",
+  "version": "0.46.2",
   "description": "DSH 规范驱动天工造梦：注入版本化开发规范、一键创建服务生成子代理，并提供天工造梦操作台。",
   "license": "MIT AND Apache-2.0",
   "type": "module",
@@ -48,9 +48,6 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-mcp-client": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-subprocess": "^0.1.2-rc.1",
     "@larksuiteoapi/node-sdk": "1.61.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@orama/orama": "^3.1.18",
@@ -64,6 +61,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-attachment": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
@@ -78,6 +76,7 @@
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-llm": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-mcp-client": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-scope": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-subprocess": "^0.1.2-rc.1",
@@ -98,6 +97,9 @@
     "typescript": "~5.7.2"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.8",
+    "@deepseek-ai/dsh-mcp-client": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-subprocess": "^0.1.2-rc.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }
