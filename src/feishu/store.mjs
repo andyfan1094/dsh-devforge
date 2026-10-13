@@ -80,7 +80,55 @@ export class FeishuStore {
     this.path = path
     this.bootstrap = normalize(bootstrap)
     this.state = this.readState()
+    // 会话代际与插件侧归档号：state 原样持久化（save 不走 config 的 normalize），
+    // 这里统一保证字段存在，避免调用方到处判空。
+    if (this.state.generations === null || typeof this.state.generations !== 'object' || Array.isArray(this.state.generations)) this.state.generations = {}
+    if (this.state.archivedExtra === null || typeof this.state.archivedExtra !== 'object' || Array.isArray(this.state.archivedExtra)) this.state.archivedExtra = {}
     if (!existsSync(this.path) && (this.bootstrap.appId || this.bootstrap.appSecret)) this.save(this.bootstrap)
+  }
+
+  /**
+   * 读取某条飞书聊天的会话代际（缺省 1 = 初始代）。
+   * 代际用于「会话被占用 → fork 后继会话」的场景：新号 = 原身份 + ':gen-N'，
+   * 重启后用同一个持久化代际重算出同一个号，resume 照常命中。
+   */
+  getChatGeneration(chatId) {
+    const key = String(chatId ?? '').trim()
+    const value = Number(this.state.generations?.[key])
+    return Number.isSafeInteger(value) && value >= 1 ? value : 1
+  }
+
+  /** 持久化某条飞书聊天的会话代际（正整数；写盘失败静默——下次冷启动按旧代际重算）。 */
+  setChatGeneration(chatId, generation) {
+    const key = String(chatId ?? '').trim()
+    const value = Math.max(1, Math.floor(Number(generation) || 1))
+    if (key === '') return
+    // 代际单调递增：fork 接管与 /new 都只会 +1。误传更小值时拒绝回退——
+    // 回退会把身份算回可能已归档的旧号，resume 撞归档号等于悄悄回到旧会话。
+    const current = Number(this.state.generations?.[key])
+    if (Number.isSafeInteger(current) && current >= value) return
+    this.state.generations[key] = value
+    try { this.save(this.get()) } catch {}
+  }
+
+  /**
+   * 归档一个不再参与 resume 的会话号（占用 fork 的旧号、/new 换掉的旧号）。
+   * 每条聊天封顶保留 8 个，防止 state 无限膨胀；去重写入。
+   */
+  archiveSessionId(chatId, sessionId) {
+    const key = String(chatId ?? '').trim()
+    const id = String(sessionId ?? '').trim()
+    if (key === '' || id === '') return
+    const list = Array.isArray(this.state.archivedExtra[key]) ? this.state.archivedExtra[key].map(String) : []
+    if (!list.includes(id)) list.push(id)
+    this.state.archivedExtra[key] = list.slice(-8)
+    try { this.save(this.get()) } catch {}
+  }
+
+  /** 某条聊天被插件归档的会话号（只读副本；与宿主 workspaceRegistry 归档语义互补）。 */
+  extraArchivedIds(chatId) {
+    const list = this.state.archivedExtra?.[String(chatId ?? '').trim()]
+    return Array.isArray(list) ? [...list] : []
   }
 
   readState() {

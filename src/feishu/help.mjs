@@ -39,6 +39,7 @@ function button(text, value, type = 'default', size = 'medium') {
 export function buildHelpCard() {
   const elements = [
     md('**常用命令**（直接在会话输入框发送）'),
+    md('• /new — 开一个**不带历史**的全新会话（占用被电脑端占用时也会自动 fork 接管）'),
     md('• /status — 查看当前模型、思考强度与会话状态'),
     md('• /model — 切换模型与思考强度（点卡片按钮即可切换）'),
     md('• /stop — 停止当前正在运行的任务'),

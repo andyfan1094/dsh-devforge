@@ -11,7 +11,8 @@ import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './f
 import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
-import { legacySelectionIdentity, selectionIdentity } from './session-identity.mjs'
+import { legacySelectionIdentity, selectionIdentity, withGeneration } from './session-identity.mjs'
+import { buildForkSeed, describeOccupier, forkCreateOptions, readSessionEvents } from './fork-takeover.mjs'
 import { collectPersistedSessions, orderByRecentActivity } from './session-store-view.mjs'
 import { buildEffortCard, buildHelpCard, buildModelCard, MODEL_PAGE_SIZE, HELP_ACTIONS, sendCardToChat } from './help.mjs'
 import { createCompletionNotifier } from './completion-notifier.mjs'
@@ -22,6 +23,10 @@ export const name = 'dsh-feishu'
 export const inject = ['agents', 'agentDefaultModel', 'llm', 'agentPresets', 'webServer', 'workspaceRegistry', 'sessionPersistence', 'sessionTitle', 'attachments']
 
 const DEFAULT_AGENT_PRESET = 'cordis'
+
+// 飞书侧支持的斜杠命令全集：未知命令据此兜底提示（绝不静默无响应）。
+// 与 handleCommand 的分支一一对应，新增命令时两边同步改。
+const KNOWN_COMMANDS = new Set(['whoami', 'help', 'model', 'status', 'stop', 'new'])
 
 export function feishuSessionTitleOf(text) {
   const compact = String(text ?? '').replace(/^!+\s*/, '').replace(/\s+/g, ' ').trim()
@@ -421,7 +426,9 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  async function createHandle(sessionId, effective, mode, expectedCwd) {
+  // fork：占用接管专用。create 模式下携带父会话历史前缀（只读得来，不碰写锁），
+  // 参数由 forkCreateOptions 统一组装（seed 为空时退化为全新会话参数）。
+  async function createHandle(sessionId, effective, mode, expectedCwd, fork = null) {
     const agentOptions = agentOptionsOf(effective.selection)
     const setup = async (agentCtx) => {
       if (mode === 'resume') {
@@ -442,7 +449,12 @@ export function apply(ctx, config = {}) {
       agentOptions,
       setup,
     }
-    return mode === 'resume' ? ctx.agents.resume(options) : ctx.agents.create(options)
+    // create+fork：seed/血缘参数与基础 options 的同名字段合并，setup 复用同一份闭包，
+    // 预设挂载与模型注入的语义和普通 create 完全一致。
+    const assembled = fork === null || mode !== 'create'
+      ? options
+      : forkCreateOptions({ sessionId, seed: fork.seed, parentSessionId: fork.parentSessionId, cwd: expectedCwd, agentPreset: effective.agentPreset, agentOptions, setup })
+    return mode === 'resume' ? ctx.agents.resume(assembled) : ctx.agents.create(assembled)
   }
 
   async function detectLegacySession(sessionId, effective) {
@@ -485,7 +497,10 @@ export function apply(ctx, config = {}) {
       // 把历史上下文继承过来，避免"升级本身"又造成一次断上下文。
       const legacyIdentity = legacySelectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
       const legacyIdentityId = legacyIdentity === identity ? '' : stableSessionIdOf(key, legacyIdentity)
-      let sessionId = stableSessionIdOf(key, identity)
+      // 会话代际：占用接管（fork）与 /new 都会换代。代际持久化在 FeishuStore（state.generations），
+      // 重启后重算出同一个 gen-N 号，resume 照常命中；gen=1 保持原号不变（存量会话零迁移）。
+      const generation = store.getChatGeneration(key)
+      let sessionId = stableSessionIdOf(key, withGeneration(identity, generation))
       const archivedSessionIds = archivedSessionIdsOf()
       const existing = conversations.get(key)
       // 身份漂移是"重启就新开会话"的唯一入口：落一行诊断，直接看到选择/预设/目录四项取值，
@@ -520,6 +535,8 @@ export function apply(ctx, config = {}) {
       }
       let handle = null
       let createSessionId = sessionId
+      // 占用接管（fork）成功时给用户的一次性说明；随 entry 下发，发出后即清空。
+      let forkedNote = ''
       // sessionPersistence.list() 返回快照数组 { header, revision, sizeBytes }，身份在
       // snapshot.header.id 上。0.41.6 及以前误读成 snapshot.id（恒为 undefined），于是：
       //   persistedIds 恒为空 → resumeCandidates 被清空（resume 永远不执行）
@@ -596,16 +613,39 @@ export function apply(ctx, config = {}) {
         }
       }
       if (handle === null) sessionId = createSessionId
-      // 会话确实存在（resume 报的不是 not-found）却打不开时，宁可报错也不静默新建：
-      // 静默新建 = 丢掉用户全部历史上下文，且每重启一次就多一条孤儿会话（实测兜底号严格递增）。
+      // 会话确实存在（resume 报的不是 not-found）却打不开时，不再把解锁责任推给用户：
+      // 单写者租约下 GUI 可以把写句柄握几小时甚至隔夜（2026-09-29 实录），等待与重试都没有意义。
+      // 处置：只读旧会话历史（read 句柄不碰写锁）→ fork 后继会话接管，消息照常投递，
+      // 完整历史上下文随 seed 继承；只有 fork 也失败时才报错（文案带占用归因）。
       if (handle === null) {
         const blocked = resumeFailures.find((failure) => failure.candidateId === sessionId || (legacyIdentityId !== '' && failure.candidateId === legacyIdentityId))
         if (blocked !== undefined) {
-          const busyError = new Error('飞书会话已存在但暂时打不开（' + (blocked.code === '' ? '' : blocked.code + '：') + blocked.detail
-            + '）；常见原因是这条会话正被电脑端 GUI 打开占用，关掉该会话再发一次即可，历史上下文不会丢')
-          busyError.code = 'FEISHU_SESSION_BUSY'
-          sessionLog('error', 'session blocked chat=' + key + ' candidate=' + blocked.candidateId + ' code=' + blocked.code + ' message=' + blocked.detail)
-          throw busyError
+          // 占用归因：宿主进程内有活体代理 ≈ 电脑端 GUI 开着；否则是外部进程持锁。仅用于文案与日志。
+          const occupier = describeOccupier(ctx.agents, blocked.candidateId)
+          sessionLog('warn', 'session occupied chat=' + key + ' candidate=' + blocked.candidateId + ' code=' + blocked.code + ' occupier=' + occupier)
+          const forkedSessionId = stableSessionIdOf(key, withGeneration(identity, generation + 1))
+          sessionLog('info', 'fork takeover chat=' + key + ' from=' + blocked.candidateId + ' to=' + forkedSessionId)
+          try {
+            const events = await readSessionEvents(ctx.sessionPersistence, blocked.candidateId)
+            const { seed } = events === null ? { seed: [] } : buildForkSeed(events)
+            handle = await createHandle(forkedSessionId, effective, 'create', chatCwd, { seed, parentSessionId: blocked.candidateId })
+            sessionId = forkedSessionId
+            resumedExisting = false
+            forkedNote = seed.length === 0
+              ? '原会话正被电脑端界面占用，已自动开启后继会话接管（旧会话暂无可继承的完整轮次，从现在开始记录）。'
+              : '原会话正被电脑端界面占用，已自动接管到本会话：完整历史上下文已继承，这条消息继续处理。'
+            // 旧号进插件归档（不再参与 resume），代际 +1 持久化：重启后重算出同一个后继号。
+            store.archiveSessionId(key, blocked.candidateId)
+            store.setChatGeneration(key, generation + 1)
+          } catch (forkError) {
+            const forkDetail = forkError instanceof Error ? forkError.message : String(forkError)
+            sessionLog('error', 'fork takeover failed chat=' + key + ' target=' + forkedSessionId + ' message=' + forkDetail)
+            const busyError = new Error('飞书会话正被'
+              + (occupier === 'gui' ? '电脑端界面' : '其他进程')
+              + '占用，自动接管失败（' + forkDetail + '）；请稍后重发，或发 /new 直接开启全新会话')
+            busyError.code = 'FEISHU_SESSION_BUSY'
+            throw busyError
+          }
         }
       }
       if (handle === null) {
@@ -639,7 +679,7 @@ export function apply(ctx, config = {}) {
       catch (error) {
         warn('failed to attach Feishu session ' + sessionId + ' to workspace: ' + (error instanceof Error ? error.message : String(error)))
       }
-      const entry = { chatId: key, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting }
+      const entry = { chatId: key, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting, forkedNote }
       conversations.set(key, entry)
       // 双键注册：agent 实例 id + 会话 id 都映射到本飞书会话，任一命中即可认领问题卡片。
       questionAnswerer.registerAgent(handle.agent.id, key, sessionId)
@@ -660,7 +700,7 @@ export function apply(ctx, config = {}) {
     return ['独立飞书会话：' + entry.sessionId, '状态：' + String(entry.agent.status ?? 'unknown'), '工作目录：' + resolved.cwd, '实际配置：' + actual].join('\n')
   }
 
-  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会话任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会话任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
 
   /** 给指定飞书会话发一张互动卡片；失败抛错由调用方兜底为文字回复。 */
   const sendCardTo = (chatId, card) => sendCardToChat(() => bridge?.getClient?.() ?? null, chatId, card)
@@ -712,6 +752,22 @@ export function apply(ctx, config = {}) {
       }
       catch { return '停止失败，请稍后重试。' }
     }
+    if (command === 'new') {
+      // /new：显式换代。归档当前会话号 + 代际 +1，下一封消息冷启动落到全新主号。
+      // 历史上下文刻意不带过来——这就是 /new 与占用接管（fork）的本质区别。
+      const key = String(envelope.chatId ?? '').trim()
+      const entry = conversations.get(key)
+      if (entry !== undefined && entry.agent.status === 'running') return '当前任务还在运行，请先发 /stop，结束后再开新会话。'
+      const generation = store.getChatGeneration(key)
+      if (entry !== undefined) {
+        conversations.delete(key)
+        try { await entry.handle.dispose() } catch {}
+        // 旧号进插件归档：冷启动后绝不再 resume 回它（/new 的语义就是不带历史）。
+        store.archiveSessionId(key, entry.sessionId)
+      }
+      store.setChatGeneration(key, generation + 1)
+      return '已开启全新会话（第 ' + (generation + 1) + ' 代）：不携带历史上下文，直接发消息即可开始。'
+    }
     return null
   }
 
@@ -758,6 +814,13 @@ export function apply(ctx, config = {}) {
       return
     }
     if (envelope.text.startsWith('/')) {
+      // 未知命令显式兜底：/new 这类桌面端习惯命令曾经静默无响应（辉哥 2026-09-29 实录），
+      // 输入之后得不到任何反馈。已知命令集合之外的输入一律回可用清单。
+      const command = String(envelope.text.slice(1).trim().split(/\s+/)[0] ?? '').toLowerCase()
+      if (!KNOWN_COMMANDS.has(command)) {
+        await send(envelope.chatId, '未知命令 /' + command + '。可用命令：/new 开新会话 · /status 查看状态 · /model 换模型 · /stop 停止任务 · /help 帮助')
+        return
+      }
       const reply = await handleCommand(envelope)
       if (reply !== null) await send(envelope.chatId, reply)
       return
@@ -783,6 +846,13 @@ export function apply(ctx, config = {}) {
     if (conversation.created && resolved.welcomeText.trim() !== '' && !welcomedChats.has(envelope.chatId)) {
       welcomedChats.add(envelope.chatId)
       await send(envelope.chatId, resolved.welcomeText.trim())
+    }
+    // 占用接管说明：只在接管发生的那条消息前提示一次，发出后立即清空，
+    // 同一会话的后续消息不再重复播报。
+    if (conversation.forkedNote) {
+      const note = conversation.forkedNote
+      conversation.forkedNote = ''
+      await send(envelope.chatId, note)
     }
     await config.beforeDelivery?.(conversation, envelope)
     const conversationKey = String(envelope.chatId ?? '').trim()

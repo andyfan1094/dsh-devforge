@@ -48,3 +48,36 @@ export function legacySelectionIdentity(selection, agentPreset, cwd, followDefau
     cwd,
   })
 }
+
+/**
+ * 把「会话代际」并入身份串，得到本代使用的稳定会话号哈希输入。
+ *
+ * 本轮新增。背景：会话被电脑端 GUI 长期占用（单写者租约，写句柄存活期全程持锁）
+ * 时，resume 永远失败。占用不等待——桥只读旧会话历史，fork 出带完整上下文的后继
+ * 会话（新号）接管。代际数持久化在 FeishuStore（state.generations），重启后重算出
+ * 同一个 gen-N 号，resume 照常命中。
+ *
+ * 代际 = 1 时返回原身份串：存量会话（升级前建的）号码不变，完全向后兼容。
+ * 后缀格式 ':gen-N' 与 runtime-collision 系列后缀（':runtime-collision'）互不重叠。
+ *
+ * @param {string} identity 基础身份串（selectionIdentity 的返回值）
+ * @param {number} generation 会话代际，正整数；1 表示初始代
+ * @returns {string} 并入代际后的身份串
+ */
+export function withGeneration(identity, generation) {
+  const gen = Math.max(1, Math.floor(Number(generation) || 1))
+  return gen > 1 ? identity + ':gen-' + gen : identity
+}
+
+/**
+ * 从带代际的会话号里反解代际数；解析失败按初始代 1 处理。
+ * 仅用于诊断日志（/status 显示当前代际），不参与身份计算——身份只由持久化的代际数决定。
+ *
+ * @param {string} sessionId 稳定会话号
+ * @returns {number} 代际数（最小 1）
+ */
+export function generationOfSessionId(sessionId) {
+  const match = /:gen-(\d+)$/.exec(String(sessionId ?? ''))
+  const parsed = match === null ? 1 : Number.parseInt(match[1], 10)
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : 1
+}
