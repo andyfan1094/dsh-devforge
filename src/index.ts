@@ -1329,10 +1329,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     Object.assign(zhipuConfig, value.zhipu)
     Object.assign(minimaxConfig, value.minimax)
     Object.assign(arkConfig, value.ark)
-    // openai 能力：面板保存的配置只写 store.db（openai.settings），插件配置段（profile）通常没有 openai 子段。
-    // 直接用 value.openai 会让 siteImage 永远取不到面板里存的官网生图开关（重启后设置丢失），
-    // 所以走 resolve() —— 它带 store.db 兜底（0.49.1 修复）。
-    Object.assign(openAiConfig, resolve().openai)
+    // openai 能力：value 就是上面 resolve() 的结果，其 openai 段已带 store.db 兜底
+    // （官网生图开关等面板设置只写 store.db，合并口径见 src/openai/config-merge.ts）。
+    Object.assign(openAiConfig, value.openai)
     Object.assign(siliconFlowConfig, value.siliconflow)
     // 每次 sync 领取新的定时器域，并取消上一轮仍在等待的重试（避免旧定时器拖住进程退出）。
     const previousTimerScope = autoEnsureTimerScope

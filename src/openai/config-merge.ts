@@ -13,12 +13,21 @@ import type { OpenAiCapabilityConfig } from './service.ts'
 /** openai 配置段输入：面板快照里可能带 null，统一按缺省处理。 */
 export type OpenAiConfigInput = { [K in keyof OpenAiCapabilityConfig]?: OpenAiCapabilityConfig[K] | null }
 
-/** 合并 openai 配置：插件配置段（profile）优先，缺失项回落到 store.db 副本。 */
+/**
+ * 合并 openai 配置：面板/补丁显式配置优先，缺失项回落到 store.db 副本。
+ * 唯一例外是官网生图开关 siteImage，见函数内注释。
+ */
 export function mergeOpenAiConfig(
   value: OpenAiConfigInput | undefined,
   stored: Partial<OpenAiCapabilityConfig>,
 ): OpenAiCapabilityConfig {
-  const siteImage = value?.siteImage ?? stored.siteImage
+  // 官网生图开关以 store.db 为准（不按配置段优先）：宿主 schemastery 会为缺失字段补出
+  // 默认对象 { enabled: false, model: '' }，与「用户显式关闭」在类型上无法区分。若按
+  // 配置段优先，登录后开启的线路每次启动都会被这个默认对象顶掉（2026-10-14 生产实证：
+  // store.db 里 enabled=true，运行时仍是 false，generate_image 静默回落个人中转）。
+  // 该字段由插件自己写（store.db 主写 + 宿主段双写），store.db 才是权威副本；
+  // 只有它从未写过时才采用配置段值，兼容用户在补丁里手填显式配置。
+  const siteImage = stored.siteImage ?? value?.siteImage
   return {
     enabled: value?.enabled ?? stored.enabled ?? true,
     baseURL: value?.baseURL ?? stored.baseURL ?? '',

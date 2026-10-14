@@ -1,10 +1,7 @@
 /**
- * openai 配置兜底单测（0.49.1 回归）。
- *
- * 背景：面板里的「官网生图」开关只写 store.db 的 openai.settings，插件配置段（profile）
- * 通常没有 openai 子段。此前服务只读配置段，导致 siteImage 永远取不到：重启后设置丢失，
- * generate_image 回落到中转端点并报「尚未配置 OpenAI 中转站 API Key」。
- * 这里锁定 mergeOpenAiConfig 的兜底链：配置段优先、缺失项回落 store.db 副本。
+ * 官网生图持久化回归：宿主会为缺失配置填入 { enabled: false, model: '' }。
+ * 官网开关由登录/登出及同步接口写入 store.db；已保存值必须优先于宿主默认值，
+ * 否则重启会错误回落个人中转。其他中转配置仍保持原来的字段优先级。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,14 +19,26 @@ test('openai 兜底：插件配置段没有 openai 时，官网生图开关必�
   assert.equal(merged.siteImage?.model, 'gpt-image-2', '生图模型名同样要恢复')
 })
 
-test('openai 兜底：插件配置段显式配置优先于 store.db 副本', () => {
+test('官网生图：宿主补出的关闭默认对象不能覆盖已保存的官网开关', () => {
   const merged = mergeOpenAiConfig(
-    { siteImage: { enabled: false, model: 'gpt-image-3' }, apiKeyEnv: 'MY_HOT_KEY' },
+    { siteImage: { enabled: false, model: '' }, apiKeyEnv: 'MY_HOT_KEY' },
     { siteImage: { enabled: true, model: 'gpt-image-2' }, apiKeyEnv: 'OPENAI_GATEWAY_API_KEY' },
   )
-  assert.equal(merged.siteImage?.enabled, false)
-  assert.equal(merged.siteImage?.model, 'gpt-image-3')
-  assert.equal(merged.apiKeyEnv, 'MY_HOT_KEY')
+  assert.deepEqual(merged.siteImage, { enabled: true, model: 'gpt-image-2' })
+  assert.equal(merged.apiKeyEnv, 'MY_HOT_KEY', '不改变个人中转其他配置的优先级')
+})
+
+test('官网生图：登出保存的 false 必须覆盖宿主残留 true，不能用逻辑或重新开启', () => {
+  const merged = mergeOpenAiConfig(
+    { siteImage: { enabled: true, model: '旧模型' } },
+    { siteImage: { enabled: false, model: 'gpt-image-2' } },
+  )
+  assert.deepEqual(merged.siteImage, { enabled: false, model: 'gpt-image-2' })
+})
+
+test('官网生图：未保存过官网开关时兼容已有配置段', () => {
+  const merged = mergeOpenAiConfig({ siteImage: { enabled: true, model: 'gpt-image-2' } }, {})
+  assert.deepEqual(merged.siteImage, { enabled: true, model: 'gpt-image-2' })
 })
 
 test('openai 兜底：两边都没有 siteImage 时不写入该字段（服务按未启用处理）', () => {
