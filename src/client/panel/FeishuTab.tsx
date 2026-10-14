@@ -1,13 +1,17 @@
 /**
- * 天工造梦内嵌飞书控制台。
+ * 天工造梦内嵌飞书控制台（多机器人版）。
  *
  * 安全边界：App Secret 只允许单向提交，读取接口仅返回掩码；保存配置会关闭旧独立
  * Agent 并按新配置重建，避免同一个 chatId 同时绑定两套运行参数。
+ *
+ * 多机器人（0.47.0）：每个机器人独立 App ID/Secret/角色（chat 只聊天、notify 只
+ * 通知、both 兼具）；页头聚合在线数，机器人列表卡管理增删与测试，完成通知卡指定
+ * 通知机器人。旧单机器人配置由 Host 自动迁移为 default 机器人。
  */
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { FeishuConfigPatch, FeishuModelOptions, FeishuPanelConfig, FeishuStatus } from '../../feishu/protocol.ts'
-import { IconPlug, IconBot, IconUsers, IconBell, IconActivity, IconTerminal } from './icons.tsx'
+import type { FeishuBotPatch, FeishuBotRole, FeishuBotView, FeishuConfigPatch, FeishuModelOptions, FeishuPanelConfig, FeishuStatus } from '../../feishu/protocol.ts'
+import { IconPlug, IconBot, IconUsers, IconBell, IconActivity, IconPlus, IconTrash } from './icons.tsx'
 import css from './panel.module.css'
 
 /** Host 尚未返回前的飞书安全默认值。 */
@@ -16,6 +20,8 @@ const EMPTY_CONFIG: FeishuPanelConfig = {
   appId: '',
   appSecretConfigured: false,
   appSecretMask: '未配置',
+  bots: [],
+  notifyBotId: '',
   domain: 'https://open.feishu.cn',
   cwd: '',
   allowUsers: [],
@@ -44,6 +50,13 @@ const EMPTY_OPTIONS: FeishuModelOptions = {
   presets: [],
 }
 
+/** 机器人角色中文标签。 */
+const BOT_ROLE_LABELS: Record<FeishuBotRole, string> = {
+  chat: '只聊天',
+  notify: '只通知',
+  both: '聊天 + 通知',
+}
+
 /** 内嵌页属性。 */
 export interface FeishuTabProps {
   /** 天工造梦统一 API 客户端。 */
@@ -65,7 +78,7 @@ function connectionLabel(status: FeishuStatus): string {
   return '未连接'
 }
 
-/** 卡片标题行：分色图标 + 标题 + 可选说明小字（0.40.x 飞书页美化，与项目卡图标体系一致）。 */
+/** 卡片标题行：分色图标 + 标题 + 可选说明小字（与项目卡图标体系一致）。 */
 function cardTitle(kind: 'plug' | 'bot' | 'users' | 'bell' | 'activity', text: string, hint?: string): JSX.Element {
   const icons = { plug: IconPlug, bot: IconBot, users: IconUsers, bell: IconBell, activity: IconActivity } as const
   const Icon = icons[kind]
@@ -83,12 +96,13 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
   const [config, setConfig] = useState<FeishuPanelConfig>(EMPTY_CONFIG)
   const [status, setStatus] = useState<FeishuStatus>({ state: 'loading', connected: false, independentSessions: [] })
   const [options, setOptions] = useState<FeishuModelOptions>(EMPTY_OPTIONS)
-  const [appSecret, setAppSecret] = useState('')
   const [allowUsersText, setAllowUsersText] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // 机器人编辑态：仅存放未保存的输入值（Secret/名称等）；保存时整体提交 bots[]。
+  const [botDrafts, setBotDrafts] = useState<Record<string, { name?: string; appId?: string; appSecret?: string; role?: FeishuBotRole }>>({})
 
   /** 当前 Provider 下可选模型。留空 Provider 表示跟随 DSH 默认模型。 */
   const availableModels = useMemo(
@@ -113,7 +127,6 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
       setConfig(nextConfig)
       setStatus(nextStatus)
       setOptions(nextOptions)
-      setAppSecret('')
       setAllowUsersText(nextConfig.allowUsers.join(String.fromCharCode(10)))
     } catch (cause) {
       setError(errorMessage(cause))
@@ -132,26 +145,40 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
     return () => { window.clearInterval(timer) }
   }, [api])
 
-  /** 当前表单到 Host 更新载荷；空 App Secret 表示沿用已保存值。 */
-  const payload = (): FeishuConfigPatch => ({
-    enabled: config.enabled,
-    appId: config.appId.trim(),
-    appSecret: appSecret.trim() || undefined,
-    domain: config.domain.trim(),
-    cwd: config.cwd.trim(),
-    provider: config.provider,
-    model: config.provider === '' ? '' : config.model,
-    reasoningEffort: config.reasoningEffort,
-    agentPreset: config.agentPreset,
-    allowUsers: allowUsersText.split(String.fromCharCode(10)).map((value) => value.trim()).filter(Boolean),
-    ack: config.ack,
-    ackReaction: config.ackReaction.trim() || 'OK',
-    groupMode: config.groupMode,
-    welcomeText: config.welcomeText,
-    syncCatchUp: config.syncCatchUp,
-    notifyOnComplete: config.notifyOnComplete,
-    notifyChatId: config.notifyChatId,
-  })
+  const patchDraft = (botId: string, patch: { name?: string; appId?: string; appSecret?: string; role?: FeishuBotRole }): void => {
+    setBotDrafts((current) => ({ ...current, [botId]: { ...current[botId], ...patch } }))
+  }
+
+  /** 当前表单到 Host 更新载荷；机器人 Secret 留空由 Host 继承旧值。 */
+  const payload = (): FeishuConfigPatch => {
+    const bots: FeishuBotPatch[] = config.bots.map((bot) => ({
+      id: bot.id,
+      name: botDrafts[bot.id]?.name ?? bot.name,
+      appId: botDrafts[bot.id]?.appId ?? bot.appId,
+      appSecret: botDrafts[bot.id]?.appSecret?.trim() || undefined,
+      role: botDrafts[bot.id]?.role ?? bot.role,
+      enabled: bot.enabled,
+    }))
+    return {
+      enabled: config.enabled,
+      bots,
+      notifyBotId: config.notifyBotId,
+      domain: config.domain.trim(),
+      cwd: config.cwd.trim(),
+      provider: config.provider,
+      model: config.provider === '' ? '' : config.model,
+      reasoningEffort: config.reasoningEffort,
+      agentPreset: config.agentPreset,
+      allowUsers: allowUsersText.split(String.fromCharCode(10)).map((value) => value.trim()).filter(Boolean),
+      ack: config.ack,
+      ackReaction: config.ackReaction.trim() || 'OK',
+      groupMode: config.groupMode,
+      welcomeText: config.welcomeText,
+      syncCatchUp: config.syncCatchUp,
+      notifyOnComplete: config.notifyOnComplete,
+      notifyChatId: config.notifyChatId,
+    }
+  }
 
   /** 统一操作状态和错误呈现。 */
   const run = async (operation: () => Promise<void>): Promise<void> => {
@@ -168,21 +195,45 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
     }
   }
 
-  /** 保存后 Host 会重连 WebSocket，并关闭旧参数下的独立 Agent。 */
+  /** 保存后 Host 会重连全部机器人 WebSocket，并关闭旧参数下的独立 Agent。 */
   const save = async (): Promise<void> => run(async () => {
     const result = await api.saveFeishuConfig(payload())
     setConfig(result.config)
     setStatus(result.status)
-    setAppSecret('')
+    setBotDrafts({})
     setAllowUsersText(result.config.allowUsers.join(String.fromCharCode(10)))
-    setNotice('飞书设置已保存，后续消息将使用新配置')
+    setNotice('飞书设置已保存，机器人连接已按新配置重建')
   })
 
-  /** 测试只验证当前 App 凭据，不落盘。 */
-  const testConnection = async (): Promise<void> => run(async () => {
-    await api.testFeishuConnection(payload())
-    setNotice('App ID 与 App Secret 验证成功')
+  /** 测试指定机器人的凭据（含未保存的输入值），不落盘。 */
+  const testBot = async (bot: FeishuBotView): Promise<void> => run(async () => {
+    const draft = botDrafts[bot.id]
+    await api.testFeishuConnection({
+      botId: bot.id,
+      bots: [{ id: bot.id, appId: draft?.appId ?? bot.appId, appSecret: draft?.appSecret?.trim() || undefined }],
+    })
+    setNotice('机器人「' + (draft?.name || bot.name) + '」的 App ID 与 App Secret 验证成功')
   })
+
+  /** 本地新增一个未保存的机器人行（保存时才提交）。 */
+  const addBot = (): void => {
+    const tempId = 'new-' + String(Date.now())
+    setConfig((current) => ({
+      ...current,
+      bots: [...current.bots, { id: tempId, name: '新机器人', appId: '', role: 'chat', enabled: true, appSecretConfigured: false, appSecretMask: '未配置' }],
+    }))
+    patchDraft(tempId, { name: '新机器人' })
+  }
+
+  /** 本地移除机器人行（保存时才真正删除）。 */
+  const removeBot = (botId: string): void => {
+    setConfig((current) => ({ ...current, bots: current.bots.filter((bot) => bot.id !== botId) }))
+    setBotDrafts((current) => {
+      const next = { ...current }
+      delete next[botId]
+      return next
+    })
+  }
 
   /** Provider 改变时重置不再适用的 Model 和推理级别。 */
   const selectProvider = (provider: string): void => {
@@ -193,10 +244,14 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
   if (loading) return <div className={css['empty']} data-loading="">正在加载飞书状态…</div>
 
   const sessions = status.independentSessions ?? []
+  const botStatuses = status.bots ?? []
+  const connectedCount = botStatuses.filter((bot) => bot.connected).length
   const actualProvider = options.current.provider || status.model?.provider || '--'
   const actualModel = options.current.model || status.model?.model || '--'
   const actualEffort = options.current.reasoningEffort || status.model?.reasoningEffort || '默认'
   const actualPreset = options.current.agentPreset || status.model?.agentPreset || config.agentPreset
+  /** 通知机器人下拉的可选项：全部机器人；当前生效值（含自动）额外展示一行说明。 */
+  const notifyOptions = config.bots
 
   return (
     <section className={css['feishuWorkspace']} aria-label="飞书控制台">
@@ -205,34 +260,86 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         <div className={css['resourceInfo']}>
           <strong className={css['resourceTitle']}>飞书长连接 · {connectionLabel(status)}</strong>
           <span className={css['resourceMeta']}>
-            {status.connected ? 'WebSocket 正常 · ' : status.lastError !== '' && status.lastError !== undefined ? status.lastError + ' · ' : '等待连接 · '}
+            {config.bots.length > 0
+              ? config.bots.length + ' 个机器人 · ' + connectedCount + ' 个在线 · '
+              : '未配置机器人 · '}
             当前模型 <span className={css['monoText']}>{actualProvider}/{actualModel}</span> · 推理 {actualEffort}
           </span>
         </div>
-        <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void testConnection() }}>测试连接</button>
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void refresh() }}>刷新</button>
       </div>
 
       {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
       {notice !== '' && <div className={css['banner']} data-kind="success">{notice}</div>}
       {status.state === 'error' && status.lastError && <div className={css['banner']} data-kind="error">运行错误：{status.lastError}</div>}
-      {status.lastCardError && <div className={css['banner']} data-kind="error">卡片错误：{status.lastCardError}</div>}
       {status.lastSessionError && <div className={css['banner']} data-kind="error">会话错误：{status.lastSessionError}</div>}
 
       <div className={css['feishuGrid']}>
-        <section className={css['githubSection']}>
-          {cardTitle('plug', '应用连接', 'App 凭据与工作目录')}
-          <div className={css['form']}>
-            <label className={css['checkRow']}><input type="checkbox" checked={config.enabled} onChange={(event) => { setConfig({ ...config, enabled: event.target.checked }) }} />启用飞书长连接</label>
-            <label className={css['field']}><span className={css['fieldLabel']}>App ID</span><input className={css['input']} autoComplete="off" value={config.appId} onChange={(event) => { setConfig({ ...config, appId: event.target.value }) }} placeholder="cli_xxxxxxxxxxxxxxxx" /></label>
-            <label className={css['field']}><span className={css['fieldLabel']}>App Secret</span><input className={css['input']} type="password" autoComplete="new-password" value={appSecret} onChange={(event) => { setAppSecret(event.target.value) }} placeholder="留空保留已保存密钥" /><span className={css['sectionHint']}>{config.appSecretMask}</span></label>
-            <label className={css['field']}><span className={css['fieldLabel']}>开放平台地址</span><input className={css['input']} value={config.domain} onChange={(event) => { setConfig({ ...config, domain: event.target.value }) }} /></label>
-            <label className={css['field']}><span className={css['fieldLabel']}>独立会话工作目录</span><input className={css['input']} value={config.cwd} onChange={(event) => { setConfig({ ...config, cwd: event.target.value }) }} placeholder="D:/项目" /></label>
+        <section className={[css['githubSection'], css['feishuWide']].join(' ')}>
+          {cardTitle('bot', '机器人', '每个机器人独立应用与角色；保存后重建连接')}
+          <div className={css['feishuBotList']}>
+            {config.bots.length === 0 && <div className={css['empty']}>还没有机器人；点击「添加机器人」创建第一个，或保存一次旧配置自动迁移。</div>}
+            {config.bots.map((bot) => {
+              const draft = botDrafts[bot.id] ?? {}
+              const name = draft.name ?? bot.name
+              const appId = draft.appId ?? bot.appId
+              const role = draft.role ?? bot.role
+              const live = botStatuses.find((item) => item.id === bot.id)
+              return (
+                <div key={bot.id} className={css['feishuBotRow']} data-role={role}>
+                  <span className={css['connectionDot']} data-state={live === undefined ? 'stopped' : live.connected ? 'connected' : live.state} aria-hidden="true" />
+                  <input
+                    className={[css['input'], css['feishuBotName']].join(' ')}
+                    value={name}
+                    aria-label="机器人名称"
+                    onChange={(event) => { patchDraft(bot.id, { name: event.target.value }) }}
+                  />
+                  <input
+                    className={[css['input'], css['feishuBotAppId']].join(' ')}
+                    value={appId}
+                    placeholder="cli_xxxxxxxxxxxxxxxx"
+                    aria-label="机器人 App ID"
+                    onChange={(event) => { patchDraft(bot.id, { appId: event.target.value }) }}
+                  />
+                  <select
+                    className={css['input']}
+                    value={role}
+                    aria-label="机器人角色"
+                    onChange={(event) => { patchDraft(bot.id, { role: event.target.value as FeishuBotRole }) }}
+                  >
+                    {(Object.keys(BOT_ROLE_LABELS) as FeishuBotRole[]).map((key) => <option key={key} value={key}>{BOT_ROLE_LABELS[key]}</option>)}
+                  </select>
+                  <input
+                    className={[css['input'], css['feishuBotSecret']].join(' ')}
+                    type="password"
+                    autoComplete="new-password"
+                    value={draft.appSecret ?? ''}
+                    placeholder={bot.appSecretConfigured ? bot.appSecretMask : '填入 App Secret'}
+                    aria-label="机器人 App Secret"
+                    onChange={(event) => { patchDraft(bot.id, { appSecret: event.target.value }) }}
+                  />
+                  <span className={[css['badge'], css['feishuBotRoleBadge']].join(' ')} data-role={role}>{BOT_ROLE_LABELS[role]}</span>
+                  <label className={css['checkRow']}><input type="checkbox" checked={bot.enabled} onChange={(event) => { setConfig((current) => ({ ...current, bots: current.bots.map((item) => item.id === bot.id ? { ...item, enabled: event.target.checked } : item) })) }} />启用</label>
+                  <div className={css['feishuBotActions']}>
+                    <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void testBot(bot) }}>测试</button>
+                    <button type="button" className={css['ghostButton']} data-danger="" aria-label={'删除机器人 ' + name} onClick={() => { removeBot(bot.id) }}><IconTrash /></button>
+                  </div>
+                  {live !== undefined && live.lastError !== '' && live.lastError !== undefined && (
+                    <div className={css['feishuBotError']}>{live.lastError}</div>
+                  )}
+                </div>
+              )
+            })}
+            <button type="button" className={css['ghostButton']} disabled={busy} onClick={addBot}><IconPlus /> 添加机器人</button>
           </div>
+          <label className={css['field']}>
+            <span className={css['fieldLabel']}>开放平台地址</span>
+            <input className={css['input']} value={config.domain} onChange={(event) => { setConfig({ ...config, domain: event.target.value }) }} />
+          </label>
         </section>
 
         <section className={css['githubSection']}>
-          {cardTitle('bot', 'Agent 配置', '会话使用的模型与预设')}
+          {cardTitle('plug', 'Agent 配置', '所有机器人共用：模型与预设')}
           <div className={css['form']}>
             <label className={css['field']}>
               <span className={css['fieldLabel']}>Provider</span>
@@ -261,6 +368,7 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
                 {options.presets.map((preset) => <option key={preset.id} value={preset.id} disabled={Boolean(preset.broken)}>{preset.name || preset.id}{preset.broken ? '（不可用）' : ''}</option>)}
               </select>
             </label>
+            <label className={css['field']}><span className={css['fieldLabel']}>独立会话工作目录</span><input className={css['input']} value={config.cwd} onChange={(event) => { setConfig({ ...config, cwd: event.target.value }) }} placeholder="D:/项目" /></label>
           </div>
         </section>
 
@@ -272,6 +380,7 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
             <label className={css['field']}><span className={css['fieldLabel']}>确认反应</span><input className={css['input']} value={config.ackReaction} onChange={(event) => { setConfig({ ...config, ackReaction: event.target.value }) }} /></label>
             <label className={css['field']}><span className={css['fieldLabel']}>群聊响应</span><select className={css['input']} value={config.groupMode} onChange={(event) => { setConfig({ ...config, groupMode: event.target.value as 'all' | 'mention' }) }}><option value="all">所有消息</option><option value="mention">仅被 @ 时</option></select></label>
             <label className={css['checkRow']}><input type="checkbox" checked={config.syncCatchUp} onChange={(event) => { setConfig({ ...config, syncCatchUp: event.target.checked }) }} />连接恢复后补收消息</label>
+            <label className={css['field']}><span className={css['fieldLabel']}>新会话欢迎语</span><textarea className={[css['input'], css['textarea']].filter(Boolean).join(' ')} value={config.welcomeText} onChange={(event) => { setConfig({ ...config, welcomeText: event.target.value }) }} placeholder="可留空" /></label>
           </div>
         </section>
 
@@ -279,6 +388,13 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
           {cardTitle('bell', '完成通知', '任务完成飞书卡片提醒')}
           <div className={css['form']}>
             <label className={css['checkRow']}><input type="checkbox" checked={config.notifyOnComplete} onChange={(event) => { setConfig({ ...config, notifyOnComplete: event.target.checked }) }} />电脑端任务完成时通过飞书卡片通知</label>
+            <label className={css['field']}>
+              <span className={css['fieldLabel']}>通知机器人</span>
+              <select className={css['input']} value={config.notifyBotId} onChange={(event) => { setConfig({ ...config, notifyBotId: event.target.value }) }}>
+                <option value="">自动选择（首个含通知角色的启用机器人）</option>
+                {notifyOptions.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}（{BOT_ROLE_LABELS[bot.role]}）</option>)}
+              </select>
+            </label>
             <label className={css['field']}><span className={css['fieldLabel']}>通知目标 chat_id</span><input className={css['input']} value={config.notifyChatId} onChange={(event) => { setConfig({ ...config, notifyChatId: event.target.value }) }} placeholder="oc_xxx（群）或 on_xxx（个人 open_id）" /></label>
           </div>
         </section>
@@ -286,7 +402,8 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         <section className={[css['githubSection'], css['feishuWide']].join(' ')}>
           {cardTitle('activity', '运行状态', '实时生效配置 · 每 10 秒自动刷新')}
           <div className={css['feishuStatGrid']}>
-            <div className={css['feishuStat']}><span>WebSocket</span><strong data-state={status.connected ? 'ok' : status.state === 'connecting' ? 'pending' : 'idle'}>{connectionLabel(status)}</strong></div>
+            <div className={css['feishuStat']}><span>连接</span><strong data-state={status.connected ? 'ok' : status.state === 'connecting' ? 'pending' : 'idle'}>{connectionLabel(status)}</strong></div>
+            <div className={css['feishuStat']}><span>机器人</span><strong data-state={connectedCount > 0 ? 'ok' : 'idle'}>{connectedCount}/{config.bots.length} 在线</strong></div>
             <div className={css['feishuStat']}><span>Provider</span><strong className={css['monoText']}>{actualProvider}</strong></div>
             <div className={css['feishuStat']}><span>Model</span><strong className={css['monoText']}>{actualModel}</strong></div>
             <div className={css['feishuStat']}><span>推理级别</span><strong>{actualEffort}</strong></div>
@@ -310,8 +427,19 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         ) : (
           <div className={css['tableScroll']}>
             <table className={css['dataTable']}>
-              <thead><tr><th>Chat ID</th><th>会话</th><th>模型</th><th>状态</th></tr></thead>
-              <tbody>{sessions.map((session) => <tr key={session.chatId + '/' + session.sessionId}><td className={css['monoText']}>{session.chatId}</td><td className={css['monoText']}>{session.sessionId}</td><td>{session.provider} / {session.model}<div className={css['resourceMeta']}>{session.effort || '默认'} · {session.preset}</div></td><td><span className={css['badge']} data-status={session.status}>{session.status}</span></td></tr>)}</tbody>
+              <thead><tr><th>机器人</th><th>Chat ID</th><th>会话</th><th>模型</th><th>状态</th></tr></thead>
+              <tbody>{sessions.map((session) => {
+                const botName = config.bots.find((bot) => bot.id === session.botId)?.name ?? session.botId ?? '--'
+                return (
+                  <tr key={session.chatId + '/' + session.sessionId}>
+                    <td>{botName}</td>
+                    <td className={css['monoText']}>{session.chatId}</td>
+                    <td className={css['monoText']}>{session.sessionId}</td>
+                    <td>{session.provider} / {session.model}<div className={css['resourceMeta']}>{session.effort || '默认'} · {session.preset}</div></td>
+                    <td><span className={css['badge']} data-status={session.status}>{session.status}</span></td>
+                  </tr>
+                )
+              })}</tbody>
             </table>
           </div>
         )}

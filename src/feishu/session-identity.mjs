@@ -15,10 +15,16 @@
  * @param {{ provider?: unknown, model?: unknown, reasoningEffort?: unknown }} _selection 解析后的模型选择（不再参与身份，仅为兼容调用方签名保留）
  * @param {unknown} agentPreset 预设名
  * @param {unknown} cwd 工作目录
+ * @param {unknown} _followDefault 旧签名遗留占位（0.41.7 起身份与 followDefault 解耦）；
+ *   保留第 4 参让旧调用与存量测试的签名不变。
+ * @param {unknown} botScope 机器人维度隔离（多机器人 0.47.0 起）：default 机器人传空串
+ *   （身份串与旧版完全一致，存量会话号不变）；其余机器人传 bot id，同一飞书聊天
+ *   在不同机器人下落到不同会话。
  * @returns {string} JSON 身份串
  */
-export function selectionIdentity(_selection, agentPreset, cwd) {
-  return JSON.stringify({ agentPreset, cwd })
+export function selectionIdentity(_selection, agentPreset, cwd, _followDefault = undefined, botScope = '') {
+  const bot = String(botScope ?? '').trim()
+  return bot === '' ? JSON.stringify({ agentPreset, cwd }) : JSON.stringify({ agentPreset, cwd, bot })
 }
 
 /**

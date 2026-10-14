@@ -1137,8 +1137,8 @@ export class DevforgeApi {
     }))
   }
 
-  /** 使用当前表单值测试飞书 App ID 与 App Secret，不持久化配置。 */
-  async testFeishuConnection(patch: FeishuConfigPatch): Promise<unknown> {
+  /** 测试飞书 App ID 与 App Secret（patch.botId 指定机器人），不持久化配置。 */
+  async testFeishuConnection(patch: FeishuConfigPatch & { botId?: string }): Promise<unknown> {
     const data = await readJson<{ result: unknown }>(await fetch(FEISHU_API_BASE + '/test', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -9,6 +9,8 @@ const DEFAULTS = Object.freeze({
   enabled: true,
   appId: '',
   appSecret: '',
+  bots: [],
+  notifyBotId: '',
   domain: 'https://open.feishu.cn',
   cwd: process.cwd(),
   allowUsers: [],
@@ -45,6 +47,49 @@ function normalizeRecord(value) {
   return out
 }
 
+/** 机器人角色合法值；role 决定该 bot 是否参与聊天与可否充当通知出口。 */
+const BOT_ROLES = ['chat', 'notify', 'both']
+
+/**
+ * 归一化机器人列表。
+ * - 每项收敛为 { id, name, appId, appSecret, role, enabled }；id 缺省按 appId 尾号生成。
+ * - 旧单机器人配置迁移：bots 为空且顶层 appId 非空时，生成 id=default、role=both 的
+ *   默认机器人（行为与旧版完全一致，存量会话号不变）。
+ */
+function normalizeBots(value, raw = {}) {
+  const source = Array.isArray(value) ? value : []
+  const bots = []
+  for (const [index, item] of source.entries()) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+    const appId = String(item.appId ?? '').trim()
+    const role = BOT_ROLES.includes(String(item.role ?? '')) ? String(item.role) : 'chat'
+    const id = String(item.id ?? '').trim() || (appId !== '' ? 'bot-' + appId.slice(-6) : 'bot-' + String(index + 1))
+    bots.push({
+      id,
+      name: String(item.name ?? '').trim() || '机器人 ' + String(index + 1),
+      appId,
+      appSecret: String(item.appSecret ?? ''),
+      role,
+      enabled: item.enabled !== false,
+    })
+  }
+  // 仅旧版文件（从未写入 bots 字段）触发迁移；显式删空 [] 不复活机器人。
+  if (bots.length === 0 && value === undefined) {
+    const legacyAppId = String(raw?.appId ?? '').trim()
+    if (legacyAppId !== '') {
+      bots.push({
+        id: 'default',
+        name: '默认机器人',
+        appId: legacyAppId,
+        appSecret: String(raw?.appSecret ?? ''),
+        role: 'both',
+        enabled: true,
+      })
+    }
+  }
+  return bots
+}
+
 function normalize(value = {}, fallback = DEFAULTS) {
   const users = Array.isArray(value.allowUsers)
     ? value.allowUsers.map((item) => String(item).trim()).filter(Boolean)
@@ -53,6 +98,8 @@ function normalize(value = {}, fallback = DEFAULTS) {
     enabled: value.enabled === undefined ? fallback.enabled : value.enabled !== false,
     appId: String(value.appId ?? fallback.appId).trim(),
     appSecret: String(value.appSecret ?? fallback.appSecret),
+    bots: normalizeBots(value.bots, value),
+    notifyBotId: String(value.notifyBotId ?? fallback.notifyBotId ?? '').trim(),
     domain: String(value.domain ?? fallback.domain).trim().replace(/\/+$/, '') || DEFAULTS.domain,
     cwd: String(value.cwd ?? fallback.cwd).trim() || process.cwd(),
     allowUsers: [...new Set(users)],
@@ -173,6 +220,17 @@ export class FeishuStore {
     const current = this.get()
     const nextPatch = { ...patch }
     if (nextPatch.appSecret === undefined || String(nextPatch.appSecret) === '') delete nextPatch.appSecret
+    // 机器人级 Secret 单向提交：补丁里留空（或缺省）的项继承现存同 id 机器人的旧值。
+    if (Array.isArray(nextPatch.bots)) {
+      const currentBots = Array.isArray(current.bots) ? current.bots : []
+      nextPatch.bots = nextPatch.bots.map((bot) => {
+        if (bot === null || typeof bot !== 'object') return bot
+        const secret = String(bot.appSecret ?? '')
+        if (secret !== '') return { ...bot, appSecret: secret }
+        const prev = currentBots.find((item) => String(item?.id ?? '') === String(bot.id ?? ''))
+        return { ...bot, appSecret: String(prev?.appSecret ?? '') }
+      })
+    }
     const next = normalize(nextPatch, current)
     this.save(next)
     return next
@@ -180,11 +238,23 @@ export class FeishuStore {
 
   panel() {
     const config = this.get()
+    const bots = Array.isArray(config.bots) ? config.bots : []
     return {
       enabled: config.enabled,
       appId: config.appId,
       appSecretConfigured: config.appSecret.length > 0,
       appSecretMask: config.appSecret.length > 0 ? '已配置 ····' + config.appSecret.slice(-4) : '未配置',
+      // 机器人列表（Secret 脱敏）：bots 是唯一事实源，顶层 appId/appSecret 只是投影。
+      bots: bots.map((bot) => ({
+        id: bot.id,
+        name: bot.name,
+        appId: bot.appId,
+        role: bot.role,
+        enabled: bot.enabled,
+        appSecretConfigured: String(bot.appSecret ?? '').length > 0,
+        appSecretMask: String(bot.appSecret ?? '').length > 0 ? '已配置 ····' + bot.appSecret.slice(-4) : '未配置',
+      })),
+      notifyBotId: config.notifyBotId,
       domain: config.domain,
       cwd: config.cwd,
       allowUsers: [...config.allowUsers],
@@ -209,8 +279,11 @@ export class FeishuStore {
   save(config) {
     const dir = dirname(this.path)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
+    // 顶层 appId/appSecret 保持为第一个非空机器人的投影（兼容旧读法与 cordis.patch.yml bootstrap）。
+    const first = Array.isArray(config?.bots) ? config.bots.find((bot) => String(bot?.appId ?? '') !== '') ?? null : null
+    const merged = first === null ? config : { ...config, appId: first.appId, appSecret: String(first.appSecret ?? '') }
     const tmp = this.path + '.tmp'
-    writeFileSync(tmp, JSON.stringify({ version: 1, config, state: this.state ?? {} }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(tmp, JSON.stringify({ version: 1, config: merged, state: this.state ?? {} }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
     try { chmodSync(tmp, 0o600) } catch {}
     renameSync(tmp, this.path)
   }

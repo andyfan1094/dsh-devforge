@@ -62,6 +62,9 @@ export function normalizeConfig(config = {}) {
     asrApiKey: String(config.asrApiKey ?? '').trim(),
     asrModel: String(config.asrModel ?? '').trim(),
     syncCatchUp: config.syncCatchUp !== false,
+    // 机器人列表与通知出口：store 层已完成归一化，这里只透传（bootstrap 通道不携带时为空）。
+    bots: Array.isArray(config.bots) ? config.bots : [],
+    notifyBotId: String(config.notifyBotId ?? '').trim(),
     sdkLoader: config.sdkLoader,
   }
 }
@@ -200,7 +203,10 @@ export function apply(ctx, config = {}) {
   let updateChain = Promise.resolve()
   let reconfiguring = false
   let closing = false
-  let bridge = null
+  // 多机器人（0.47.0）：botId -> WSClient。每个启用的机器人一条独立飞书长连接；
+  // botId -> 启动失败原因（部分失败不全量回滚，状态面板可见）。
+  const bridges = new Map()
+  const bridgeErrors = new Map()
   let lastSessionError = ''
   let modelState = {
     provider: '',
@@ -220,6 +226,49 @@ export function apply(ctx, config = {}) {
     try { ctx?.logger?.info?.('[dsh-feishu]', message) } catch {}
     try { console.info('[dsh-feishu]', message) } catch {}
   }
+
+  // ── 多机器人路由键 ────────────────────────────────────────────────
+  // convKey = botId + '\u0000' + chatId：会话表/欢迎去重/模型卡缓存等运行时映射
+  // 全部按机器人隔离，同一飞书聊天可以在不同机器人下持有不同会话。
+  // sessionKey：会话号哈希输入。default 机器人退回裸 chatId（身份串与会话号与
+  // 旧版逐字节一致，存量会话零迁移）；其余机器人加 botId 维度。
+  const CONV_SEP = '\u0000'
+  const convKeyOf = (botId, chatId) => String(botId ?? '') + CONV_SEP + String(chatId ?? '').trim()
+  const botIdOfKey = (key) => {
+    const text = String(key ?? '')
+    const index = text.indexOf(CONV_SEP)
+    return index < 0 ? '' : text.slice(0, index)
+  }
+  const chatIdOfKey = (key) => {
+    const text = String(key ?? '')
+    const index = text.indexOf(CONV_SEP)
+    return index < 0 ? text : text.slice(index + CONV_SEP.length)
+  }
+  const sessionKeyOf = (botId, chatId) => String(botId ?? '') === 'default' ? String(chatId ?? '').trim() : convKeyOf(botId, chatId)
+
+  /** 取机器人客户端；botId 为空时回退第一个可用连接（兼容旧的无上下文调用点）。 */
+  const bridgeOf = (botId) => {
+    if (String(botId ?? '') !== '') return bridges.get(String(botId)) ?? null
+    for (const client of bridges.values()) return client
+    return null
+  }
+  /** 启用且已配置 appId 的机器人条目（store 归一化后的 resolved.bots）。 */
+  const enabledBotEntries = () => (Array.isArray(resolved.bots) ? resolved.bots : [])
+    .filter((bot) => bot !== null && typeof bot === 'object' && bot.enabled !== false && String(bot?.appId ?? '').trim() !== '')
+  /** 通知机器人条目：显式 notifyBotId 优先，其次第一个含通知角色的启用机器人。 */
+  const notifyBotEntry = () => {
+    const bots = enabledBotEntries()
+    const wanted = String(resolved.notifyBotId ?? '').trim()
+    return bots.find((bot) => bot.id === wanted)
+      ?? bots.find((bot) => bot.role === 'notify' || bot.role === 'both')
+      ?? bots[0]
+      ?? null
+  }
+  const notifyBridge = () => {
+    const bot = notifyBotEntry()
+    return bot === null ? null : bridges.get(bot.id) ?? null
+  }
+
   // 会话复用诊断落固定文件：宿主 stdout 不落盘，而"重启后换了新会话"这类静默失效
   // 只发生在 resume 阶段（错误被 catch 吞掉），没有留痕就无从归因。这里记录身份取值、
   // 每个候选的 resume 结果与最终决定（0.41.7 起）。
@@ -234,12 +283,34 @@ export function apply(ctx, config = {}) {
       appendFileSync(sessionLogPath, '[' + new Date().toISOString() + '] [' + level + '] ' + message + '\n', 'utf8')
     } catch {}
   }
-  const send = async (chatId, text) => bridge === null ? false : bridge.sendText(chatId, text)
-  const createStream = async (chatId, options) => bridge === null ? null : bridge.createStreamingCard?.(chatId, options)
-  const tracker = createReplyTracker({ sendText: send, createStream, warn })
+  // 按路由键发送：从会话表反查该键归属的机器人；无会话时回退通知机器人。
+  const sendByKey = async (key, text) => {
+    const entry = conversations.get(String(key ?? ''))
+    const client = bridgeOf(entry !== undefined ? entry.botId : botIdOfKey(key)) ?? notifyBridge()
+    return client === null ? false : client.sendText(chatIdOfKey(key), text)
+  }
+  // 通知路径（完成通知、无会话兜底提示）：一律走通知机器人。
+  const send = async (chatId, text) => {
+    const client = notifyBridge() ?? bridgeOf('')
+    return client === null ? false : client.sendText(chatId, text)
+  }
+  const createStream = async (key, options) => {
+    const entry = conversations.get(String(key ?? ''))
+    const client = bridgeOf(entry !== undefined ? entry.botId : botIdOfKey(key)) ?? notifyBridge()
+    return client === null ? null : client.createStreamingCard?.(chatIdOfKey(key), options)
+  }
+  const tracker = createReplyTracker({ sendText: sendByKey, createStream, warn })
   // 飞书答题器：接管飞书会话的 ask_user_question，弹框改为飞书互动卡片送达用户手机。
+  // 内部 chatId 形参实际承载 convKey（机器人隔离路由键），卡片投递时解码回真实
+  // chatId 并定向到收到消息的那个机器人。
   const questionAnswerer = createQuestionAnswerer({
-    getClient: () => bridge?.getClient?.() ?? null,
+    getClient: () => bridgeOf('')?.getClient?.() ?? null,
+    deliverCard: (key, card) => {
+      const entry = conversations.get(String(key ?? ''))
+      const client = bridgeOf(entry !== undefined ? entry.botId : botIdOfKey(key)) ?? notifyBridge()
+      if (client === null) throw new Error('飞书客户端未连接，无法投递问题卡片')
+      return sendCardToChat(() => client.getClient?.() ?? null, chatIdOfKey(key), card)
+    },
     // apply 作用域内的发送函数名为 send（sendText 是 questions.mjs 的注入形参名）；
     // 此处若误写裸标识符 sendText 会在 apply 同步段抛 ReferenceError，
     // 被 safeActivate 静默吞掉（ctx.logger 不进 stdout），飞书桥整体无声死亡（0.38.4 实录）。
@@ -255,7 +326,8 @@ export function apply(ctx, config = {}) {
   })
   const completionNotifier = createCompletionNotifier({
     getConfig: () => store.panel(),
-    getClient: () => bridge?.getClient?.() ?? null,
+    // 完成通知固定走通知机器人（notifyBotId 或首个含通知角色的启用机器人）。
+    getClient: () => notifyBridge()?.getClient?.() ?? null,
     // 会话标题作为卡片主题首选来源；去掉「飞书 · 」前缀避免噪音
     getSessionTitle: (session) => {
       try {
@@ -398,11 +470,39 @@ export function apply(ctx, config = {}) {
   }
 
   const statusSnapshot = () => {
-    const connection = bridge?.status?.() ?? { state: resolved.enabled ? 'unconfigured' : 'disabled', connected: false, lastError: '' }
+    // 多机器人聚合：任一连接在线即视为已连接；逐机器人状态供面板展示。
+    const botViews = enabledBotEntries().map((bot) => {
+      const client = bridges.get(bot.id)
+      const view = client?.status?.() ?? {}
+      const startError = bridgeErrors.get(bot.id) ?? ''
+      return {
+        id: bot.id,
+        name: bot.name,
+        appId: bot.appId,
+        role: bot.role,
+        state: client === undefined ? 'stopped' : String(view.state ?? 'connecting'),
+        connected: view.connected === true,
+        lastError: startError !== '' ? startError : String(view.lastError ?? ''),
+      }
+    })
+    const anyConnected = botViews.some((bot) => bot.connected)
+    const aggregateError = botViews.map((bot) => bot.lastError).find((text) => text !== '') ?? ''
+    const connection = bridges.size > 0
+      ? {
+          state: anyConnected ? 'connected' : 'connecting',
+          connected: anyConnected,
+          ...(aggregateError === '' ? {} : { lastError: aggregateError }),
+        }
+      : {
+          state: resolved.enabled ? 'unconfigured' : 'disabled',
+          connected: false,
+          ...(modelState.error === '' ? {} : { lastError: modelState.error }),
+        }
     return {
       ...connection,
       ...(modelState.error === '' ? {} : { state: 'error', lastError: modelState.error }),
       ...(lastSessionError === '' ? {} : { lastSessionError }),
+      bots: botViews,
       model: {
         provider: modelState.provider,
         model: modelState.model,
@@ -415,6 +515,7 @@ export function apply(ctx, config = {}) {
       },
       independentSessions: [...conversations.values()].map((entry) => ({
         chatId: entry.chatId,
+        botId: entry.botId,
         sessionId: entry.sessionId,
         status: entry.agent.status,
         createdAt: entry.createdAt,
@@ -479,8 +580,15 @@ export function apply(ctx, config = {}) {
     while (creating.size > 0) await Promise.allSettled([...creating.values()])
   }
 
-  async function createOrResumeConversation(chatId) {
-    const key = String(chatId ?? '').trim()
+  async function createOrResumeConversation(bot, rawChatId) {
+    const botId = String(bot?.id ?? '')
+    const chatId = String(rawChatId ?? '').trim()
+    if (chatId === '') throw new Error('飞书 chatId 缺失')
+    // 双键派生：key 是运行时路由键（会话表/creating/欢迎去重，按机器人隔离）；
+    // sessionKey 是会话号哈希键——default 机器人退回裸 chatId，存量会话号不变。
+    const key = convKeyOf(botId, chatId)
+    const sessionKey = sessionKeyOf(botId, chatId)
+    const isDefaultBot = botId === 'default'
     if (key === '') throw new Error('飞书 chatId 缺失')
     if (closing) throw new Error('飞书插件正在关闭')
     const inFlight = creating.get(key)
@@ -489,18 +597,21 @@ export function apply(ctx, config = {}) {
       const revision = configurationRevision
       const effective = await resolveSelection(resolved, { waitForAdapter: true })
       setModelState(effective)
-      const chatCwd = cwdFor(key)
+      const chatCwd = cwdFor(chatId)
       // 0.41.7 定稿：模型不参与会话身份 → 在飞书里换模型/换思考强度不再换会话，上下文保留。
       // 模型切换走 createHandle 里的 installModelSelection，注入到既有会话即可。
-      const identity = selectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
+      // 0.47.0：非 default 机器人把 botId 并入身份，同一聊天在不同机器人下是不同会话。
+      const identity = selectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault, isDefaultBot ? '' : botId)
       // 兼容候选：0.41.6 及以前的老会话按「含模型」的旧算法建号；升级后先用旧号 resume，
-      // 把历史上下文继承过来，避免"升级本身"又造成一次断上下文。
-      const legacyIdentity = legacySelectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
-      const legacyIdentityId = legacyIdentity === identity ? '' : stableSessionIdOf(key, legacyIdentity)
+      // 把历史上下文继承过来，避免"升级本身"又造成一次断上下文。仅 default 机器人有历史。
+      const legacyIdentity = isDefaultBot
+        ? legacySelectionIdentity(effective.selection, effective.agentPreset, chatCwd, effective.followDefault)
+        : ''
+      const legacyIdentityId = legacyIdentity !== '' && legacyIdentity !== identity ? stableSessionIdOf(sessionKey, legacyIdentity) : ''
       // 会话代际：占用接管（fork）与 /new 都会换代。代际持久化在 FeishuStore（state.generations），
       // 重启后重算出同一个 gen-N 号，resume 照常命中；gen=1 保持原号不变（存量会话零迁移）。
-      const generation = store.getChatGeneration(key)
-      let sessionId = stableSessionIdOf(key, withGeneration(identity, generation))
+      const generation = store.getChatGeneration(sessionKey)
+      let sessionId = stableSessionIdOf(sessionKey, withGeneration(identity, generation))
       const archivedSessionIds = archivedSessionIdsOf()
       const existing = conversations.get(key)
       // 身份漂移是"重启就新开会话"的唯一入口：落一行诊断，直接看到选择/预设/目录四项取值，
@@ -523,9 +634,10 @@ export function apply(ctx, config = {}) {
       if (existingArchived) info('retiring archived Feishu session ' + existing.sessionId)
       const existingMatch = existing !== undefined && existing.identity === identity && !existingArchived
       let resumedExisting = false
-      const legacyFound = await detectLegacySession(legacySessionIdOf(key), effective)
+      // pre-v2 旧号迁移只对 default 机器人有意义：其余机器人的历史从本版才开始积累。
+      const legacyFound = isDefaultBot ? await detectLegacySession(legacySessionIdOf(sessionKey), effective) : false
       if (legacyFound) {
-        sessionId = stableSessionIdOf(key, identity + ':legacy-migrated')
+        sessionId = stableSessionIdOf(sessionKey, identity + ':legacy-migrated')
         info('migrating pre-v2 Feishu session to ' + sessionId)
       }
       if (existing !== undefined) {
@@ -550,10 +662,10 @@ export function apply(ctx, config = {}) {
       const hasPersistedListing = persisted.listed
       const runtimeCollisionIds = Array.from({ length: 64 }, (_, index) => {
         const suffix = index === 0 ? ':runtime-collision' : ':runtime-collision-' + (index + 1)
-        return stableSessionIdOf(key, identity + suffix)
+        return stableSessionIdOf(sessionKey, identity + suffix)
       })
-      const metadataMigratedId = stableSessionIdOf(key, identity + ':metadata-migrated')
-      const metadataRebuiltId = stableSessionIdOf(key, identity + ':metadata-rebuilt')
+      const metadataMigratedId = stableSessionIdOf(sessionKey, identity + ':metadata-migrated')
+      const metadataRebuiltId = stableSessionIdOf(sessionKey, identity + ':metadata-rebuilt')
       // 候选顺序即复用优先级：新身份号（模型无关）永远第一；其余历史号按"最后活动时间"倒序。
       // 这一点很关键：同一条飞书聊天在磁盘上会积累多代会话号，按固定顺序取会接回**最早**那条，
       // 用户最近几轮对话照样整段丢掉（实测这条聊天下同时存在 19:24 与 23:27 两代）。
@@ -623,7 +735,7 @@ export function apply(ctx, config = {}) {
           // 占用归因：宿主进程内有活体代理 ≈ 电脑端 GUI 开着；否则是外部进程持锁。仅用于文案与日志。
           const occupier = describeOccupier(ctx.agents, blocked.candidateId)
           sessionLog('warn', 'session occupied chat=' + key + ' candidate=' + blocked.candidateId + ' code=' + blocked.code + ' occupier=' + occupier)
-          const forkedSessionId = stableSessionIdOf(key, withGeneration(identity, generation + 1))
+          const forkedSessionId = stableSessionIdOf(sessionKey, withGeneration(identity, generation + 1))
           sessionLog('info', 'fork takeover chat=' + key + ' from=' + blocked.candidateId + ' to=' + forkedSessionId)
           try {
             const events = await readSessionEvents(ctx.sessionPersistence, blocked.candidateId)
@@ -679,7 +791,7 @@ export function apply(ctx, config = {}) {
       catch (error) {
         warn('failed to attach Feishu session ' + sessionId + ' to workspace: ' + (error instanceof Error ? error.message : String(error)))
       }
-      const entry = { chatId: key, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting, forkedNote }
+      const entry = { chatId, botId, sessionId, workspaceId, identity, agent: handle.agent, handle, selection: effective.selection, agentPreset: effective.agentPreset, createdAt: Date.now(), created: !existingMatch && !resumedExisting, forkedNote }
       conversations.set(key, entry)
       // 双键注册：agent 实例 id + 会话 id 都映射到本飞书会话，任一命中即可认领问题卡片。
       questionAnswerer.registerAgent(handle.agent.id, key, sessionId)
@@ -690,8 +802,11 @@ export function apply(ctx, config = {}) {
     try { return await task } finally { creating.delete(key) }
   }
 
-  const statusText = (chatId) => {
-    const entry = conversations.get(String(chatId ?? '').trim())
+  // 以下 statusText/sendCardTo/sendModelCard/handle* 的 chatId 形参一律承载
+  // convKey（机器人隔离路由键）：会话表按 convKey 命中，卡片/文本按会话归属的
+  // 机器人发出（A 机器人收到的消息绝不会由 B 机器人回复）。
+  const statusText = (key) => {
+    const entry = conversations.get(String(key ?? ''))
     const current = entry === undefined
       ? modelState
       : { provider: entry.selection.provider, model: entry.selection.model, reasoningEffort: entry.selection.reasoningEffort ?? '', agentPreset: entry.agentPreset }
@@ -700,13 +815,18 @@ export function apply(ctx, config = {}) {
     return ['独立飞书会话：' + entry.sessionId, '状态：' + String(entry.agent.status ?? 'unknown'), '工作目录：' + resolved.cwd, '实际配置：' + actual].join('\n')
   }
 
-  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会话任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会��任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
 
-  /** 给指定飞书会话发一张互动卡片；失败抛错由调用方兜底为文字回复。 */
-  const sendCardTo = (chatId, card) => sendCardToChat(() => bridge?.getClient?.() ?? null, chatId, card)
+  /** 给指定路由键对应的飞书会话发互动卡片；失败抛错由调用方兜底为文字回复。 */
+  const sendCardTo = (key, card) => {
+    const entry = conversations.get(String(key ?? ''))
+    const client = bridgeOf(entry !== undefined ? entry.botId : botIdOfKey(key)) ?? notifyBridge()
+    if (client === null) throw new Error('飞书客户端未连接，无法发送卡片')
+    return sendCardToChat(() => client.getClient?.() ?? null, chatIdOfKey(key), card)
+  }
 
   /**
-   * 模型卡翻页缓存：chatId -> { models, current, messageId, at }。
+   * 模型卡翻页缓存：convKey -> { models, current, messageId, at }。
    * 翻页回调必须原地更新同一张卡（PATCH message），需要记住发卡时的模型清单与 message_id；
    * 模型清单短时间内不变，缓存 10 分钟，过期后提示重新 /model。
    */
@@ -714,32 +834,32 @@ export function apply(ctx, config = {}) {
   const MODEL_CARD_CACHE_MS = 10 * 60 * 1000
 
   /** /model：拉取可选模型并发模型选择卡（modelOptions 内部会刷新模型状态），并记录翻页缓存。 */
-  const sendModelCard = async (chatId) => {
+  const sendModelCard = async (key) => {
     const options = await runtime.modelOptions()
-    const messageId = await sendCardTo(chatId, buildModelCard(options.current, options.models, { pageSize: MODEL_PAGE_SIZE }))
-    modelCardCache.set(String(chatId ?? '').trim(), { models: options.models, current: options.current, messageId, at: Date.now() })
+    const messageId = await sendCardTo(key, buildModelCard(options.current, options.models, { pageSize: MODEL_PAGE_SIZE }))
+    modelCardCache.set(String(key ?? ''), { models: options.models, current: options.current, messageId, at: Date.now() })
   }
 
-  const handleCommand = async (envelope) => {
+  const handleCommand = async (envelope, bot) => {
     const command = String(envelope.text.slice(1).trim().split(/\s+/)[0] ?? '').toLowerCase()
     if (command === 'whoami') return '飞书身份：' + envelope.userId
     if (command === 'help') {
       // 帮助卡发送失败时回退为文字版，绝不静默无响应。
-      try { await sendCardTo(envelope.chatId, buildHelpCard()) }
+      try { await sendCardTo(convKeyOf(bot.id, envelope.chatId), buildHelpCard()) }
       catch (error) { warn('help card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return HELP_FALLBACK_TEXT }
       return null
     }
     if (command === 'model') {
-      try { await sendModelCard(envelope.chatId) }
+      try { await sendModelCard(convKeyOf(bot.id, envelope.chatId)) }
       catch (error) { warn('model card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return '模型卡片获取失败：' + (error instanceof Error ? error.message : String(error)) }
       return null
     }
     if (command === 'status') {
       try { await refreshModelState() } catch {}
-      return statusText(envelope.chatId)
+      return statusText(convKeyOf(bot.id, envelope.chatId))
     }
     if (command === 'stop') {
-      const entry = conversations.get(String(envelope.chatId ?? '').trim())
+      const entry = conversations.get(convKeyOf(bot.id, envelope.chatId))
       if (entry === undefined) return '当前还没有独立飞书会话。'
       try {
         const running = entry.agent.status === 'running'
@@ -755,26 +875,28 @@ export function apply(ctx, config = {}) {
     if (command === 'new') {
       // /new：显式换代。归档当前会话号 + 代际 +1，下一封消息冷启动落到全新主号。
       // 历史上下文刻意不带过来——这就是 /new 与占用接管（fork）的本质区别。
-      const key = String(envelope.chatId ?? '').trim()
+      const key = convKeyOf(bot.id, envelope.chatId)
+      const sessionKey = sessionKeyOf(bot.id, envelope.chatId)
       const entry = conversations.get(key)
       if (entry !== undefined && entry.agent.status === 'running') return '当前任务还在运行，请先发 /stop，结束后再开新会话。'
-      const generation = store.getChatGeneration(key)
+      const generation = store.getChatGeneration(sessionKey)
       if (entry !== undefined) {
         conversations.delete(key)
         try { await entry.handle.dispose() } catch {}
         // 旧号进插件归档：冷启动后绝不再 resume 回它（/new 的语义就是不带历史）。
-        store.archiveSessionId(key, entry.sessionId)
+        store.archiveSessionId(sessionKey, entry.sessionId)
       }
-      store.setChatGeneration(key, generation + 1)
+      store.setChatGeneration(sessionKey, generation + 1)
       return '已开启全新会话（第 ' + (generation + 1) + ' 代）：不携带历史上下文，直接发消息即可开始。'
     }
     return null
   }
 
-  const handleStopRequest = async (chatId) => {
-    const entry = conversations.get(String(chatId ?? '').trim())
+  const handleStopRequest = async (chatId, bot) => {
+    const key = convKeyOf(bot?.id, chatId)
+    const entry = conversations.get(key)
     if (entry === undefined) {
-      await send(chatId, '当前没有正在运行的飞书任务。')
+      await sendByKey(key, '当前没有正在运行的飞书任务。')
       return
     }
     try {
@@ -782,32 +904,43 @@ export function apply(ctx, config = {}) {
       // 同上：cause 必须是 { kind: 'user' }，字符串 cause 会产生 reason:null 的毒 turn/end 事件。
       entry.agent.cancel({ kind: 'user' })
       void tracker.cancelAgent(entry.agent.id, entry.agent.session)
-      await send(chatId, running ? '已停止当前任务，正在收尾回复卡片。' : '当前没有正在运行的飞书任务。')
+      await sendByKey(key, running ? '已停止当前任务，正在收尾回复卡片。' : '当前没有正在运行的飞书任务。')
     } catch {
-      await send(chatId, '停止失败，请稍后重试。')
+      await sendByKey(key, '停止失败，请稍后重试。')
     }
   }
 
-  const handleMenuCommand = async ({ command, userId, chatId }) => {
+  const handleMenuCommand = async ({ command, userId, chatId }, bot = null) => {
     if (!allowed.has(userId)) return
     if (!['status', 'stop', 'help', 'whoami'].includes(String(command))) return
-    const reply = await handleCommand({ text: '/' + String(command), userId, chatId })
-    if (reply !== null) await send(chatId, reply)
+    const owner = bot ?? { id: notifyBotEntry()?.id ?? 'default' }
+    const reply = await handleCommand({ text: '/' + String(command), userId, chatId }, owner)
+    if (reply !== null) await sendByKey(convKeyOf(owner.id, chatId), reply)
   }
 
-  const handleMessage = async (envelope, channel = {}) => {
+  const handleMessage = async (envelope, channel = {}, bot = null) => {
     if (closing) return
+    // 多机器人：bot 由各 WSClient 的回调闭包注入；兜底取通知机器人（容错，正常路径必传）。
+    const owner = bot ?? notifyBotEntry() ?? { id: 'default', role: 'both', name: '默认机器人' }
+    const key = convKeyOf(owner.id, envelope.chatId)
+    // 消息按机器人发出：优先复用会话归属，其次本条消息所属的机器人连接。
+    const replyFrom = async (text) => sendByKey(key, text)
     if (!allowed.has(envelope.userId)) {
-      await send(envelope.chatId, '当前飞书身份未授权：' + envelope.userId + '\n请在飞书配置面板的白名单中加入该 open_id。')
+      await replyFrom('当前飞书身份未授权：' + envelope.userId + '\n请在飞书配置面板的白名单中加入该 open_id。')
+      return
+    }
+    // 通知专用机器人不承接聊天：明确告知职责，引导用户使用聊天机器人。
+    if (owner.role === 'notify') {
+      await replyFrom('我是通知机器人，只负责任务完成提醒，不处理聊天；请使用其他机器人发送消息。')
       return
     }
     if (envelope.kind === 'edit') {
-      const entry = conversations.get(String(envelope.chatId ?? '').trim())
+      const entry = conversations.get(key)
       if (entry === undefined || entry.agent.status === 'running') return
       try {
         // 编辑重发会开启新一轮对话，同样需要通道提示，防止模型触发电脑端交互弹框。
         entry.agent.followup(buildUserMessage(withFeishuChannelHint(envelope.text)))
-        await send(envelope.chatId, '已收到修改后的内容，正在重新处理。')
+        await replyFrom('已收到修改后的内容，正在重新处理。')
       } catch (error) {
         warn('failed to deliver edited Feishu message: ' + (error instanceof Error ? error.message : String(error)))
       }
@@ -818,46 +951,45 @@ export function apply(ctx, config = {}) {
       // 输入之后得不到任何反馈。已知命令集合之外的输入一律回可用清单。
       const command = String(envelope.text.slice(1).trim().split(/\s+/)[0] ?? '').toLowerCase()
       if (!KNOWN_COMMANDS.has(command)) {
-        await send(envelope.chatId, '未知命令 /' + command + '。可用命令：/new 开新会话 · /status 查看状态 · /model 换模型 · /stop 停止任务 · /help 帮助')
+        await replyFrom('未知命令 /' + command + '。可用命令：/new 开新会话 · /status 查看状态 · /model 换模型 · /stop 停止任务 · /help 帮助')
         return
       }
-      const reply = await handleCommand(envelope)
-      if (reply !== null) await send(envelope.chatId, reply)
+      const reply = await handleCommand(envelope, owner)
+      if (reply !== null) await replyFrom(reply)
       return
     }
     // 开放题等待自由作答时，把这条普通文本消费为答案，不再进入任务流。
-    if (envelope.kind !== 'edit' && questionAnswerer.hasPendingCustom(envelope.chatId)) {
-      const consumed = questionAnswerer.recordCustomAnswer(envelope.chatId, envelope.text)
+    if (envelope.kind !== 'edit' && questionAnswerer.hasPendingCustom(key)) {
+      const consumed = questionAnswerer.recordCustomAnswer(key, envelope.text)
       if (consumed) return
     }
     if (reconfiguring) {
-      await send(envelope.chatId, '飞书 Agent 配置正在更新，请稍后重新发送。')
+      await replyFrom('飞书 Agent 配置正在更新，请稍后重新发送。')
       return
     }
     let conversation
-    try { conversation = await createOrResumeConversation(envelope.chatId) }
+    try { conversation = await createOrResumeConversation(owner, envelope.chatId) }
     catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       lastSessionError = detail
       warn('independent session creation failed' + (error?.code ? ' [' + error.code + ']' : '') + ': ' + detail)
-      await send(envelope.chatId, '独立飞书会话创建失败：' + detail)
+      await replyFrom('独立飞书会话创建失败：' + detail)
       return
     }
-    if (conversation.created && resolved.welcomeText.trim() !== '' && !welcomedChats.has(envelope.chatId)) {
-      welcomedChats.add(envelope.chatId)
-      await send(envelope.chatId, resolved.welcomeText.trim())
+    if (conversation.created && resolved.welcomeText.trim() !== '' && !welcomedChats.has(key)) {
+      welcomedChats.add(key)
+      await replyFrom(resolved.welcomeText.trim())
     }
     // 占用接管说明：只在接管发生的那条消息前提示一次，发出后立即清空，
     // 同一会话的后续消息不再重复播报。
     if (conversation.forkedNote) {
       const note = conversation.forkedNote
       conversation.forkedNote = ''
-      await send(envelope.chatId, note)
+      await replyFrom(note)
     }
     await config.beforeDelivery?.(conversation, envelope)
-    const conversationKey = String(envelope.chatId ?? '').trim()
-    if (closing || reconfiguring || conversations.get(conversationKey) !== conversation) {
-      await send(envelope.chatId, '飞书 Agent 配置已更新，请重新发送这条消息。')
+    if (closing || reconfiguring || conversations.get(key) !== conversation) {
+      await replyFrom('飞书 Agent 配置已更新，请重新发送这条消息。')
       return
     }
     const agent = conversation.agent
@@ -867,7 +999,7 @@ export function apply(ctx, config = {}) {
     // a follow-up turn; they share the already-streaming reply card.
     const deliverAsSteer = wasRunning
     const reuseLiveCard = deliverAsSteer && tracker.hasActive(agent.id)
-    const ticket = reuseLiveCard ? null : tracker.register(agent.id, envelope.chatId, {
+    const ticket = reuseLiveCard ? null : tracker.register(agent.id, key, {
       waitForTurnStart: false,
       provider: conversation.selection.provider,
       model: conversation.selection.model,
@@ -903,11 +1035,11 @@ export function apply(ctx, config = {}) {
       if (deliverAsSteer || isSteer) agent.steer(payload); else agent.followup(payload)
       if (resolved.ack) {
         const reacted = typeof channel.react === 'function' ? await channel.react(envelope.messageId, resolved.ackReaction) : false
-        if (!reacted) await send(envelope.chatId, '已收到，正在处理。')
+        if (!reacted) await replyFrom('已收到，正在处理。')
       }
     } catch (error) {
       ticket?.cancel()
-      await send(envelope.chatId, '消息投递失败：' + (error instanceof Error ? error.message : String(error)))
+      await replyFrom('消息投递失败：' + (error instanceof Error ? error.message : String(error)))
     }
   }
 
@@ -918,12 +1050,13 @@ export function apply(ctx, config = {}) {
     // （0.41.4 实录）。只有插件真正卸载（closing）才走不可逆的 dispose。
     if (closing) questionAnswerer.dispose()
     else questionAnswerer.cancelAll('飞书桥正在重建，该问题已取消；请直接用文字继续沟通')
-    const currentBridge = bridge
-    bridge = null
+    const currentBridges = [...bridges.values()]
+    bridges.clear()
+    bridgeErrors.clear()
     const handles = [...conversations.values()].map((entry) => entry.handle)
     conversations.clear()
     await Promise.allSettled([
-      Promise.resolve().then(() => currentBridge?.stop?.()),
+      ...currentBridges.map((client) => Promise.resolve().then(() => client.stop?.())),
       ...handles.map((handle) => handle.dispose()),
     ])
   }
@@ -936,48 +1069,55 @@ export function apply(ctx, config = {}) {
    */
   const chatIdOfCardAction = (data) => String(data?.context?.open_chat_id ?? data?.open_chat_id ?? '').trim()
 
-  const handleModelApply = (chatId, value) => {
+  const handleModelApply = (key, value) => {
     const provider = String(value?.provider ?? '').trim()
     const model = String(value?.model ?? '').trim()
     const effort = String(value?.effort ?? '').trim()
     if (provider === '' || model === '') return { toast: { content: '回调缺少模型信息，已忽略' } }
-    const entry = conversations.get(chatId)
+    const entry = conversations.get(key)
     if (entry !== undefined && entry.agent.status === 'running') return { toast: { content: '任务运行中，请先发送 /stop 再切换模型' } }
     const patch = { provider, model, ...(effort === '' ? { reasoningEffort: '' } : { reasoningEffort: effort }) }
     // 回调必须秒回 toast，配置更新（含桥重启）放后台跑，结果用文本回执。
     void enqueueConfigUpdate(patch)
       .then(() => {
-        // 翻页缓存同步新选中值，翻页后「当前」高亮不漂移。
-        const cached = modelCardCache.get(chatId)
-        if (cached !== undefined) modelCardCache.set(chatId, { ...cached, current: { provider, model, ...(effort === '' ? {} : { reasoningEffort: effort }) }, at: Date.now() })
-        return send(chatId, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话继续沿用，历史上下文保留，直接发消息即可。')
+        // 翻页缓存同步新选中值，���页后「当前」高亮不漂移。
+        const cached = modelCardCache.get(key)
+        if (cached !== undefined) modelCardCache.set(key, { ...cached, current: { provider, model, ...(effort === '' ? {} : { reasoningEffort: effort }) }, at: Date.now() })
+        return sendByKey(key, '已切换模型：' + model + (effort === '' ? '（思考强度跟随默认）' : '（思考强度 ' + effort + '）') + '；当前会话继续沿用，历史上下文保留，直接发消息即可。')
       })
-      .catch((error) => send(chatId, '模型切换失败：' + (error instanceof Error ? error.message : String(error))))
+      .catch((error) => sendByKey(key, '模型切换失败：' + (error instanceof Error ? error.message : String(error))))
     return { toast: { content: '正在切换模型…' } }
   }
 
-  const handleFeishuCardAction = async (value, data) => {
+  const handleFeishuCardAction = async (value, data, bot = null) => {
     const action = String(value?.action ?? '')
     if (action.startsWith('feishu_question')) return questionAnswerer.handleCardValue(value)
-    if (action === HELP_ACTIONS.CMD) {
+    // 卡片回调由收到该事件的机器人闭包转发；同一张卡的原地更新（翻页）也必须
+    // 走同一机器人的 client，跨机器人 PATCH 会因卡片归属校验失败。
+    const owner = bot ?? notifyBotEntry() ?? { id: 'default', role: 'both', name: '默认机器人' }
+    const keyOf = (data) => {
       const chatId = chatIdOfCardAction(data)
-      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      return chatId === '' ? '' : convKeyOf(owner.id, chatId)
+    }
+    if (action === HELP_ACTIONS.CMD) {
+      const key = keyOf(data)
+      if (key === '') return { toast: { content: '未找到对应的飞书会话' } }
       const cmd = String(value?.cmd ?? '').trim()
       if (cmd === 'status') {
         try { await refreshModelState() } catch {}
-        await send(chatId, statusText(chatId))
+        await sendByKey(key, statusText(key))
         return { toast: { content: '状态已发送' } }
       }
       if (cmd === 'model') {
-        try { await sendModelCard(chatId) }
+        try { await sendModelCard(key) }
         catch (error) { warn('model card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return { toast: { content: '模型卡片获取失败' } } }
         return { toast: { content: '已发送模型选择卡片' } }
       }
       return null
     }
     if (action === HELP_ACTIONS.MODEL_PICK) {
-      const chatId = chatIdOfCardAction(data)
-      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
+      const key = keyOf(data)
+      if (key === '') return { toast: { content: '未找到对应的飞书会话' } }
       const provider = String(value?.provider ?? '').trim()
       const model = String(value?.model ?? '').trim()
       if (provider === '' || model === '') return { toast: { content: '回调缺少模型信息，已忽略' } }
@@ -990,35 +1130,37 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         warn('resolveModelInfo failed for ' + provider + '/' + model + ': ' + (error instanceof Error ? error.message : String(error)))
       }
-      try { await sendCardTo(chatId, buildEffortCard({ provider, model, name, reasoningEfforts: efforts })) }
+      try { await sendCardTo(key, buildEffortCard({ provider, model, name, reasoningEfforts: efforts })) }
       catch (error) { warn('effort card delivery failed: ' + (error instanceof Error ? error.message : String(error))); return { toast: { content: '思考强度卡片发送失败' } } }
       return { toast: { content: '请选择思考强度' } }
     }
     if (action === HELP_ACTIONS.MODEL_APPLY) {
-      const chatId = chatIdOfCardAction(data)
-      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
-      return handleModelApply(chatId, value)
+      const key = keyOf(data)
+      if (key === '') return { toast: { content: '未找到对应的飞书会话' } }
+      return handleModelApply(key, value)
     }
     if (action === HELP_ACTIONS.MODEL_PAGE) {
       // 翻页：原地更新同一张模型卡，不新增会话消息；缓存过期时提示重新 /model。
-      const chatId = chatIdOfCardAction(data)
-      if (chatId === '') return { toast: { content: '未找到对应的飞书会话' } }
-      const cached = modelCardCache.get(chatId)
+      const key = keyOf(data)
+      if (key === '') return { toast: { content: '未找到对应的飞书会话' } }
+      const cached = modelCardCache.get(key)
       if (cached === undefined || Date.now() - cached.at > MODEL_CARD_CACHE_MS) {
         return { toast: { content: '模型列表已过期，请重新发送 /model' } }
       }
       const page = Math.trunc(Number(value?.page ?? 0))
       if (!Number.isFinite(page) || page < 0) return { toast: { content: '无效页码，已忽略' } }
       const card = buildModelCard(cached.current, cached.models, { page, pageSize: MODEL_PAGE_SIZE })
+      const entry = conversations.get(key)
+      const ownerClient = bridgeOf(entry !== undefined ? entry.botId : owner.id)
       try {
-        await updateCard(bridge?.getClient?.(), cached.messageId, card)
+        await updateCard(ownerClient?.getClient?.(), cached.messageId, card)
         return { toast: { content: '已翻页' } }
       } catch (error) {
         // 原地更新失败（卡片过期/被删等）退回发新卡，翻页能力不能死。
         warn('model card in-place page update failed: ' + (error instanceof Error ? error.message : String(error)))
         try {
-          const messageId = await sendCardTo(chatId, card)
-          modelCardCache.set(chatId, { ...cached, messageId, at: Date.now() })
+          const messageId = await sendCardTo(key, card)
+          modelCardCache.set(key, { ...cached, messageId, at: Date.now() })
           return { toast: { content: '已翻页（新卡片）' } }
         } catch (fallbackError) {
           warn('model card page fallback delivery failed: ' + (fallbackError instanceof Error ? fallbackError.message : String(fallbackError)))
@@ -1035,36 +1177,85 @@ export function apply(ctx, config = {}) {
     const modelStateReady = refreshModelState({ waitForAdapter: true }).catch((error) => {
       warn('model configuration pending: ' + (error instanceof Error ? error.message : String(error)))
     })
-    if (!resolved.enabled || resolved.appId === '' || resolved.appSecret === '') return
-    bridge = createFeishuClient({
-      config: resolved,
-      onMessage: handleMessage,
-      sdkLoader: resolved.sdkLoader,
-      logger: ctx?.logger,
-      onStopRequest: handleStopRequest,
-      onMenuCommand: handleMenuCommand,
-      // 卡片按钮回调统一路由：问答归答题器，帮助/模型卡在此分发（停止按钮仍由桥内部处理）。
-      onCardAction: (value, data) => handleFeishuCardAction(value, data),
-      onLoadState: () => store.getState(),
-      onSaveState: (patch) => store.setState(patch),
-    })
-    await bridge.start()
-    // start() swallows startup errors for boot resilience; activation callers
-    // need the failure so performConfigUpdate can roll back, so verify here.
-    const bridgeStatus = bridge.status?.()
-    if (bridgeStatus && bridgeStatus.connected !== true && bridgeStatus.lastError) throw new Error(bridgeStatus.lastError)
+    if (!resolved.enabled) return
+    // 多机器人：每个启用的机器人一条独立长连接（不同 appId 天然满足「同一 appId
+    // 只允许一个 WSClient」）。逐个启动，部分失败不回滚（失败原因进 bridgeErrors，
+    // 状态面板可见）；全部失败才抛错让 performConfigUpdate 走回滚。
+    const bots = enabledBotEntries()
+    const deduped = new Map()
+    for (const bot of bots) {
+      if (deduped.has(bot.appId)) {
+        warn('duplicate appId across bots, skipping bot ' + bot.id + ' (appId=' + bot.appId + ')')
+        continue
+      }
+      deduped.set(bot.appId, bot)
+    }
+    const secretOf = (bot) => String(bot.appSecret ?? '') || resolved.appSecret
+    if (deduped.size === 0) return
+    const startResults = await Promise.allSettled([...deduped.values()].map((bot) => (async () => {
+      const client = createFeishuClient({
+        config: { ...resolved, appId: bot.appId, appSecret: secretOf(bot) },
+        onMessage: (envelope, channel) => handleMessage(envelope, channel, bot),
+        sdkLoader: resolved.sdkLoader,
+        logger: ctx?.logger,
+        onStopRequest: (chatId) => handleStopRequest(chatId, bot),
+        onMenuCommand: (payload) => handleMenuCommand(payload, bot),
+        // 卡片按钮回调统一路由：问答归答题器，帮助/模型卡在此分发（停止按钮仍由桥内部处理）。
+        onCardAction: (value, data) => handleFeishuCardAction(value, data, bot),
+        onLoadState: () => store.getState(),
+        onSaveState: (patch) => store.setState(patch),
+      })
+      await client.start()
+      // start() swallows startup errors for boot resilience; activation callers
+      // need the failure so performConfigUpdate can roll back, so verify here.
+      const bridgeStatus = client.status?.()
+      if (bridgeStatus && bridgeStatus.connected !== true && bridgeStatus.lastError) throw new Error(bridgeStatus.lastError)
+      bridges.set(bot.id, client)
+      bridgeErrors.delete(bot.id)
+      info('feishu bridge started: bot=' + bot.id + ' (' + bot.name + ') appId=' + bot.appId)
+    })()))
+    let failures = 0
+    for (const [index, result] of startResults.entries()) {
+      const bot = [...deduped.values()][index]
+      if (result.status === 'rejected') {
+        failures += 1
+        const detail = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        bridgeErrors.set(bot.id, detail)
+        warn('feishu bridge start failed: bot=' + bot.id + ': ' + detail)
+      }
+    }
+    if (failures === startResults.length) throw new Error('全部飞书机器人连接失败：' + [...bridgeErrors.values()].join('；'))
     await modelStateReady
   }
 
   async function performConfigUpdate(patch) {
     if (closing) throw new Error('飞书插件正在关闭')
     const current = store.get()
+    // 机器人级 Secret 单向提交：留空/缺省的项继承现存同 id 机器人的旧值。
+    const patchWithBots = { ...patch }
+    if (Array.isArray(patchWithBots.bots)) {
+      const currentBots = Array.isArray(current.bots) ? current.bots : []
+      patchWithBots.bots = patchWithBots.bots.map((bot) => {
+        if (bot === null || typeof bot !== 'object') return bot
+        const secret = String(bot.appSecret ?? '')
+        if (secret !== '') return { ...bot, appSecret: secret }
+        const prev = currentBots.find((item) => String(item?.id ?? '') === String(bot.id ?? ''))
+        return { ...bot, appSecret: String(prev?.appSecret ?? '') }
+      })
+    }
     const next = normalizeConfig({
       ...current,
-      ...patch,
-      appSecret: patch.appSecret === undefined || String(patch.appSecret) === '' ? current.appSecret : patch.appSecret,
+      ...patchWithBots,
+      appSecret: patchWithBots.appSecret === undefined || String(patchWithBots.appSecret) === '' ? current.appSecret : patchWithBots.appSecret,
       sdkLoader: config.sdkLoader,
     })
+    // 同一 appId 配两个启用机器人会各起一个 WSClient 抢同一应用的事件流，启动前拦截。
+    const activeAppIds = (Array.isArray(next.bots) ? next.bots : [])
+      .filter((bot) => bot?.enabled !== false && String(bot?.appId ?? '').trim() !== '')
+      .map((bot) => String(bot.appId).trim())
+    if (new Set(activeAppIds).size !== activeAppIds.length) {
+      throw new Error('同一飞书应用（App ID）只能配置给一个启用的机器人，请检查机器人列表')
+    }
     const effective = await resolveSelection(next)
     if (closing) throw new Error('飞书插件正在关闭')
     const previousResolved = resolved
@@ -1197,16 +1388,25 @@ export function apply(ctx, config = {}) {
     updateConfig: enqueueConfigUpdate,
     testConnection: async (patch = {}) => {
       const current = store.get()
+      // 机器人级测试：补丁携带 botId 时测试「该机器人」的 appId/secret（含留空继承旧值）。
+      const patchBots = Array.isArray(patch?.bots) ? patch.bots : []
+      const botUnderTest = String(patch?.botId ?? '').trim()
+      const botEntry = botUnderTest === '' ? null : patchBots.find((bot) => String(bot?.id ?? '') === botUnderTest)
+        ?? (Array.isArray(current.bots) ? current.bots.find((bot) => String(bot?.id ?? '') === botUnderTest) : null)
       const candidate = normalizeConfig({ ...current, ...patch, appSecret: String(patch.appSecret ?? '') || current.appSecret })
-      if (candidate.appId === '' || candidate.appSecret === '') throw new Error('App ID 和 App Secret 必填')
+      const appId = botEntry !== null ? String(botEntry.appId ?? '').trim() : candidate.appId
+      const appSecret = botEntry !== null
+        ? (String(botEntry.appSecret ?? '') !== '' ? String(botEntry.appSecret) : String(current.bots?.find((bot) => String(bot?.id ?? '') === botUnderTest)?.appSecret ?? ''))
+        : candidate.appSecret
+      if (appId === '' || appSecret === '') throw new Error('App ID 和 App Secret 必填')
       const response = await fetch(candidate.domain + '/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app_id: candidate.appId, app_secret: candidate.appSecret }),
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
       })
       const body = await response.json().catch(() => ({}))
       if (!response.ok || (body.code !== undefined && Number(body.code) !== 0) || typeof body.tenant_access_token !== 'string') {
         throw new Error(String(body.msg ?? body.message ?? ('HTTP ' + response.status)))
       }
-      return { ok: true, appId: candidate.appId }
+      return { ok: true, appId }
     },
   }
 

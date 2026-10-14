@@ -373,6 +373,25 @@
 .feishuStat strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 .feishuStat strong[data-state="idle"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 
+/* 飞书·机器人列表（0.47.0 多机器人）：每行一条连接，字段横排、错误信息跨整行。 */
+.feishuBotList { display: flex; flex-direction: column; gap: 8px; }
+.feishuBotRow { display: grid; grid-template-columns: 10px minmax(90px, 140px) minmax(150px, 1fr) 96px minmax(140px, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #f9fafb); }
+.feishuBotName { min-width: 0; font-weight: 600; }
+.feishuBotAppId { min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.feishuBotSecret { min-width: 0; }
+.feishuBotRow .checkRow { margin: 0; white-space: nowrap; }
+.feishuBotActions { display: inline-flex; gap: 6px; }
+.feishuBotActions .ghostButton[data-danger] { color: var(--dsw-alias-state-error-primary, #dc2626); }
+.feishuBotActions .ghostButton[data-danger]:hover { border-color: var(--dsw-alias-state-error-primary, #dc2626); }
+.feishuBotError { grid-column: 1 / -1; color: var(--dsw-alias-state-error-primary, #dc2626); font-size: 12px; }
+.feishuBotRoleBadge[data-role="both"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }
+.feishuBotRoleBadge[data-role="notify"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); border-color: var(--dsw-alias-state-warning-primary, #ca8a04); }
+.feishuBotRoleBadge[data-role="chat"] { color: var(--dsw-alias-label-secondary, #667085); }
+@media (max-width: 900px) {
+  .feishuBotRow { grid-template-columns: 10px minmax(0, 1fr) auto auto; }
+  .feishuBotAppId, .feishuBotSecret { grid-column: 2 / -1; }
+}
+
 /* 插件更新页（0.40.1）：行内更新日志块 + 手动账号折叠。 */
 .updateLog { display: flex; flex-basis: 100%; flex-direction: column; gap: 4px; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #f9fafb); }
 .updateLogRow { display: flex; min-width: 0; gap: 10px; align-items: baseline; }
