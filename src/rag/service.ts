@@ -8,6 +8,7 @@
  * 索引惰性加载：首次访问某库时重建 Orama 实例并缓存；变更即失效。
  */
 import { createHash, randomUUID } from 'node:crypto'
+import { setImmediate as yieldToHost } from 'node:timers/promises'
 import { chunkDocument, type TextChunk } from './chunker.ts'
 import { RagIndexEngine, type RagIndexChunk, type RagIndexHit } from './index-engine.ts'
 import type { RagDocument, RagKnowledgeBase, RagReembedReport, RagSearchHit, RagSearchRequest, RagSettings } from './protocol.ts'
@@ -37,6 +38,8 @@ export class RagService {
   /** 渠道 → 向量化器：设置里切渠道即切凭据与端点（面板可配）。 */
   private readonly embedders: Record<string, RagEmbedder>
   private readonly engines = new Map<string, RagIndexEngine>()
+  /** 同库并发检索共享一次重建；按 Promise 身份判定是否仍有效，防旧任务覆盖更新后的索引。 */
+  private readonly engineBuilds = new Map<string, Promise<RagIndexEngine>>()
   /** 智谱精排器（off 模式或未注入时跳过）。 */
   private reranker?: Reranker
   /** LLM 打分精排（rerank.mode=llm 时使用）。 */
@@ -82,6 +85,7 @@ export class RagService {
     this.store.putRagSettings(settings)
     // 切块/向量模型变化会让索引与向量失效：全部丢弃，下次惰性重建
     this.engines.clear()
+    this.engineBuilds.clear()
   }
 
   listKbs(): RagKnowledgeBase[] {
@@ -102,7 +106,7 @@ export class RagService {
 
   deleteKb(kbId: string): void {
     this.store.deleteKb(kbId)
-    this.engines.delete(kbId)
+    this.invalidateEngine(kbId)
   }
 
   /**
@@ -192,14 +196,14 @@ export class RagService {
       createdAt: existing?.createdAt ?? Date.now(),
     }
     this.store.putDoc(doc)
-    this.engines.delete(kbId) // 索引失效，下次访问重建
+    this.invalidateEngine(kbId) // 索引失效，下次访问重建
     return doc
   }
 
   deleteDoc(docId: string): void {
     const doc = this.store.getDoc(docId)
     this.store.deleteDoc(docId)
-    if (doc !== undefined) this.engines.delete(doc.kbId)
+    if (doc !== undefined) this.invalidateEngine(doc.kbId)
   }
 
   /** 切块预览（不入库、不嵌入，面板调参用）。 */
@@ -310,8 +314,11 @@ export class RagService {
         }
         for (const record of records) record.vecHash = vectorKey(model, record.text)
         this.store.putChunks(doc.id, records)
+        // 分页重建会在 I/O 间隙与重嵌交错：每篇覆写后立即失效，不能等整库嵌入结束，
+        // 否则同一切块的新 rowid 可能被旧重建再次读取，形成重复或新旧模型混用。
+        this.invalidateEngine(kbId)
       }
-      this.engines.delete(kbId) // 索引失效，下次检索按新向量重建
+      this.invalidateEngine(kbId) // 索引失效，下次检索按新向量重建
       reports.push(report)
     }
     return reports
@@ -321,30 +328,62 @@ export class RagService {
   private async ensureEngine(kbId: string): Promise<RagIndexEngine> {
     const cached = this.engines.get(kbId)
     if (cached !== undefined) return cached
-    const docs = this.store.listDocs(kbId)
+    const pending = this.engineBuilds.get(kbId)
+    if (pending !== undefined) return pending
+
+    // 首步让出事件循环，确保重建身份先存入 Map；同库并发请求只建一次。
+    const job = this.buildEngine(kbId, () => this.engineBuilds.get(kbId) === job)
+    this.engineBuilds.set(kbId, job)
+    try {
+      const engine = await job
+      if (this.engineBuilds.get(kbId) === job) this.engines.set(kbId, engine)
+      return engine
+    } finally {
+      if (this.engineBuilds.get(kbId) === job) this.engineBuilds.delete(kbId)
+    }
+  }
+
+  /** 使缓存与在途重建一并失效；旧任务不得在稍后覆盖更新后的索引。 */
+  private invalidateEngine(kbId: string): void {
+    this.engines.delete(kbId)
+    this.engineBuilds.delete(kbId)
+  }
+
+  /**
+   * 分页重建：有限切块与向量批量读取，页间让出事件循环。
+   * 不再逐篇扫描全域，也不一次展开万条高维 JS 数组；检索覆盖范围保持不变。
+   */
+  private async buildEngine(kbId: string, isCurrent: () => boolean): Promise<RagIndexEngine> {
+    await yieldToHost()
+    const docs = new Map(this.store.listDocs(kbId).filter(doc => doc.status === 'ready').map(doc => [doc.id, doc]))
     let engine: RagIndexEngine | null = null
-    const indexChunks: RagIndexChunk[] = []
-    for (const doc of docs) {
-      if (doc.status !== 'ready') continue
-      for (const record of this.store.listChunks(doc.id)) {
-        const vector = this.store.getVector(record.vecHash)
-        if (vector === null) continue // 向量缺失（跨端恢复未重建）跳过，不炸检索
+    let cursor = 0
+    while (true) {
+      if (!isCurrent()) throw new Error('知识库内容已更新，请重新检索。')
+      const page = this.store.listChunkPage(kbId, cursor)
+      if (page.length === 0) break
+      cursor = page[page.length - 1]!.cursor
+      const records = page.map(row => row.chunk).filter(record => docs.has(record.docId))
+      const vectors = this.store.getVectors(records.map(record => record.vecHash))
+      const indexChunks: RagIndexChunk[] = []
+      for (const record of records) {
+        const vector = vectors.get(record.vecHash)
+        if (vector === undefined) continue // 向量缺失（跨端恢复未重建）跳过，不炸检索
         // 维度由首个实际向量决定（渠道可切换，不硬编码；空库兜底 1024）
         if (engine === null) engine = new RagIndexEngine(vector.length)
         indexChunks.push({
           chunkId: record.id,
           docId: record.docId,
           kbId: record.kbId,
-          fileName: doc.fileName,
+          fileName: docs.get(record.docId)!.fileName,
           headingPath: record.headingPath,
           text: record.text,
           vector: Array.from(vector),
         })
       }
+      if (engine !== null) await engine.addChunks(indexChunks)
+      await yieldToHost()
     }
-    const target = engine ?? new RagIndexEngine(1024)
-    await target.addChunks(indexChunks)
-    this.engines.set(kbId, target)
-    return target
+    return engine ?? new RagIndexEngine(1024)
   }
 }

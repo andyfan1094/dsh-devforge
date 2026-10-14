@@ -30,6 +30,12 @@ export interface RagChunkRecord {
   vecHash: string
 }
 
+/** 分页读取切块时携带内部游标；rowid 仅用于本次重建，不进入文档协议或持久化元数据。 */
+export interface RagChunkPageRow {
+  cursor: number
+  chunk: RagChunkRecord
+}
+
 /** 向量库文件路径（与 store.db 同目录）。 */
 function defaultVecDbPath(mainDbPath: string): string {
   return join(dirname(mainDbPath), 'rag-vec.db')
@@ -49,6 +55,15 @@ export class RagStore {
   constructor(mainDbPath?: string, vecDbPath?: string) {
     const main = mainDbPath ?? defaultDbPath()
     this.db = getDb(main)
+    // JSON 字段没有隐式索引。旧版首次检索按 2803 篇文档查询切块，每次都扫描 17748 条
+    // JSON，实测把 Host 事件循环堵住 97 秒。部分表达式索引只覆盖 RAG 切块，兼容旧库且
+    // 不改正文结构；kb 索引支持 rowid 游标分页，doc 索引同时加速删除、覆盖与旧读取接口。
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_rag_chunk_kb
+        ON docs(json_extract(data, '$.kbId')) WHERE domain = 'rag.chunk';
+      CREATE INDEX IF NOT EXISTS idx_rag_chunk_doc
+        ON docs(json_extract(data, '$.docId'), sort_order) WHERE domain = 'rag.chunk';
+    `)
     const vecPath = vecDbPath ?? defaultVecDbPath(main)
     const dir = dirname(vecPath)
     mkdirSync(dir, { recursive: true })
@@ -103,6 +118,19 @@ export class RagStore {
   listChunks(docId: string): RagChunkRecord[] {
     const rows = this.db.prepare("SELECT data FROM docs WHERE domain = 'rag.chunk' AND json_extract(data, '$.docId') = ? ORDER BY sort_order, rowid").all(docId) as Array<{ data: string }>
     return rows.map(row => JSON.parse(row.data) as RagChunkRecord)
+  }
+
+  /**
+   * 按知识库游标读取有限切块：一次最多一页，调用方可在页间让出 Host 事件循环。
+   * 使用 rowid 键集分页而非 OFFSET，避免越往后越反复扫描前页；游标必须来自上一页。
+   */
+  listChunkPage(kbId: string, afterCursor = 0, limit = 64): RagChunkPageRow[] {
+    const pageSize = Number.isFinite(limit) ? Math.max(1, Math.min(400, Math.floor(limit))) : 64
+    const rows = this.db.prepare(
+      "SELECT rowid AS cursor, data FROM docs WHERE domain = 'rag.chunk' "
+      + "AND json_extract(data, '$.kbId') = ? AND rowid > ? ORDER BY rowid LIMIT ?",
+    ).all(kbId, afterCursor, pageSize) as Array<{ cursor: number; data: string }>
+    return rows.map(row => ({ cursor: row.cursor, chunk: JSON.parse(row.data) as RagChunkRecord }))
   }
 
   /** 整文档覆写切块（先删后插，事务原子）。 */

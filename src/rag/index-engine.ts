@@ -3,11 +3,13 @@
  *
  * 设计要点：
  * - 索引是派生物：主存在 store.db（源文档/切块/向量），本引擎进程内持有
- *   Orama 内存索引，启动或变更时从库重建（万级切块毫秒~秒级，可接受）；
+ *   Orama 内存索引，启动或变更时从库分批重建，插入按时间片让出 Host 事件循环；
  * - tokenizer 换成自研中文分词（segmenter.ts），中文 BM25 全文检索生效；
  * - 检索三模式：fulltext / vector / hybrid（默认，文本+向量加权融合）；
  * - 删除策略：文档删除走"整库重建"（简单可靠，规模足够）。
  */
+import { performance } from 'node:perf_hooks'
+import { setImmediate as yieldToHost } from 'node:timers/promises'
 import { create, insert, search, type AnyOrama } from '@orama/orama'
 import { tokenizeForIndex } from './segmenter.ts'
 
@@ -94,10 +96,14 @@ export class RagIndexEngine {
     return this.chunkCount
   }
 
-  /** 批量入索引。 */
+  /**
+   * 批量入索引：Orama 的 insert 主要是同步 CPU 工作，await 已完成值只会排微任务，
+   * 不会放行 HTTP、WebSocket 或定时器。按时间片主动 setImmediate，长文档建索引时
+   * 仍让其它会话和插件接口获得调度；仅成功插入后递增计数。
+   */
   async addChunks(chunks: RagIndexChunk[]): Promise<void> {
     await this.init()
-    this.chunkCount += chunks.length
+    let sliceStartedAt = performance.now()
     for (const chunk of chunks) {
       await insert(this.db!, {
         text: chunk.text,
@@ -108,6 +114,11 @@ export class RagIndexEngine {
         fileName: chunk.fileName,
         headingPath: chunk.headingPath,
       })
+      this.chunkCount += 1
+      if (performance.now() - sliceStartedAt >= 8) {
+        await yieldToHost()
+        sliceStartedAt = performance.now()
+      }
     }
   }
 
