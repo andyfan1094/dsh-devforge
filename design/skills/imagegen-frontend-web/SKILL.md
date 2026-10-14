@@ -7,6 +7,9 @@ triggers:
   - "landing page comp"
   - "web design reference"
   - "section images"
+  - "图片生成"
+  - "生图"
+  - "配图生成"
 od:
   mode: image
   surface: image

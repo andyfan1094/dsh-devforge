@@ -7,6 +7,10 @@ triggers:
   - "animation timeline"
   - "sequenced animation"
   - "motion choreography"
+  - "动画时间线"
+  - "时间轴动画"
+  - "动画编排"
+  - "动画序列"
 license: MIT
 od:
   mode: prototype

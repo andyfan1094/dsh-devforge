@@ -8,6 +8,11 @@ triggers:
   - "maprange"
   - "snap animation"
   - "gsap random"
+  - "动画工具函数"
+  - "数值映射"
+  - "随机动画"
+  - "数值钳制"
+  - "吸附对齐"
 license: MIT
 od:
   mode: prototype

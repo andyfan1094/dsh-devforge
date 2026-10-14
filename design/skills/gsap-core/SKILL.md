@@ -8,6 +8,11 @@ triggers:
   - "web animation"
   - "tween"
   - "easing"
+  - "动画引擎"
+  - "补间动画"
+  - "缓动"
+  - "网页动画"
+  - "JS动画"
 license: MIT
 od:
   mode: prototype

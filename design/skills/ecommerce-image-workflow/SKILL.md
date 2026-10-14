@@ -17,6 +17,11 @@ triggers:
   - "amazon product images"
   - "shopify product images"
   - "taobao product images"
+  - "电商图片"
+  - "商品图"
+  - "详情页配图"
+  - "主图设计"
+  - "产品场景图"
 od:
   mode: image
   surface: image

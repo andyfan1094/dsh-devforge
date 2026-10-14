@@ -7,6 +7,11 @@ triggers:
   - "reference image to frontend"
   - "generate then code"
   - "visual implementation"
+  - "图片转代码"
+  - "截图还原"
+  - "设计稿转页面"
+  - "参考图复刻"
+  - "视觉还原"
 od:
   mode: prototype
   surface: web

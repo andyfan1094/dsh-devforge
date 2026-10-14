@@ -18,6 +18,9 @@ triggers:
   - polish UI
   - redesign
   - audit interface
+  - 设计流程
+  - 设计工作法
+  - 界面设计流程
 license: Apache 2.0
 ---
 

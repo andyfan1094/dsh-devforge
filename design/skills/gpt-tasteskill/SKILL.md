@@ -7,6 +7,10 @@ triggers:
   - "codex frontend taste"
   - "gsap motion landing"
   - "premium codex UI"
+  - "设计品味"
+  - "高端界面"
+  - "防模板化"
+  - "获奖级网页"
 od:
   mode: prototype
   surface: web

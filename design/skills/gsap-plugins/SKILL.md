@@ -9,6 +9,11 @@ triggers:
   - "draggable"
   - "morphsvg"
   - "splittext"
+  - "动画插件"
+  - "插件注册"
+  - "拖拽动画"
+  - "SVG动画"
+  - "文字动画"
 license: MIT
 od:
   mode: prototype

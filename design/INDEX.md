@@ -14,17 +14,20 @@ od:
 
 > 这份文件回答一个问题：**什么任务该查哪一层**。资产本体不在这里，用 `devforge_design` 工具按需读取
 > （不带参数给总览，`query` 关键词检索，`id` 读全文）。
+>
+> **检索用法**：`query` 可以给多个词（空格分隔），例如 `"表格 分页 排序"`。全部命中的资产优先返回；
+> 没有任何一条全部命中时，退化为「按命中词数排序」。所以查不到时先换更短的词，仍无结果再用 `catalog=true` 看全部六层。
 
 ## 六层资产与适用场景
 
 | 层 | 回答什么问题 | 什么时候查 | 代表条目 |
 | --- | --- | --- | --- |
-| **craft/** | 什么是"好"，什么是"AI 味" | **任何**视觉产物的起点与终点：开工前定标准，交付前逐条自检 | `anti-slop-unified`★、`craft-floor`★、`laws-of-ux`、`typography-hierarchy`、`accessibility-baseline`、`animation-discipline`、`form-validation` |
+| **craft/** | 什么是"好"，什么是"AI 味" | **任何**视觉产物的起点与终点：开工前定标准，交付前逐条自检 | `anti-slop-unified`★、`craft-floor`★、`laws-of-ux`、`typography-hierarchy`、`accessibility-baseline`、`animation-discipline`、`form-validation`、`data-tables`、`dashboard-console`、`form-layout`、`responsive-layout`、`data-visualization` |
 | **standards/** | 行业权威怎么写界面 | 写 Web 界面、表单、交互时当硬规范；做视觉审查时用审查档 | `vercel-web-interface`（108 条生成版）、`vercel-web-review`（104 条 + 14 反模式）、`vercel-web-readme`（130 条散文版）、`v0-design-guidelines` |
 | **skills/** | 一套完整工作法怎么走 | 需要成体系地做设计、改造、生图时 | `taste-skill`（三旋钮 + Design Read）★、`hallmark`（宏观结构 / 主题 / 组件）★、`impeccable`（流程与审计）★、`redesign-skill`、`image-to-code-skill`、`brandkit` |
 | **systems/** | 这套视觉语言的具体数值 | 调性定了要落地时 → 拿 `DESIGN.md` 与 `tokens.css` | `linear`、`stripe`、`monochrome-industrial`、`wabi-sabi`、`glassmorphism` |
-| **templates/** | 从什么骨架开始 | 做原型或演示稿时 | （待补充） |
-| **prompts/** | 现成的提示词片段 | 需要生成配图或素材时 | （待补充） |
+| **templates/** | 从什么骨架开始 | 做原型、后台或演示稿时 | `console-shell`★（控制台壳层）、`data-table-page`、`form-page`、`settings-page`、`auth-page`、`detail-page` |
+| **prompts/** | 现成的提示词片段 | 需求模糊要定方向、要生图、要审计旧界面时 | `ui-design-brief`（模糊需求 → 设计 brief）、`redesign-audit`（改造前审计）、`hero-image-direction`（主视觉生图）、`screenshot-selfcheck`（交付前双档自检） |
 
 ## 典型任务的查法（照这个顺序走）
 
@@ -60,6 +63,19 @@ od:
 
 1. `craft/copy-anti-aiisms` —— 去 AI 味的用词与句式
 2. `standards/vercel-web-readme` 的 Copywriting 章
+
+### 六、从骨架起步（原型 / 后台 / 演示）
+
+1. `templates/console-shell` —— 控制台壳层（左栏导航 + 顶栏 + 主区），换 `--accent` 与品牌名即可开工
+2. 按页面类型接着选：`templates/data-table-page`、`form-page`、`settings-page`、`auth-page`、`detail-page`
+3. 骨架统一 token 契约，换设计系统只改 `:root` 变量；对应的判定标准查同名的 craft 条目（如 `craft/data-tables`）
+4. 交付前用 `prompts/screenshot-selfcheck` 走一遍桌面与移动双档自检
+
+### 七、需求模糊、还没定方向
+
+1. `prompts/ui-design-brief` —— 把一句话需求变成 Design Read + 三旋钮档位 + 内容真值 + 验收线
+2. 要主视觉图时 `prompts/hero-image-direction`（生成后必须看图：缩略图测试、压字测试、撞风格检查）
+3. 要改造既有界面时 `prompts/redesign-audit` —— 先逐块判决「保留 / 重构 / 删除」，再谈视觉
 
 ## 红线速记
 

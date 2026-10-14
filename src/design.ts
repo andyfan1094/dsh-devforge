@@ -236,10 +236,25 @@ export class DesignStore {
     return filtered.sort((a, b) => a.id.localeCompare(b.id))
   }
 
-  /** 关键词检索（覆盖 id/名称/描述/分类/触发词），按相关度排序后截断。 */
+  /**
+   * 关键词检索（覆盖 id/名称/描述/分类/触发词），按相关度排序后截断。
+   *
+   * 分词策略：查询先按空白与中英文标点切分，再执行两级匹配——
+   * ①「全词命中」（AND）优先，保证精确查询的准确度；
+   * ② 全词命中为空且查询含多个词时，退化为「命中任一词」（OR）。
+   *
+   * 退化这级是为了修一个真实缺陷：Agent 常把整句意图塞进 query
+   * （如「排版 层级 表单 控制台 表格」），若只做 AND，只要有一个词没有
+   * 对应资产就整体返回空，看着像「资产库什么都没有」，实际资产都在。
+   * 退化后改为按命中词数排序，命中最多的排前面。
+   */
   search(query: string, kind?: DesignAssetKind, limit = 12): DesignAssetSummary[] {
-    const hits = this.list(kind, query)
-    const scored = hits.map((asset) => ({ asset, score: scoreOf(asset, query) }))
+    const terms = queryTerms(query)
+    if (terms.length === 0) return []
+    const pool = [...this.index.values()].filter((asset) => kind === undefined || asset.kind === kind)
+    let hits = pool.filter((asset) => matchAll(asset, terms))
+    if (hits.length === 0 && terms.length > 1) hits = pool.filter((asset) => matchAny(asset, terms))
+    const scored = hits.map((asset) => ({ asset, score: scoreOf(asset, terms, query) }))
     scored.sort((a, b) => b.score - a.score || a.asset.id.localeCompare(b.asset.id))
     return scored.slice(0, limit).map((row) => row.asset)
   }
@@ -253,11 +268,10 @@ export class DesignStore {
     const name = slash === -1 ? id : id.slice(slash + 1)
     const base = join(this.root, kind, name)
 
-    // 单文件资产：正文即该 md 文件
+    // 单文件资产（craft / standards / prompts / templates 的 .md 形态）：正文即该 md 文件。
+    // 先于目录探测判断：目录型资产的挂载点是目录，其 `<name>.md` 不存在，因此不会误伤。
     const flat = readTextIfExists(base + '.md')
-    if (flat !== undefined && (KIND_ENTRY_FILE[kind] === undefined)) {
-      return { ...summary, content: parseFrontmatter(flat).body }
-    }
+    if (flat !== undefined) return { ...summary, content: parseFrontmatter(flat).body }
 
     // 目录型资产：入口文档 + 关键附属文件
     const candidates = KIND_ENTRY_FILE[kind] ?? ['README.md']
@@ -274,8 +288,7 @@ export class DesignStore {
       return { ...summary, content: parts.join('\n\n') }
     }
 
-    // 兜底：单文件形态（含 craft/standards/prompts 之外的自定义类型）
-    if (flat !== undefined) return { ...summary, content: parseFrontmatter(flat).body }
+    // 目录型资产找不到入口文档：视为不可读（索引里有、正文取不到，比静默返回空串更好排查）
     return undefined
   }
 
@@ -322,27 +335,73 @@ export class DesignStore {
   }
 }
 
-/** 关键词是否命中该资产（覆盖 id/名称/描述/分类/触发词）。 */
-function matches(asset: DesignAssetSummary, query: string): boolean {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return true
-  const haystack = [asset.id, asset.name, asset.description, asset.category, asset.triggers.join(' ')]
-    .join(' ')
+/**
+ * 查询分词：按空白与常见中英文分隔符切分，去空、去重。
+ *
+ * 支持的分隔符包含空格、逗号（中英文）、顿号、分号、斜杠、竖线与加号——
+ * Agent 与用户写复合查询时这些符号都出现过，统一按「词」处理。
+ * 不做中文分词：资产触发词本身以词组形式登记（如「排版层级」），
+ * 按标点切分已足以命中，强行切字反而会引入噪声。
+ */
+function queryTerms(query: string): string[] {
+  const terms = query
     .toLowerCase()
-  return needle.split(/\s+/).every((word) => haystack.includes(word))
+    .split(/[\s,，、;；:：/|+]+/)
+    .map((term) => term.trim())
+    .filter((term) => term !== '')
+  return [...new Set(terms)]
 }
 
-/** 相关度打分：命中触发词权重最高，其次分类与名称，最后描述。 */
-function scoreOf(asset: DesignAssetSummary, query: string): number {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return 0
+/** 把一条资产的全部可检索字段拼成小写 haystack（检索与打分共用）。 */
+function haystackOf(asset: DesignAssetSummary): string {
+  return [asset.id, asset.name, asset.description, asset.category, asset.triggers.join(' ')]
+    .join(' ')
+    .toLowerCase()
+}
+
+/** 是否命中全部词（AND）。 */
+function matchAll(asset: DesignAssetSummary, terms: string[]): boolean {
+  const haystack = haystackOf(asset)
+  return terms.every((term) => haystack.includes(term))
+}
+
+/** 是否命中任一词（OR，多词查询的退化策略）。 */
+function matchAny(asset: DesignAssetSummary, terms: string[]): boolean {
+  const haystack = haystackOf(asset)
+  return terms.some((term) => haystack.includes(term))
+}
+
+/** 关键词是否命中该资产（覆盖 id/名称/描述/分类/触发词）。 */
+function matches(asset: DesignAssetSummary, query: string): boolean {
+  const terms = queryTerms(query)
+  if (terms.length === 0) return true
+  return matchAll(asset, terms)
+}
+
+/**
+ * 相关度打分：命中触发词权重最高，其次分类与名称，最后描述。
+ *
+ * 除逐词权重外还有三项加成，用来解决「多词查询退化后谁排前面」：
+ * ① 覆盖度加成——命中的词越多越靠前；
+ * ② 全词命中加成——满足 AND 的资产优先于只命中一部分的；
+ * ③ 整串命中加成——查询原样出现在词表里（如「排版层级」）说明是精确叫法。
+ */
+function scoreOf(asset: DesignAssetSummary, terms: string[], rawQuery: string): number {
   let score = 0
-  for (const word of needle.split(/\s+/)) {
-    if (asset.triggers.some((trigger) => trigger.toLowerCase().includes(word))) score += 5
-    if (asset.category.toLowerCase().includes(word)) score += 3
-    if (asset.name.toLowerCase().includes(word)) score += 3
-    if (asset.id.toLowerCase().includes(word)) score += 2
-    if (asset.description.toLowerCase().includes(word)) score += 1
+  let matched = 0
+  for (const term of terms) {
+    let hit = 0
+    if (asset.triggers.some((trigger) => trigger.toLowerCase().includes(term))) hit += 5
+    if (asset.category.toLowerCase().includes(term)) hit += 3
+    if (asset.name.toLowerCase().includes(term)) hit += 3
+    if (asset.id.toLowerCase().includes(term)) hit += 2
+    if (asset.description.toLowerCase().includes(term)) hit += 1
+    if (hit > 0) matched += 1
+    score += hit
   }
+  score += matched * 4
+  if (terms.length > 1 && matched === terms.length) score += 6
+  const phrase = rawQuery.trim().toLowerCase()
+  if (phrase !== '' && haystackOf(asset).includes(phrase)) score += 8
   return score
 }

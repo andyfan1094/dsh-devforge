@@ -15,6 +15,11 @@ triggers:
   - "opportunity solution tree"
   - "usability findings dashboard"
   - "qualitative research board"
+  - "调研报告"
+  - "用户研究综合"
+  - "决策记录"
+  - "方案对比"
+  - "访谈总结"
 od:
   mode: prototype
   platform: desktop

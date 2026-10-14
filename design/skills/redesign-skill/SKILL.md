@@ -12,6 +12,8 @@ triggers:
   - improve current UI
   - premium redesign
   - audit UI
+  - 改造界面
+  - 改造既有界面
 od:
   mode: prototype
   surface: web

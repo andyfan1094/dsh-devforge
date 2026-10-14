@@ -192,7 +192,7 @@ export function devforgeDesignTool(design: DesignStore) {
     parameters: {
       id: { type: 'string', description: '资产 id（如 craft/anti-ai-slop、systems/linear、skills/taste-skill）；给了就读全文。' },
       kind: { type: 'string', enum: ['craft', 'standards', 'skills', 'systems', 'templates', 'prompts'], description: '只看某一类资产。' },
-      query: { type: 'string', description: '关键词检索（覆盖名称/描述/分类/触发词）。' },
+      query: { type: 'string', description: '关键词检索（覆盖名称/描述/分类/触发词）。多个词用空格分隔：全部命中优先，否则按命中词数排序返回。' },
       catalog: { type: 'boolean', description: 'true 返回资产总览清单。' },
     },
     output: {
@@ -225,7 +225,7 @@ export function devforgeDesignTool(design: DesignStore) {
         if (value.content !== undefined) return text(value.content !== '' ? value.content : '资产不存在')
         if (value.catalog !== undefined) return text(value.catalog)
         const items = value.assets ?? []
-        if (items.length === 0) return text('（没有匹配的设计资产；可用 catalog=true 看全部）')
+        if (items.length === 0) return text('（没有匹配的设计资产；换用更短的词再试，或用 catalog=true 看全部）')
         return text(['id | 类型 | 名称 | 描述', '--- | --- | --- | ---',
           ...items.map((a) => [a.id, a.kind, a.name, (a.description.split('\n')[0] ?? '').slice(0, 90) || '-'].join(' | '))].join('\n'))
       },

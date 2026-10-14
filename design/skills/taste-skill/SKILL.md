@@ -15,6 +15,9 @@ triggers:
   - premium landing page
   - portfolio redesign
   - visual taste
+  - 调性
+  - 视觉调性
+  - 设计方向
 od:
   mode: prototype
   surface: web

@@ -7,6 +7,11 @@ triggers:
   - "high agency frontend"
   - "anti slop v1"
   - "visual density"
+  - "设计品味"
+  - "视觉品味"
+  - "高端页面"
+  - "反 AI 味"
+  - "设计密度"
 od:
   mode: prototype
   surface: web

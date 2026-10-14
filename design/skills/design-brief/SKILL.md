@@ -11,6 +11,11 @@ triggers:
   - "create a design brief"
   - "ilang brief"
   - "structured brief"
+  - "设计需求"
+  - "设计简报"
+  - "需求梳理"
+  - "设计规格"
+  - "需求文档"
 od:
   mode: design-system
   platform: desktop

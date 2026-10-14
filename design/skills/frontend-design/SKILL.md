@@ -11,6 +11,11 @@ triggers:
   - "landing page"
   - "dashboard design"
   - "react component design"
+  - "前端界面设计"
+  - "界面美化"
+  - "网页设计"
+  - "落地页设计"
+  - "仪表盘设计"
 license: Complete terms in LICENSE.txt
 od:
   mode: prototype

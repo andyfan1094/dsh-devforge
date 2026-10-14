@@ -12,6 +12,8 @@ triggers:
   - 交付前检查
   - 设计稿评审
   - 前端审美
+  - 交付自检
+  - 交付检查
 od:
   category: craft
 ---

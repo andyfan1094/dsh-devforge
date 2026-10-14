@@ -11,6 +11,11 @@ triggers:
   - "version update"
   - "change log"
   - "release summary"
+  - "发布说明"
+  - "版本更新页"
+  - "更新日志"
+  - "新版本介绍"
+  - "一页纸发布说明"
 od:
   mode: prototype
   platform: desktop

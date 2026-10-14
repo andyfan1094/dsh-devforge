@@ -17,6 +17,11 @@ triggers:
   - "extract the fonts"
   - "extract the logo"
   - "build a brand kit"
+  - "品牌提取"
+  - "提取配色"
+  - "品牌规范提取"
+  - "提取品牌字体"
+  - "网站品牌扒取"
 od:
   mode: design
   surface: web

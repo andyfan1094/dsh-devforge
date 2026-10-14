@@ -15,6 +15,8 @@ triggers:
   - redesign
   - audit design
   - design extraction
+  - 设计流程
+  - 页面设计工作法
 ---
 
 # Hallmark

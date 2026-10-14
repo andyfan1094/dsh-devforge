@@ -7,6 +7,10 @@ triggers:
   - "soft premium UI"
   - "luxury landing page"
   - "expensive website"
+  - "高端视觉设计"
+  - "奢华落地页"
+  - "高级感界面"
+  - "柔和高级感"
 od:
   mode: prototype
   surface: web

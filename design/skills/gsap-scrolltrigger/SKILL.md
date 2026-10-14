@@ -8,6 +8,10 @@ triggers:
   - "gsap scroll"
   - "scroll pin"
   - "scroll scrub"
+  - "滚动动画"
+  - "滚动触发"
+  - "视差滚动"
+  - "页面滚动特效"
 license: MIT
 od:
   mode: prototype

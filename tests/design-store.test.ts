@@ -172,3 +172,58 @@ test('catalog：按层列出资产，含 id、名称与描述首行', () => {
   assert.ok(!catalog.includes('第二行不该出现'))
   assert.ok(catalog.includes('【skills】共 1 项'))
 })
+
+test('检索：多词查询全词命中优先，缺词时退化为按命中词数排序（不得整串返回空）', () => {
+  const { root, put } = makeFixture()
+  put('craft/typography.md', '---\nname: 排版规则\ntriggers:\n  - 排版\n---\n正文')
+  put('craft/hierarchy.md', '---\nname: 排版层级契约\ntriggers:\n  - 排版层级\n---\n正文')
+  put('craft/form.md', '---\nname: 表单校验规则\ntriggers:\n  - 表单校验\n---\n正文')
+  const store = new DesignStore(root)
+
+  // 全词都能命中：只返回同时满足两个词的资产
+  const strict = store.search('排版 层级')
+  assert.equal(strict.length, 1)
+  assert.equal(strict[0]?.id, 'craft/hierarchy')
+
+  // 其中「控制台」没有对应资产：不得整体返回空，应退化并按命中词数排序
+  const loose = store.search('排版 层级 控制台')
+  assert.ok(loose.length >= 2, '含无对应资产的词时不应返回空')
+  assert.equal(loose[0]?.id, 'craft/hierarchy', '命中两个词的资产应排最前')
+  assert.ok(loose.some((a) => a.id === 'craft/typography'), '只命中一个词的资产仍应返回')
+  assert.ok(!loose.some((a) => a.id === 'craft/form'), '一个词都没命中的资产不得混入')
+})
+
+test('检索：中英文标点分隔与空格等价', () => {
+  const { root, put } = makeFixture()
+  put('craft/form.md', '---\nname: 表单校验规则\ntriggers:\n  - 表单校验\n---\n正文')
+  const store = new DesignStore(root)
+  for (const query of ['表单 校验', '表单、校验', '表单，校验', '表单/校验', '表单,校验']) {
+    assert.equal(store.search(query).length, 1, query + ' 应命中同一条资产')
+  }
+})
+
+test('检索：单词无命中时保持空结果（不误报）', () => {
+  const { root, put } = makeFixture()
+  put('craft/form.md', '---\nname: 表单校验规则\ntriggers:\n  - 表单校验\n---\n正文')
+  const store = new DesignStore(root)
+  assert.deepEqual(store.search('量子纠缠'), [])
+})
+
+test('检索：整串叫法命中加成（精确词排在同义分散词之前）', () => {
+  const { root, put } = makeFixture()
+  put('craft/a.md', '---\nname: 甲\ntriggers:\n  - 排版\n  - 层级\n---\n正文')
+  put('craft/b.md', '---\nname: 乙\ntriggers:\n  - 排版层级\n---\n正文')
+  const store = new DesignStore(root)
+  const hits = store.search('排版层级')
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0]?.id, 'craft/b')
+})
+
+test('list：带 query 时保持全词命中（AND）语义，供精确过滤使用', () => {
+  const { root, put } = makeFixture()
+  put('craft/hierarchy.md', '---\nname: 排版层级契约\ntriggers:\n  - 排版层级\n---\n正文')
+  put('craft/typography.md', '---\nname: 排版规则\ntriggers:\n  - 排版\n---\n正文')
+  const store = new DesignStore(root)
+  assert.equal(store.list('craft', '排版 层级').length, 1)
+  assert.equal(store.list('craft', '排版 控制台').length, 0)
+})

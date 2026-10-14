@@ -8,6 +8,10 @@ triggers:
   - "60fps animation"
   - "will-change"
   - "layout thrashing"
+  - "动画性能"
+  - "动画卡顿"
+  - "流畅动画"
+  - "渲染性能"
 license: MIT
 od:
   mode: prototype

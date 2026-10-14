@@ -10,6 +10,10 @@ triggers:
   - "OD Next media inputs"
   - "prepare required media assets"
   - "reuse media capability results"
+  - "媒体输入"
+  - "素材接入"
+  - "图片视频输入"
+  - "素材准备"
 od:
   mode: utility
   category: image-generation

@@ -7,6 +7,11 @@ triggers:
   - "editorial product UI"
   - "linear style"
   - "warm monochrome"
+  - "极简风格"
+  - "简约设计"
+  - "留白排版"
+  - "编辑风排版"
+  - "暖色单色调"
 od:
   mode: prototype
   surface: web

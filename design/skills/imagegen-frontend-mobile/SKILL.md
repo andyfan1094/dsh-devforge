@@ -7,6 +7,10 @@ triggers:
   - "mobile UI concept"
   - "ios app mockup"
   - "android app mockup"
+  - "移动端配图"
+  - "App 界面配图"
+  - "手机端设计图"
+  - "多屏流程设计"
 od:
   mode: image
   surface: image

@@ -7,6 +7,8 @@ triggers:
   - slop
   - AI味
   - 视觉漂移
+  - 交付自检
+  - 上线前检查
 od:
   category: craft
 ---

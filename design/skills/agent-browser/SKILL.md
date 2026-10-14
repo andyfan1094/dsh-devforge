@@ -29,6 +29,11 @@ triggers:
   - "QA"
   - "dogfood"
   - "bug hunt"
+  - "浏览器操作"
+  - "网页自动化"
+  - "浏览器标签页"
+  - "网页截图"
+  - "页面抓取"
 od:
   mode: prototype
   surface: web

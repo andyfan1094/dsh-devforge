@@ -7,6 +7,10 @@ triggers:
   - "generate DESIGN.md"
   - "semantic design system"
   - "premium design system"
+  - "设计系统生成"
+  - "DESIGN.md 生成"
+  - "语义化设计系统"
+  - "设计规范文档"
 od:
   mode: design-system
   surface: web

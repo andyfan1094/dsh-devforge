@@ -8,6 +8,10 @@ triggers:
   - "nuxt animation"
   - "sveltekit animation"
   - "framework animation"
+  - "框架动画"
+  - "Vue动画"
+  - "Svelte动画"
+  - "组件动画"
 license: MIT
 od:
   mode: prototype

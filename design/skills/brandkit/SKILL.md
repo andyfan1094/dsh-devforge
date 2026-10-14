@@ -7,6 +7,11 @@ triggers:
   - "brand guidelines board"
   - "logo system"
   - "identity board"
+  - "品牌素材"
+  - "品牌视觉"
+  - "品牌包"
+  - "品牌规范板"
+  - "标志系统"
 od:
   mode: image
   surface: image

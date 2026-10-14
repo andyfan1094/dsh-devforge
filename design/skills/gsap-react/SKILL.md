@@ -8,6 +8,10 @@ triggers:
   - "react animation"
   - "gsap context"
   - "react motion"
+  - "React动画"
+  - "React过渡"
+  - "Next.js动画"
+  - "动画清理"
 license: MIT
 od:
   mode: prototype

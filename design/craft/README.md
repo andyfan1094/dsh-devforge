@@ -106,6 +106,16 @@ A purely behavioral craft file (state-coverage, animation-discipline) is guidanc
 | `rtl-and-bidi.md` | `rtl-and-bidi` | Any skill that ships localized text or layout: blogs, docs, financial tables, mobile apps, anything that may render Arabic / Hebrew / Persian |
 | `form-validation.md` | `form-validation` | Any skill whose primary artifact contains an interactive form: lead capture, sign-in, signup, settings, multi-step intake |
 | `laws-of-ux.md` | `laws-of-ux` | Any skill whose composition decisions hit named cognitive limits: pricing pages (Hick's, Choice Overload, Von Restorff), dashboards (Pareto, Selective Attention, Working Memory), onboarding (Goal-Gradient, Zeigarnik, Peak-End), modals (Fitts's, Tesler's). Sibling axis to the rendering-rule files above — covers what to compose, not how to render. |
+| `data-tables.md` | `data-tables` | Any skill that emits a data table, list page, or a surface where rows and columns are compared. 表格 / 列表页。 |
+| `dashboard-console.md` | `dashboard-console` | Any skill that emits a console, dashboard, admin shell, or monitored operational surface. 控制台 / 后台 / 仪表盘。 |
+| `form-layout.md` | `form-layout` | Any skill whose primary artifact is a form: sign-in, settings, intake, multi-step flows. 表单布局与字段编排（校验行为见 `form-validation`）。 |
+| `responsive-layout.md` | `responsive-layout` | Any skill that ships a surface across viewports: breakpoints, grid, container queries, fluid type, overflow. 响应式 / 断点 / 栅格。 |
+| `data-visualization.md` | `data-visualization` | Any skill that renders charts, KPI cards, or data summaries. 图表 / 指标卡（页面编排见 `dashboard-console`）。 |
+
+The five sections above were authored in-repo as **Chinese-original rulebooks** distilled from
+primary sources (GOV.UK, USWDS, IBM Carbon, W3C ARIA APG / WCAG, MDN, NN/g, Primer, Atlassian,
+Ant Design, Every Layout, Utopia); each file lists the URLs actually fetched, the license as
+declared by that page, and marks unsourced numbers as 经验区间. See [`../SOURCES.md`](../SOURCES.md).
 
 **Partial-stateful skills.** A skill that's mostly static but contains an embedded form, data table, or query surface should opt in. State-coverage rules apply to the stateful component, not the whole page.
 

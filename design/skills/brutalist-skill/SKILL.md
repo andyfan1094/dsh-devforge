@@ -7,6 +7,11 @@ triggers:
   - "tactical telemetry"
   - "swiss industrial"
   - "brutalist interface"
+  - "粗野主义"
+  - "野兽派风格"
+  - "粗犷排版"
+  - "工业风界面"
+  - "瑞士工业风"
 od:
   mode: prototype
   surface: web

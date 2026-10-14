@@ -7,6 +7,11 @@ triggers:
   - "no placeholders"
   - "complete code"
   - "unabridged implementation"
+  - "完整输出"
+  - "禁止占位符"
+  - "完整代码生成"
+  - "不要省略"
+  - "无删减交付"
 od:
   mode: prototype
   surface: web
