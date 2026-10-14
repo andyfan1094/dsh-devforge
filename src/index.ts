@@ -147,6 +147,10 @@ function readStoreDbOpenAi(): Partial<OpenAiCapabilityConfig> {
   } catch { return {} }
 }
 
+// openai 配置的兜底合并抽在 ./openai/config-merge.ts（纯函数，便于 strip-only 模式单测）。
+import { mergeOpenAiConfig, type OpenAiConfigInput } from './openai/config-merge.ts'
+export { mergeOpenAiConfig, type OpenAiConfigInput }
+
 /** 单个能力激活失败不拖垮整段注册/热更新。 */
 function safeActivate(ctx: Context, label: string, fn: () => void): void {
   try { fn() } catch (error) { ctx.logger?.warn?.('[dsh-devforge] %s 激活失败（已跳过，不影响其他能力）：%s', label, error instanceof Error ? error.message : String(error)) }
@@ -495,15 +499,7 @@ export function apply(ctx: Context, config?: Config): void {
         usageSecretKeyEnv: value.ark?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY',
         usageTimeoutMs: value.ark?.usageTimeoutMs ?? 15000,
       },
-      openai: {
-        enabled: value.openai?.enabled ?? storedOpenAi.enabled ?? true,
-        baseURL: value.openai?.baseURL ?? storedOpenAi.baseURL ?? '',
-        apiKeyEnv: value.openai?.apiKeyEnv ?? storedOpenAi.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
-        imageModel: value.openai?.imageModel ?? storedOpenAi.imageModel ?? '',
-        endpoints: value.openai?.endpoints?.length ? value.openai.endpoints : storedOpenAi.endpoints ?? [],
-        timeoutMs: value.openai?.timeoutMs ?? storedOpenAi.timeoutMs ?? 300000,
-        siteImage: value.openai?.siteImage ?? storedOpenAi.siteImage ?? { enabled: false, model: '' },
-      },
+      openai: mergeOpenAiConfig(value.openai, storedOpenAi),
       constraints: {
         enabled: value.constraints?.enabled ?? true,
         fullTextPaths: value.constraints?.fullTextPaths?.length ? value.constraints.fullTextPaths : CONSTRAINTS_DEFAULT_PATHS,
@@ -1333,7 +1329,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     Object.assign(zhipuConfig, value.zhipu)
     Object.assign(minimaxConfig, value.minimax)
     Object.assign(arkConfig, value.ark)
-    Object.assign(openAiConfig, value.openai)
+    // openai 能力：面板保存的配置只写 store.db（openai.settings），插件配置段（profile）通常没有 openai 子段。
+    // 直接用 value.openai 会让 siteImage 永远取不到面板里存的官网生图开关（重启后设置丢失），
+    // 所以走 resolve() —— 它带 store.db 兜底（0.49.1 修复）。
+    Object.assign(openAiConfig, resolve().openai)
     Object.assign(siliconFlowConfig, value.siliconflow)
     // 每次 sync 领取新的定时器域，并取消上一轮仍在等待的重试（避免旧定时器拖住进程退出）。
     const previousTimerScope = autoEnsureTimerScope
@@ -1448,6 +1447,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     // schemastery 嵌套 object 的快照含 null 字段；规整成 Config 视图（?? 兜底）再交给 resolve()。
     setSource: (raw) => {
       const source = (): Config => {
+        const storedOpenAi = readStoreDbOpenAi()
         const value = raw() as Config & { forgeAgentPreset?: string | null; remote?: { enabled?: boolean | null }; browser?: { enabled?: boolean | null; publish?: boolean | null; headless?: boolean | null; channel?: string | null; profileDir?: string | null; timeoutMs?: number | null }; github?: { enabled?: boolean | null }; cnb?: { enabled?: boolean | null }; feishu?: { enabled?: boolean | null }; zhipu?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; officialApiKeyEnv?: string | null }; siliconflow?: { enabled?: boolean | null; apiKeyEnv?: string | null; timeoutMs?: number | null; syncChatModels?: boolean | null } }
         return {
           enabled: value.enabled ?? undefined,
@@ -1488,15 +1488,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
             usageSecretKeyEnv: value.ark?.usageSecretKeyEnv ?? 'VOLC_SECRET_KEY',
             usageTimeoutMs: value.ark?.usageTimeoutMs ?? 15000,
           },
-          openai: {
-            enabled: value.openai?.enabled !== false,
-            baseURL: value.openai?.baseURL ?? '',
-            apiKeyEnv: value.openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY',
-            imageModel: value.openai?.imageModel ?? '',
-            endpoints: value.openai?.endpoints ?? [],
-            timeoutMs: value.openai?.timeoutMs ?? 300000,
-            ...(value.openai?.siteImage !== undefined ? { siteImage: value.openai.siteImage } : {}),
-          },
+          // openai 段与 resolve() 共用同一条兜底链（mergeOpenAiConfig）：宿主设置段为空时回落
+          // store.db 副本，避免面板显示与实际生效配置不一致（siteImage 曾因此丢失，2026-10-14 修复）。
+          openai: mergeOpenAiConfig(value.openai, storedOpenAi),
           // 0.33.3 修复：source 此前遗漏 siliconflow 段，patch overlay 配置的
           // syncChatModels=false 在启动规整时被丢弃（默认 true 兜底），只嵌入模式失效。
           siliconflow: {
