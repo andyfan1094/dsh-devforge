@@ -269,7 +269,12 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
         <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void refresh() }}>刷新</button>
       </div>
 
-      {error !== '' && <div className={css['banner']} data-kind="error">{error}</div>}
+      {error !== '' && (
+        <div className={[css['banner'], css['bannerRow']].join(' ')} data-kind="error">
+          <span>{error}</span>
+          <button type="button" className={css['ghostButton']} onClick={() => { void refresh() }}>重试</button>
+        </div>
+      )}
       {notice !== '' && <div className={css['banner']} data-kind="success">{notice}</div>}
       {status.state === 'error' && status.lastError && <div className={css['banner']} data-kind="error">运行错误：{status.lastError}</div>}
       {status.lastSessionError && <div className={css['banner']} data-kind="error">会话错误：{status.lastSessionError}</div>}
@@ -287,42 +292,45 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
               const live = botStatuses.find((item) => item.id === bot.id)
               return (
                 <div key={bot.id} className={css['feishuBotRow']} data-role={role}>
-                  <span className={css['connectionDot']} data-state={live === undefined ? 'stopped' : live.connected ? 'connected' : live.state} aria-hidden="true" />
-                  <input
-                    className={[css['input'], css['feishuBotName']].join(' ')}
-                    value={name}
-                    aria-label="机器人名称"
-                    onChange={(event) => { patchDraft(bot.id, { name: event.target.value }) }}
-                  />
-                  <input
-                    className={[css['input'], css['feishuBotAppId']].join(' ')}
-                    value={appId}
-                    placeholder="cli_xxxxxxxxxxxxxxxx"
-                    aria-label="机器人 App ID"
-                    onChange={(event) => { patchDraft(bot.id, { appId: event.target.value }) }}
-                  />
-                  <select
-                    className={css['input']}
-                    value={role}
-                    aria-label="机器人角色"
-                    onChange={(event) => { patchDraft(bot.id, { role: event.target.value as FeishuBotRole }) }}
-                  >
-                    {(Object.keys(BOT_ROLE_LABELS) as FeishuBotRole[]).map((key) => <option key={key} value={key}>{BOT_ROLE_LABELS[key]}</option>)}
-                  </select>
-                  <input
-                    className={[css['input'], css['feishuBotSecret']].join(' ')}
-                    type="password"
-                    autoComplete="new-password"
-                    value={draft.appSecret ?? ''}
-                    placeholder={bot.appSecretConfigured ? bot.appSecretMask : '填入 App Secret'}
-                    aria-label="机器人 App Secret"
-                    onChange={(event) => { patchDraft(bot.id, { appSecret: event.target.value }) }}
-                  />
-                  <span className={[css['badge'], css['feishuBotRoleBadge']].join(' ')} data-role={role}>{BOT_ROLE_LABELS[role]}</span>
-                  <label className={css['checkRow']}><input type="checkbox" checked={bot.enabled} onChange={(event) => { setConfig((current) => ({ ...current, bots: current.bots.map((item) => item.id === bot.id ? { ...item, enabled: event.target.checked } : item) })) }} />启用</label>
-                  <div className={css['feishuBotActions']}>
-                    <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void testBot(bot) }}>测试</button>
-                    <button type="button" className={css['ghostButton']} data-danger="" aria-label={'删除机器人 ' + name} onClick={() => { removeBot(bot.id) }}><IconTrash /></button>
+                  <div className={css['feishuBotMain']}>
+                    <span className={css['connectionDot']} data-state={live === undefined ? 'stopped' : live.connected ? 'connected' : live.state} aria-hidden="true" />
+                    <input
+                      className={[css['input'], css['feishuBotName']].join(' ')}
+                      value={name}
+                      aria-label="机器人名称"
+                      onChange={(event) => { patchDraft(bot.id, { name: event.target.value }) }}
+                    />
+                    <select
+                      className={[css['input'], css['feishuBotRole']].join(' ')}
+                      value={role}
+                      aria-label="机器人角色"
+                      onChange={(event) => { patchDraft(bot.id, { role: event.target.value as FeishuBotRole }) }}
+                    >
+                      {(Object.keys(BOT_ROLE_LABELS) as FeishuBotRole[]).map((key) => <option key={key} value={key}>{BOT_ROLE_LABELS[key]}</option>)}
+                    </select>
+                    <label className={css['checkRow']}><input type="checkbox" checked={bot.enabled} onChange={(event) => { setConfig((current) => ({ ...current, bots: current.bots.map((item) => item.id === bot.id ? { ...item, enabled: event.target.checked } : item) })) }} />启用</label>
+                    <div className={css['feishuBotActions']}>
+                      <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void testBot(bot) }}>测试</button>
+                      <button type="button" className={css['ghostButton']} data-danger="" aria-label={'删除机器人 ' + name} onClick={() => { removeBot(bot.id) }}><IconTrash /></button>
+                    </div>
+                  </div>
+                  <div className={css['feishuBotCreds']}>
+                    <input
+                      className={[css['input'], css['feishuBotAppId']].join(' ')}
+                      value={appId}
+                      placeholder="cli_xxxxxxxxxxxxxxxx"
+                      aria-label="机器人 App ID"
+                      onChange={(event) => { patchDraft(bot.id, { appId: event.target.value }) }}
+                    />
+                    <input
+                      className={[css['input'], css['feishuBotSecret']].join(' ')}
+                      type="password"
+                      autoComplete="new-password"
+                      value={draft.appSecret ?? ''}
+                      placeholder={bot.appSecretConfigured ? bot.appSecretMask : '填入 App Secret'}
+                      aria-label="机器人 App Secret"
+                      onChange={(event) => { patchDraft(bot.id, { appSecret: event.target.value }) }}
+                    />
                   </div>
                   {live !== undefined && live.lastError !== '' && live.lastError !== undefined && (
                     <div className={css['feishuBotError']}>{live.lastError}</div>

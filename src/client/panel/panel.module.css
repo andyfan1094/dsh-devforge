@@ -213,6 +213,10 @@
 
 .banner { padding: 8px 12px; font-size: 12.5px; line-height: 1.5; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 6px; color: var(--dsw-alias-label-secondary, #667085); overflow-wrap: anywhere; }
 .banner[data-kind="error"] { color: var(--dsw-alias-state-error-primary, #dc2626); border-color: var(--dsw-alias-state-error-primary, #dc2626); }
+/* 错误横幅行内恢复动作：文本居左、重试按钮居右（state-coverage：错误必须给恢复路径）。 */
+.bannerRow { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.bannerRow > span { min-width: 0; }
+.bannerRow .ghostButton { flex: none; }
 .empty { padding: 30px 12px; text-align: center; font-size: 12.5px; color: var(--dsw-alias-label-tertiary, #98a2b3); }
 .empty[data-loading] { color: var(--dsw-alias-label-secondary, #667085); }
 
@@ -373,23 +377,26 @@
 .feishuStat strong[data-state="pending"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); font-weight: 600; }
 .feishuStat strong[data-state="idle"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 
-/* 飞书·机器人列表（0.47.0 多机器人）：每行一条连接，字段横排、错误信息跨整行。 */
+/* 飞书·机器人列表（0.47.0 多机器人）：两行式行卡——上行「身份与控制」（状态点/名称/角色/启用/操作），
+   下行「凭据」（AppID/Secret 成对）；错误信息独占一行。按语义分行，中宽度不挤压。 */
 .feishuBotList { display: flex; flex-direction: column; gap: 8px; }
-.feishuBotRow { display: grid; grid-template-columns: 10px minmax(90px, 140px) minmax(150px, 1fr) 96px minmax(140px, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #f9fafb); }
-.feishuBotName { min-width: 0; font-weight: 600; }
+.feishuBotRow { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1, #e5e7eb); border-radius: var(--dv-radius-control, 6px); background: var(--dsw-alias-bg-layer-1, #f9fafb); }
+.feishuBotMain { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.feishuBotMain > .connectionDot { flex: none; }
+.feishuBotName { flex: 1 1 120px; min-width: 80px; font-weight: 600; }
+.feishuBotRole { flex: 0 0 auto; width: auto; min-width: 96px; }
+.feishuBotMain .checkRow { flex: none; margin: 0; white-space: nowrap; }
+.feishuBotActions { flex: none; display: inline-flex; gap: 6px; }
+.feishuBotCreds { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .feishuBotAppId { min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .feishuBotSecret { min-width: 0; }
-.feishuBotRow .checkRow { margin: 0; white-space: nowrap; }
-.feishuBotActions { display: inline-flex; gap: 6px; }
 .feishuBotActions .ghostButton[data-danger] { color: var(--dsw-alias-state-error-primary, #dc2626); }
 .feishuBotActions .ghostButton[data-danger]:hover { border-color: var(--dsw-alias-state-error-primary, #dc2626); }
-.feishuBotError { grid-column: 1 / -1; color: var(--dsw-alias-state-error-primary, #dc2626); font-size: 12px; }
-.feishuBotRoleBadge[data-role="both"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }
-.feishuBotRoleBadge[data-role="notify"] { color: var(--dsw-alias-state-warning-primary, #ca8a04); border-color: var(--dsw-alias-state-warning-primary, #ca8a04); }
-.feishuBotRoleBadge[data-role="chat"] { color: var(--dsw-alias-label-secondary, #667085); }
-@media (max-width: 900px) {
-  .feishuBotRow { grid-template-columns: 10px minmax(0, 1fr) auto auto; }
-  .feishuBotAppId, .feishuBotSecret { grid-column: 2 / -1; }
+.feishuBotError { color: var(--dsw-alias-state-error-primary, #dc2626); font-size: 12px; }
+@media (max-width: 700px) {
+  .feishuBotMain { flex-wrap: wrap; }
+  .feishuBotName { flex-basis: calc(100% - 130px); }
+  .feishuBotCreds { grid-template-columns: 1fr; }
 }
 
 /* 插件更新页（0.40.1）：行内更新日志块 + 手动账号折叠。 */
