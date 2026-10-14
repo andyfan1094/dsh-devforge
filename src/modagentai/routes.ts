@@ -152,6 +152,20 @@ export function makeModagentaiRoutes(service: ModagentaiService): WebRoute[] {
       },
     },
     {
+      // 官网生图线路（辉哥 2026-10-14）：登录时自动接入 generate_image，面板可手动重新同步模型名。
+      kind: 'exact',
+      path: MODAGENTAI_API.applyImage,
+      async handler(req, res) {
+        if (!guardWrite(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          writeJson(res, 200, { ok: true, siteImage: await service.applySiteImage() })
+        } catch (error) {
+          writeError(res, error)
+        }
+      },
+    },
+    {
       // 官网搜索工具启停（辉哥定稿）：GET 读 / POST 写共用一条 exact 路由（同 profile 的 method 分流模式）。
       kind: 'exact',
       path: MODAGENTAI_API.toolSettings,

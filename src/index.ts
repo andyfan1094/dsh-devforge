@@ -270,6 +270,10 @@ export const Config = z.object({
       imageModel: z.string().default('').description('该端点的生图模型'),
     })).default([]).description('OpenAI 兼容中转端点列表；为空时兼容旧版 baseURL 配置'),
     timeoutMs: z.number().min(1000).max(600000).default(300000).description('中转站生图请求超时（毫秒）'),
+    siteImage: z.object({
+      enabled: z.boolean().default(false).description('官网生图线路：generate_image 优先走天工造梦官网（登录官网后自动开启）'),
+      model: z.string().default('').description('官网生图模型（随官网目录 data.images 自动同步）'),
+    }).default({ enabled: false, model: '' }).description('官网生图线路（登录官网账号后自动接入，按张扣钻石）'),
   }).description('OpenAI 兼容中转站配置'),
   constraints: z.object({
     enabled: z.boolean().default(true).description('项目约束注入总开关'),
@@ -498,6 +502,7 @@ export function apply(ctx: Context, config?: Config): void {
         imageModel: value.openai?.imageModel ?? storedOpenAi.imageModel ?? '',
         endpoints: value.openai?.endpoints?.length ? value.openai.endpoints : storedOpenAi.endpoints ?? [],
         timeoutMs: value.openai?.timeoutMs ?? storedOpenAi.timeoutMs ?? 300000,
+        siteImage: value.openai?.siteImage ?? storedOpenAi.siteImage ?? { enabled: false, model: '' },
       },
       constraints: {
         enabled: value.constraints?.enabled ?? true,
@@ -1490,6 +1495,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
             imageModel: value.openai?.imageModel ?? '',
             endpoints: value.openai?.endpoints ?? [],
             timeoutMs: value.openai?.timeoutMs ?? 300000,
+            ...(value.openai?.siteImage !== undefined ? { siteImage: value.openai.siteImage } : {}),
           },
           // 0.33.3 修复：source 此前遗漏 siliconflow 段，patch overlay 配置的
           // syncChatModels=false 在启动规整时被丢弃（默认 true 兜底），只嵌入模式失效。

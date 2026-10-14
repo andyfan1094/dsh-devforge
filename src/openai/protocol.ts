@@ -94,6 +94,17 @@ export interface OpenAiGatewayConfigPatch {
   endpoints?: OpenAiGatewayEndpointConfig[]
 }
 
+/**
+ * 官网生图线路（辉哥 2026-10-14 定稿）：登录天工造梦官网后，generate_image 优先走官网网关
+ * （https://modagentai.com/api/gw/v1/v1/images/generations），按张扣钻石；模型名随官网目录下发。
+ */
+export interface OpenAiSiteImageStatus {
+  /** 是否已接入官网生图线路（登录官网成功后自动开启）。 */
+  enabled: boolean
+  /** 当前生图模型（来自官网目录 data.images，未同步到为空串）。 */
+  model: string
+}
+
 /** 凭据、模型路由和生图模型的脱敏状态。 */
 export interface OpenAiGatewayStatus {
   enabled: boolean
@@ -108,4 +119,6 @@ export interface OpenAiGatewayStatus {
   models: OpenAiGatewayModelInfo[]
   /** 多端点状态；旧客户端可忽略该字段。 */
   endpoints: OpenAiGatewayEndpointStatus[]
+  /** 官网生图线路状态；旧客户端可忽略该字段。 */
+  siteImage?: OpenAiSiteImageStatus
 }

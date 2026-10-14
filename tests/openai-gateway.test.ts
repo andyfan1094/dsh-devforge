@@ -563,3 +563,32 @@ test('模型容量修改：非法值与未知目标拒绝且不落库', async ()
   assert.equal(readModels('openai-gateway-claude')[0]?.contextWindow, 200_000)
   assert.equal(readModels('openai-gateway-claude')[0]?.maxTokens, 32_000)
 })
+
+test('官网生图线路：开关与模型读写；启用后 generate_image 直连官网（不回落中转端点）', async () => {
+  const ctx = {
+    settings: { describe: () => [], mutate: async () => {}, get: () => undefined },
+    credentials: { describe: async () => ({ configured: false, writable: true }), resolve: async () => undefined },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+  }
+  const { OpenAiGatewayService } = await import('../src/openai/service.ts')
+  const liveConfig: OpenAiCapabilityConfig = { enabled: true, baseURL: 'https://gw.example.com', apiKeyEnv: 'OPENAI_GATEWAY_API_KEY', imageModel: 'gpt-image-2', timeoutMs: 300000 }
+  const service = new OpenAiGatewayService(ctx as never, liveConfig)
+  assert.deepEqual(service.siteImageStatus(), { enabled: false, model: '' }, '缺省关闭，保持旧行为')
+
+  const status = await service.setSiteImage({ enabled: true, model: 'gpt-image-2' })
+  assert.deepEqual(status.siteImage, { enabled: true, model: 'gpt-image-2' })
+
+  // 启用后生图短路走官网：未登录（无凭据）时报官网错误，而不是用已配置好的中转端点。
+  await assert.rejects(
+    () => service.generateImage({ prompt: '一只猫' }),
+    (error: unknown) => error instanceof OpenAiServiceError && error.status === 400 && /官网/.test((error as Error).message),
+  )
+
+  // 关闭官网线路后回落中转端点（同样是凭据缺失短路，证明优先顺序正确且不触网）。
+  await service.setSiteImage({ enabled: false })
+  assert.deepEqual(service.siteImageStatus(), { enabled: false, model: 'gpt-image-2' }, '关闭保留模型名，重新登录无需再同步')
+  await assert.rejects(
+    () => service.generateImage({ prompt: '一只猫' }),
+    (error: unknown) => error instanceof OpenAiServiceError && /OpenAI 中转站 API Key/.test((error as Error).message),
+  )
+})

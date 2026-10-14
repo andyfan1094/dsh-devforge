@@ -27,7 +27,7 @@ function makeCtx(opts: { token?: string } = {}) {
     },
     logger: { info() {}, warn() {} },
   }
-  const openai = { removeEndpoint: async () => {} }
+  const openai = { removeEndpoint: async () => {}, setSiteImage: async () => ({ siteImage: { enabled: false, model: '' } }) }
   return new ModagentaiService(ctx as never, openai as never)
 }
 

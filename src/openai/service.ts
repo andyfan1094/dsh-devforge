@@ -6,6 +6,7 @@ import { readSettingsSection, settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { normalizeDeleteIds } from '../model-tombstones.ts'
+import { MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF } from '../modagentai/protocol.ts'
 import { normalizeOpenAiBaseURL, openAiApiRoot, OpenAiGatewayClient, OpenAiGatewayError, type OpenAiDiscoveredModel, type OpenAiGeneratedImage } from './api-client.ts'
 import type { OpenAiEndpointApi, OpenAiGatewayConfigPatch, OpenAiGatewayEndpointConfig, OpenAiGatewayEndpointFetchResult, OpenAiGatewayEndpointStatus, OpenAiGatewayFetchModelsResult, OpenAiGatewayModelInfo, OpenAiGatewayModelPatch, OpenAiGatewayStatus } from './protocol.ts'
 
@@ -119,6 +120,11 @@ export interface OpenAiCapabilityConfig {
   timeoutMs: number
   /** 多端点配置；缺省时由旧 baseURL/apiKeyEnv 自动生成主端点。 */
   endpoints?: OpenAiGatewayEndpointConfig[]
+  /**
+   * 官网生图线路（辉哥 2026-10-14 定稿）：登录天工造梦官网后开启，
+   * generate_image 优先走官网网关并按张扣钻石；模型名随官网目录（data.images）同步。
+   */
+  siteImage?: { enabled: boolean; model: string }
 }
 
 /** 聊天模型推理档位与方舟五档对齐（含 Max）。 */
@@ -279,6 +285,7 @@ export class OpenAiGatewayService {
       ...(imageModel.trim() !== '' ? { imageModel: imageModel.trim() } : {}),
       models: presentModels(primaryModels),
       endpoints: endpointStatuses,
+      siteImage: this.siteImageConfig(),
     }
   }
 
@@ -463,8 +470,54 @@ export class OpenAiGatewayService {
     return await this.readStatus()
   }
 
-  /** 供 generate_image 调用：优先选择配置了生图模型的端点，否则使用主端点。 */
+  /** 官网生图线路配置（缺省关闭、模型为空）。 */
+  private siteImageConfig(): { enabled: boolean; model: string } {
+    const stored = this.config.siteImage
+    return {
+      enabled: stored?.enabled === true,
+      model: typeof stored?.model === 'string' ? stored.model.trim() : '',
+    }
+  }
+
+  /** 当前官网生图线路状态（面板与状态接口共用）。 */
+  siteImageStatus(): { enabled: boolean; model: string } { return this.siteImageConfig() }
+
+  /**
+   * 设置官网生图线路：登录官网时开启、登出时关闭，面板「重新同步」只刷新模型名。
+   * 只写本能力配置，不写 llm-pi-ai provider 路由——官网生图是独立通道，不占用用户的中转端点列表。
+   */
+  async setSiteImage(input: { enabled: boolean; model?: string }): Promise<OpenAiGatewayStatus> {
+    const previous = this.siteImageConfig()
+    const incoming = typeof input.model === 'string' ? input.model.trim() : ''
+    const model = incoming !== '' ? incoming : previous.model
+    const enabled = input.enabled === true
+    const next: OpenAiCapabilityConfig = { ...this.config, siteImage: { enabled, model } }
+    if (deepEqualJson(next.siteImage, previous)) return await this.readStatus()
+    await this.writeDevforgeConfig(next)
+    Object.assign(this.config, next)
+    return await this.readStatus()
+  }
+
+  /** 解析官网会话令牌（受管凭据，与 tiangong provider 共用同一份；未登录时为空）。 */
+  private async resolveSiteToken(): Promise<string> {
+    const resolved = await this.ctx.credentials.resolve(credentialRef(MODAGENTAI_GW_KEY_REF))
+    const value = resolved?.value.trim() ?? ''
+    if (value === '') throw new OpenAiServiceError('尚未登录天工造梦官网账号，无法使用官网生图。', 400)
+    return value
+  }
+
+  /**
+   * 供 generate_image 调用：官网生图线路已接入时优先走官网网关（按张扣钻石），
+   * 否则回落到配置了生图模型的中转端点，再退回主端点。
+   */
   async generateImage(args: { prompt: string; size?: string; quality?: string }, signal?: AbortSignal, maxBytes?: number): Promise<OpenAiGeneratedImage> {
+    const site = this.siteImageConfig()
+    if (site.enabled && site.model !== '') {
+      try {
+        const client = new OpenAiGatewayClient(MODAGENTAI_GW_BASE, () => this.resolveSiteToken(), this.config.timeoutMs, 'openai-completions')
+        return await client.generateImage({ ...args, model: site.model }, signal, maxBytes)
+      } catch (error) { throw this.mapClientError(error) }
+    }
     const endpoints = this.endpointConfigs()
     const endpoint = endpoints.find((item) => typeof item.imageModel === 'string' && item.imageModel.trim() !== '') ?? endpoints[0]
     const model = endpoint?.imageModel?.trim() ?? ''

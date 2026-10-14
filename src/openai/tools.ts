@@ -177,7 +177,7 @@ export function activateOpenAiGenerateImage(ctx: Context, config: { enabled: boo
     const disposePrompt = ctx.systemPrompt.section({
       name: 'tool:generate_image',
       order: 119,
-      text: 'Use generate_image to create an image through the OpenAI-compatible gateway configured in 天工造梦. The tool saves the image inside the active workspace and returns an inline attachment when available.',
+      text: 'Use generate_image to create an image: when a 天工造梦 account is signed in the tool routes through the official image gateway (billed in diamonds), otherwise it falls back to the configured OpenAI-compatible endpoint. The tool saves the image inside the active workspace and returns an inline attachment when available.',
     })
     const disposeTool = ctx.tools.register(makeGenerateImageTool(ctx, service))
     return () => { disposeTool(); disposePrompt() }

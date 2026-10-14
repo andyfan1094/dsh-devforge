@@ -9,11 +9,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { ModagentaiService, ModagentaiServiceError } from '../src/modagentai/service.ts'
-import { buildTiangongModels, parseTiangongCatalog, tiangongCatalogOutdated, tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
+import { buildTiangongModels, parseTiangongCatalog, parseTiangongCatalogImages, tiangongCatalogOutdated, tiangongCapacityOutdated, tiangongDeclarationOutdated, tiangongEffortsOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS } from '../src/modagentai/provider-declaration.ts'
 import { closeAllDb, getDb, putSettings } from '../src/store/db.ts'
 
 /** 构造打桩 ctx：settings 段内存模拟，credentials 返回固定令牌。 */
-function makeCtx(providers: Record<string, unknown>, opts: { token?: string; catalog?: unknown } = {}) {
+function makeCtx(providers: Record<string, unknown>, opts: { token?: string; catalog?: unknown; images?: string[] } = {}) {
   const state = {
     providers: { ...providers } as Record<string, unknown>,
     mutations: [] as Array<{ op: string; path: string[] }>,
@@ -40,12 +40,23 @@ function makeCtx(providers: Record<string, unknown>, opts: { token?: string; cat
     },
     logger: { info() {}, warn() {} },
   }
-  const openai = { removeEndpoint: async () => {} }
+  const siteImage = { enabled: false, model: '' }
+  const openai = {
+    removeEndpoint: async () => {},
+    // 官网生图线路打桩：记录开关与模型，便于断言「登录即接入」。
+    setSiteImage: async (input: { enabled: boolean; model?: string }) => {
+      siteImage.enabled = input.enabled === true
+      if (typeof input.model === 'string' && input.model.trim() !== '') siteImage.model = input.model.trim()
+      return { siteImage: { ...siteImage } }
+    },
+  }
   const service = new ModagentaiService(ctx as never, openai as never)
   // 单测绝不联网：站点目录拉取默认打桩为「离线」（空数组 → 退化为内置清单）；
   // 验证「官网目录优先」的用例通过 opts.catalog 注入站点响应。
   service.fetchOfficialCatalog = async () => (opts.catalog === undefined ? [] : parseTiangongCatalog(opts.catalog))
-  return { service, state }
+  // 生图模型清单同样打桩：默认「官网未下发」（空数组 → 保留既有生图模型）。
+  service.fetchOfficialImageModels = async () => opts.images ?? []
+  return { service, state, siteImage }
 }
 
 /** 历史版本写入的上下文窗口（256K）；升级后应被启动自愈改写为 TIANGONG_CONTEXT_WINDOW。 */
@@ -748,6 +759,79 @@ test('启动自愈：站点不可达时退化为内置三模型声明（离线�
     assert.equal(models[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW)
     assert.deepEqual(models[2]?.input, ['text', 'image'])
   } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('官网生图目录：解析 data.images，去空去重，结构异常一律空数组', () => {
+  assert.deepEqual(parseTiangongCatalogImages(undefined), [])
+  assert.deepEqual(parseTiangongCatalogImages(null), [])
+  assert.deepEqual(parseTiangongCatalogImages({}), [])
+  assert.deepEqual(parseTiangongCatalogImages({ data: {} }), [])
+  assert.deepEqual(parseTiangongCatalogImages({ data: { images: 'nope' } }), [])
+  assert.deepEqual(parseTiangongCatalogImages({ data: { images: [null, 1, '  '] } }), [])
+  assert.deepEqual(
+    parseTiangongCatalogImages({ data: { images: ['gpt-image-2', ' gpt-image-2 ', 'gpt-image-3'] } }),
+    ['gpt-image-2', 'gpt-image-3'],
+    '重复与空白项规整后只留一份',
+  )
+})
+
+test('官网生图线路：登录（applyGateway）即接入，模型取站点目录 data.images 首项', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    const { service, siteImage } = makeCtx({}, { images: ['gpt-image-2', 'gpt-image-3'] })
+    await service.applyGateway()
+    assert.equal(siteImage.enabled, true, '登录即开启官网生图线路')
+    assert.equal(siteImage.model, 'gpt-image-2', '生图模型取站点下发的首个图像模型')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('官网生图线路：站点未下发图像模型时保留原模型，未登录手动同步抛 401', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // 站点目录没有 images 字段（旧版官网）：开启线路但不写空模型名。
+    const { service, siteImage } = makeCtx({})
+    const applied = await service.applySiteImage()
+    assert.equal(applied.enabled, true)
+    assert.equal(applied.model, '', '未下发时模型为空串，由面板提示尚未同步')
+
+    // 未登录（令牌为空）时手动同步必须 401，且不写入任何线路配置。
+    const offline = makeCtx({}, { token: '' })
+    await assert.rejects(
+      () => offline.service.applySiteImage(),
+      (error: unknown) => error instanceof ModagentaiServiceError && error.status === 401,
+    )
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('官网生图线路：登出后停用（保留模型名，重新登录自动恢复）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  // logout 会尽力通知官网吊销会话；此处打桩 fetch，避免单测联网。
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch
+  try {
+    const { service, siteImage } = makeCtx({}, { images: ['gpt-image-2'] })
+    await service.applyGateway()
+    assert.equal(siteImage.enabled, true)
+    await service.logout()
+    assert.equal(siteImage.enabled, false, '登出即停用官网生图线路')
+    assert.equal(siteImage.model, 'gpt-image-2', '模型名保留，重新登录无需再同步')
+  } finally {
+    globalThis.fetch = originalFetch
     closeAllDb()
     delete process.env.DSH_HOME
     rmSync(home, { recursive: true, force: true })

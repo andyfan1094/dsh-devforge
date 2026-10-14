@@ -12,7 +12,7 @@ import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { buildTiangongModels, parseTiangongCatalog, tiangongCatalogOutdated, tiangongDeclarationOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, type TiangongCatalogEntry } from './provider-declaration.ts'
+import { buildTiangongModels, parseTiangongCatalog, parseTiangongCatalogImages, tiangongCatalogOutdated, tiangongDeclarationOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, type TiangongCatalogEntry } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -194,6 +194,41 @@ export class ModagentaiService {
     } catch {
       return []
     }
+  }
+
+  /**
+   * 拉取官网站点目录里的生图模型清单（GET /api/gw/model-catalog 的 data.images）。
+   * 与 fetchOfficialCatalog 同规矩：令牌为空、网络失败、HTTP 非 2xx 或结构不符一律返回空数组，
+   * 由调用方保留已有生图线路配置，绝不让同步失败影响登录或启动。
+   */
+  async fetchOfficialImageModels(token?: string): Promise<string[]> {
+    const value = token ?? await this.readToken()
+    if (value === '') return []
+    try {
+      const res = await fetch(SITE + '/api/gw/model-catalog', {
+        headers: { authorization: 'Bearer ' + value, 'user-agent': 'DeepSeek-Harness/1.0' },
+        signal: AbortSignal.timeout(HTTP_TIMEOUT),
+      })
+      if (!res.ok) return []
+      return parseTiangongCatalogImages(await res.json().catch(() => null))
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * 把官网生图线路接入 generate_image（辉哥 2026-10-14 定稿）。
+   *
+   * 官网生图不占用 OpenAI 中转端点列表，也不写 llm-pi-ai provider 路由：只在 openai 能力配置里
+   * 记「启用 + 站点下发的生图模型」，由 generateImage 直连官网网关 /v1/images/generations 按张扣钻石。
+   * 未登录抛 401；目录拉不到模型名时保留原模型，绝不把配置写空。
+   */
+  async applySiteImage(): Promise<{ enabled: boolean; model: string }> {
+    const token = await this.readToken()
+    if (token === '') throw new ModagentaiServiceError('尚未登录官网账号。', 401)
+    const images = await this.fetchOfficialImageModels(token)
+    const status = await this.openai.setSiteImage({ enabled: true, ...(images.length > 0 ? { model: images[0] } : {}) })
+    return status.siteImage ?? { enabled: true, model: '' }
   }
 
   /**
@@ -524,6 +559,8 @@ export class ModagentaiService {
     // 同步停用天工造梦模型路由与端点密钥（重新登录即自动恢复）
     try { await this.writeTiangongProvider(true) } catch { /* 宿主段未就绪也照常登出 */ }
     try { await this.ctx.credentials.unset(credentialRef(MODAGENTAI_GW_KEY_REF)) } catch { /* 密钥本就不存在 */ }
+    // 停用官网生图线路（保留模型名，重新登录 applyGateway 即自动恢复）
+    try { await this.openai.setSiteImage({ enabled: false }) } catch { /* 宿主段未就绪也照常登出 */ }
     this.writeSettings({ ...EMPTY_SETTINGS })
     return await this.status()
   }
@@ -542,6 +579,13 @@ export class ModagentaiService {
     } catch (error) {
       // 旧体系清理失败不阻断主流程（provider 已由 tiangong 接管）
       this.ctx.logger?.warn?.('[dsh-devforge] 旧中转端点清理失败（不影响使用）：%s', error instanceof Error ? error.message : String(error))
+    }
+    // 官网生图线路：登录即接入 generate_image（拉目录拿最新生图模型；失败不阻断中转配置）
+    try {
+      const images = await this.fetchOfficialImageModels(token)
+      await this.openai.setSiteImage({ enabled: true, ...(images.length > 0 ? { model: images[0] } : {}) })
+    } catch (error) {
+      this.ctx.logger?.warn?.('[dsh-devforge] 官网生图线路接入失败（不影响中转）：%s', error instanceof Error ? error.message : String(error))
     }
     const settings = this.readSettings()
     this.writeSettings({ ...settings, autoApplied: true, appliedModels: 1 })

@@ -156,6 +156,24 @@ export function parseTiangongCatalog(payload: unknown): TiangongCatalogEntry[] {
 }
 
 /**
+ * 防御式解析站点下发的生图模型清单（GET /api/gw/model-catalog 的 data.images）。
+ * 站点未下发该字段（旧版官网）或结构异常时返回空数组——调用方据此保留已配置的生图线路，
+ * 绝不因站点改版把生图模型写空。
+ */
+export function parseTiangongCatalogImages(payload: unknown): string[] {
+  const images = (payload as { data?: { images?: unknown } } | null | undefined)?.data?.images
+  if (!Array.isArray(images)) return []
+  const out: string[] = []
+  for (const item of images) {
+    if (typeof item !== 'string') continue
+    const id = item.trim()
+    if (id === '' || out.includes(id)) continue
+    out.push(id)
+  }
+  return out
+}
+
+/**
  * 判断已注册声明是否落后于站点目录：站点目录里的模型缺条目，或能力
  * （上下文窗口 / 输入模态 / 思考档位）与站点下发不一致。
  * 目录为空（未登录或站点不可达）时返回 false，交给内置判定处理。

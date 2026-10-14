@@ -7,6 +7,8 @@ export const MODAGENTAI_API = {
   login: '/api/dsh-devforge/modagentai/login',
   logout: '/api/dsh-devforge/modagentai/logout',
   applyGateway: '/api/dsh-devforge/modagentai/apply-gateway',
+  /** POST：把官网生图线路接入 generate_image（登录后自动执行；面板可手动重新同步）。 */
+  applyImage: '/api/dsh-devforge/modagentai/apply-image',
   profile: '/api/dsh-devforge/modagentai/profile',
   /** GET 读 / POST 写：官网搜索工具启停（面板个人中心开关）。 */
   toolSettings: '/api/dsh-devforge/modagentai/tool-settings',
