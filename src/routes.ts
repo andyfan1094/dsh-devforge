@@ -214,6 +214,16 @@ export function makeRoutes(
       },
     },
     {
+      // 只读体检：端口占用者 / 孤儿宿主 / 运行模式，不触发任何重启或杀进程动作。
+      kind: 'exact',
+      path: '/api/dsh-devforge/restart/diagnose',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        writeJson(res, 200, { ok: true, result: await restartManager.diagnose() })
+      },
+    },
+    {
       kind: 'exact',
       path: '/api/dsh-devforge/usage/tokens',
       handler: async (req, res) => {

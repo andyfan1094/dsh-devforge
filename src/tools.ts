@@ -252,19 +252,25 @@ export function devforgeDesignTool(design: DesignStore) {
 interface RestartToolOutput {
   scheduled: boolean
   message: string
+  mode?: string
+  port?: number
+  strategy?: string
 }
 
 /**
- * 安排本机 DSH Web 重启。
+ * 安排本机 DSH Web 重启，或只读体检重启环境。
  *
- * 此工具会短暂中断当前 GUI，只能在用户明确要求重启时调用；不会接受命令参数，
- * 不会执行远程重启，也不会推送或修改项目代码。
+ * restart 会短暂中断当前 GUI，只能在用户明确要求重启时调用；diagnose 只读，不重启、
+ * 不杀进程，用于定位「端口被谁占着 / 是否旧版重启遗留的孤儿宿主」这类问题。
  */
 export function devforgeRestartTool(restartManager: DshWebRestartManager) {
   return defineTool({
     name: 'devforge_restart',
-    description: 'Schedule a local DSH Web restart. Use only when the user explicitly asks to restart DSH; the GUI disconnects briefly and returns automatically.',
-    parameters: {},
+    description: 'Inspect or restart the local DSH Web host. action=restart (default) schedules a restart; use it only when the user explicitly asks to restart DSH, and note the GUI disconnects briefly. '
+      + 'action=diagnose is read-only: it reports the restart mode (desktop-shell-managed vs cli), the port, who is listening on that port, whether an orphaned host from an earlier restart still holds it, and the restart log path — it never restarts or kills anything.',
+    parameters: {
+      action: { type: 'string', enum: ['restart', 'diagnose'], description: 'restart (default) schedules the restart; diagnose only reports restart environment facts.' },
+    },
     output: {
       schema: {
         type: 'object',
@@ -272,12 +278,29 @@ export function devforgeRestartTool(restartManager: DshWebRestartManager) {
         properties: {
           scheduled: { type: 'boolean', required: true },
           message: { type: 'string', required: true },
+          mode: { type: 'string' },
+          port: { type: 'integer' },
+          strategy: { type: 'string' },
         },
       },
       render: (_args, value: RestartToolOutput) => text(value.message),
     },
-    async execute(): Promise<RestartToolOutput> {
-      return restartManager.requestRestart()
+    async execute(args): Promise<RestartToolOutput> {
+      if (args.action === 'diagnose') {
+        const diagnosis = await restartManager.diagnose()
+        const headline = diagnosis.portListening
+          ? '端口 ' + String(diagnosis.port) + ' 正被 PID ' + diagnosis.owners.map(owner => String(owner.pid)).join('、') + ' 监听'
+          : '端口 ' + String(diagnosis.port) + ' 当前空闲'
+        const orphan = diagnosis.orphanSuspected ? '；检测到疑似孤儿宿主（父进程已消失），结束它即可恢复' : ''
+        return {
+          scheduled: false,
+          message: '【重启体检】模式=' + diagnosis.mode + '｜' + headline + orphan + '\n' + diagnosis.hints.join('\n') + '\n' + JSON.stringify(diagnosis),
+          mode: diagnosis.mode,
+          port: diagnosis.port,
+        }
+      }
+      const result = restartManager.requestRestart()
+      return { scheduled: result.scheduled, message: result.message, mode: result.mode, port: result.port, strategy: result.strategy }
     },
   })
 }
