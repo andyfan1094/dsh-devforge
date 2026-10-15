@@ -64,6 +64,8 @@ export interface GitResult {
   remoteUrl?: string
   dirty?: boolean
   error?: string
+  /** 配置的 Git 可执行文件不可用、已自动回退到系统 git 时的中文提示。 */
+  warning?: string
 }
 export interface GitHubConfigPayload {
   apiUrl?: string
