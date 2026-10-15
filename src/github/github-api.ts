@@ -7,7 +7,9 @@ import type { GithubStore, StoredAccount } from './store.ts'
 interface GithubUser { login: string }
 interface GithubRepo { id: number; name: string; full_name: string; private: boolean; html_url: string; clone_url: string; default_branch: string; description: string | null; updated_at: string | null }
 export class GithubApi {
-  constructor(private readonly store: GithubStore) {}
+  private readonly store: GithubStore
+  // 显式字段而非构造函数参数属性：Node 的 --experimental-strip-types 不支持参数属性。
+  constructor(store: GithubStore) { this.store = store }
   async test(alias?: string): Promise<{ ok: boolean; alias: string; username?: string; error?: string }> {
     const account = this.store.findAccount(alias)
     try { const user = await this.request<GithubUser>(account, '/user'); this.store.setUsername(account.alias, user.login); return { ok: true, alias: account.alias, username: user.login } }
