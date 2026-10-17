@@ -197,6 +197,9 @@ function LocalIdentity({ userProfile, loaded, onToggleEnabled, toggleBusy, searc
                   {searchEnabled === null ? '读取中…' : searchEnabled ? '● 已启用' : '○ 已停用'}
                 </span>
               </small>
+              <small className={css['identityHint']}>
+                与 DSH 0.2.1 起内置的 Search/Fetch 是两条独立通道：本工具走天工造梦官网（按次扣钻石），DSH 原生走官方 API（按官方价计费）。两者互不冲突，可同时开启按需选用。
+              </small>
             </span>
           </label>
         </>
