@@ -56,8 +56,13 @@ const AUDIT_TRIM_EVERY = 20
  * 处理方式不是删除而是墓碑化：保留 id / state / resolvedAt / resultEntryId / duplicateIds 这五个
  * 对账字段，丢掉 content / evidence / tags / scope / reason。既断掉体积膨胀，又保住
  * 「这条候选后来对应哪条记忆」的可追溯性。
+ *
+ * 保留期实测调参（2026-10-18，生产日增 817 条候选、单条 4594 B）：
+ *   3 天 → 稳态 2451 条 ≈ 7.8 MB，几乎没改善；1 天 → 817 条 ≈ 2.6 MB；6 小时 → 204 条 ≈ 0.65 MB。
+ * 保留期只影响「刚被采纳的候选还能不能翻全文」，而正文本来就已落在 memory.entry 里，
+ * 因此取 1 天足够：既有当天可追溯性，稳态体积又回到可用区间。
  */
-const CANDIDATE_TOMBSTONE_DAYS = 3
+const CANDIDATE_TOMBSTONE_DAYS = 1
 /** 候选裁剪节流：每 N 次候选写入才实扫一次（候选域可达数千条，不能每次 propose 都全表排序）。 */
 const CANDIDATE_PRUNE_EVERY = 20
 
@@ -409,9 +414,13 @@ export class MemoryGovernanceService {
       ? this.native.supersede(supersedeIds, entryInput, '自动沉淀新证据取代旧事实', 'system')
       : this.native.create(entryInput)
     const resolutionReason = supersedeIds.length > 0 ? '自动激活并取代冲突旧事实' : '自动激活（无需人工审核）'
+    // 0.53.0：落盘的候选副本不再带 evidence。证据已随 entryInput 写进 memory.entry，
+    // 候选里这份是纯冗余——实测它占候选体积的 77.9%（单条 3577 B，而正文只有 219 B）。
+    // 内存返回的对象仍保留完整证据，不影响调用方语义；只有持久化副本瘦身。
     const activated = { ...candidate, state: 'auto-activated' as const, resolvedAt: now, resolutionReason, resultEntryId: entry.id }
+    const persisted = { ...activated, evidence: [] as MemoryEvidence[] }
     this.rag.withDomainTransaction(() => {
-      this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, candidate.id, activated)
+      this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, candidate.id, persisted)
       this.audit(supersedeIds.length > 0 ? 'auto-supersede' : 'auto-activate', [candidate.id, entry.id, ...supersedeIds], resolutionReason)
     })
     return { candidate: activated, entry }

@@ -204,8 +204,32 @@ test('低价值过滤：长文档与多行内容不做过程播报判定（真�
   assert.equal(isLowValueMemory(multiLine), false, '多行文档即使含播报片段也不应整条拦截')
 })
 
-test('更新自身不算重复：excludeEntryIds 排除被更新的条目', () => {
-  const { store, governance } = makeRig()
+test('自动激活：落盘候选不再带 evidence（证据已在 entry 里，候选副本是冗余）', () => {
+  // 实测生产候选 77.9% 的体积来自 evidence（单条 3577 B，正文仅 219 B）。
+  // 激活时证据已随 entryInput 写进 memory.entry，故持久化副本瘦身，内存返回值仍保留完整证据。
+  const { rag, governance } = makeRig()
+  const quote = 'Y'.repeat(180)
+  const result = governance.activateAuto({
+    content: '候选里的证据不应在激活后重复保存一份',
+    category: 'fact',
+    scope: { kind: 'global' },
+    source: 'session-reflection',
+    evidence: [{ kind: 'tool', quote, digest: 'deadbeef', createdAt: Date.now() }],
+  })
+
+  assert.notEqual(result.entry, undefined)
+  // 内存返回对象保留证据，调用方语义不变。
+  assert.equal(result.candidate.evidence.length, 1)
+  // entry 拿到证据。
+  assert.equal(result.entry!.evidence.length, 1)
+  // 落盘候选副本不带证据。
+  const stored = rag.listDomainDocs('memory.candidate').find((row) => row.id === result.candidate.id)!.data as Record<string, unknown>
+  assert.deepEqual(stored.evidence, [], '候选落盘副本不应再存证据')
+  assert.equal(stored.state, 'auto-activated')
+  assert.equal(typeof stored.content, 'string', '正文仍保留，便于面板查看刚采纳的候选')
+})
+
+test('更新自身不算重复：excludeEntryIds 排除被更新的条目', () => {  const { store, governance } = makeRig()
   const entry = store.create({
     content: '记忆库空间膨胀的主因是 candidate 副本永久保留',
     category: 'insight',
