@@ -11,29 +11,6 @@
 #   2. 颜色只从 $script:SnipTheme 取，不写死 RGB。
 #   3. 正文等宽且不换行，缩进与表格列才不塌。
 
-# 读 TextBox 首个可见行（EM_GETFIRSTVISIBLELINE）需要 P/Invoke。
-# 用完整类型定义而不是 -Namespace ''（空命名空间不稳妥），失败也不影响窗口本身。
-if ($null -eq ('WinSnipScroll' -as [type])) {
-    try {
-        Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public static class WinSnipScroll
-{
-    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
-    private static extern IntPtr SendMessageW(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-
-    // EM_GETFIRSTVISIBLELINE = 0x00CE
-    public static int FirstVisibleLine(IntPtr hWnd)
-    {
-        return (int)SendMessageW(hWnd, 0x00CE, IntPtr.Zero, IntPtr.Zero);
-    }
-}
-"@
-    } catch { }
-}
-
 $script:SnipTheme = @{
     Window      = [System.Drawing.Color]::FromArgb(25, 27, 33)     # 窗口底
     Header      = [System.Drawing.Color]::FromArgb(32, 35, 43)     # 标题栏，亮一档
@@ -113,15 +90,18 @@ function Measure-SnipTextBlock {
 
     $flags = [System.Windows.Forms.TextFormatFlags]::NoPadding
     $probe = New-Object System.Drawing.Size(20000, 200)
+    # 行高取单行实测值（高度不受水平边缘留白影响，这里不需要重复取样）。
     $metrics = [System.Windows.Forms.TextRenderer]::MeasureText('国Ag', $Font, $probe, $flags)
 
     $lines = [System.Collections.ArrayList]@([regex]::Split($Content, "`r?`n"))
     while ($lines.Count -gt 1 -and ([string]$lines[$lines.Count - 1]).Trim() -eq '') { $lines.RemoveAt($lines.Count - 1) }
 
-    $width = 0
+    # 行宽按字符推进累加，避免短行（如"合计"）被 GDI 边缘留白虚高。
+    $cache = @{}
+    $width = 0.0
     foreach ($line in $lines) {
-        $size = [System.Windows.Forms.TextRenderer]::MeasureText([string]$line, $Font, $probe, $flags)
-        if ($size.Width -gt $width) { $width = $size.Width }
+        $lineWidth = Measure-SnipLineWidth -Line ([string]$line) -Font $Font -Cache $cache
+        if ($lineWidth -gt $width) { $width = $lineWidth }
     }
 
     return [pscustomobject]@{
@@ -212,9 +192,14 @@ function Show-SnipResult {
 
     # ---- 先量内容，再定窗 ----
     $allText = ($Text + "`n" + $Translation)
-    $bodyFont = New-SnipMonoFont -Text $allText -Size 10.5
-    $measureText = if ($hasText) { Measure-SnipTextBlock -Content $Text -Font $bodyFont } else { $null }
-    $measureTranslation = if ($hasTranslation) { Measure-SnipTextBlock -Content $Translation -Font $bodyFont } else { $null }
+    $bodyFont = New-SnipTextFont -Size 10.5
+    # 雅黑不是等宽，先把"靠空格对齐"的原文按雅黑实测字宽重排，列位置才不散。
+    # 显示用重排后的文本，复制时仍给原始文本（粘到别处不会多出空格）。
+    $displayText = if ($hasText) { Format-SnipAlignedText -Content $Text -Font $bodyFont } else { '' }
+    $displayTranslation = if ($hasTranslation) { Format-SnipAlignedText -Content $Translation -Font $bodyFont } else { '' }
+
+    $measureText = if ($hasText) { Measure-SnipTextBlock -Content $displayText -Font $bodyFont } else { $null }
+    $measureTranslation = if ($hasTranslation) { Measure-SnipTextBlock -Content $displayTranslation -Font $bodyFont } else { $null }
     $lineH = if ($null -ne $measureText) { $measureText.LineHeight } else { $measureTranslation.LineHeight }
 
     # ---- 尺寸常量 ----
@@ -234,14 +219,16 @@ function Show-SnipResult {
     if ($null -ne $measureText) {
         [void]$blocks.Add([pscustomobject]@{
                 Caption = $(if ($hasTranslation) { '原文' } else { '识别文字' })
-                Content = $Text
+                Content = $displayText
+                Original = $Text
                 Measure = $measureText
             })
     }
     if ($null -ne $measureTranslation) {
         [void]$blocks.Add([pscustomobject]@{
                 Caption = '译文'
-                Content = $Translation
+                Content = $displayTranslation
+                Original = $Translation
                 Measure = $measureTranslation
             })
     }
@@ -257,15 +244,24 @@ function Show-SnipResult {
     $contentW = 0
     foreach ($block in $blocks) { if ($block.Measure.Width -gt $contentW) { $contentW = $block.Measure.Width } }
 
+    # 尺寸策略（按辉哥要求：尽量大，把文字全部显示出来）：
+    #   1) 先按内容算出"刚好装下"的宽高；
+    #   2) 再取"屏幕的 55%"作为下限——窗口不要开得像个小气泡；
+    #   3) 上限是整屏减 24px：内容再多也尽量塞进一屏，塞不下才用滚动条。
     $work = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
-    $maxW = [int][Math]::Min(1100, $work.Width - 80)
-    $maxH = [int][Math]::Min(940, [int]($work.Height * 0.88))
+    $margin = 24
+    $maxW = [int]($work.Width - $margin)
+    $maxH = [int]($work.Height - $margin)
+    $floorW = [int][Math]::Min($maxW, $work.Width * 0.55)
+    $floorH = [int][Math]::Min($maxH, $work.Height * 0.55)
 
-    $formW = [int][Math]::Max($minWidth, [Math]::Min($maxW, ($contentW + $padX * 2 + 22)))
-    $formH = [int]($headerH + $padTop + $bodyH + $padBottom + $footerH)
-    $floorH = $headerH + $footerH + 108   # 只剩一行时也得容下一块卡片
-    if ($formH -lt $floorH) { $formH = $floorH }
-    if ($formH -gt $maxH) { $formH = $maxH }
+    $naturalW = [int]($contentW + $padX * 2 + 26)
+    $naturalH = [int]($headerH + $padTop + $bodyH + $padBottom + $footerH)
+
+    $formW = [int][Math]::Max($minWidth, [Math]::Min($maxW, [Math]::Max($naturalW, $floorW)))
+    $formH = [int][Math]::Max($floorH, [Math]::Min($maxH, $naturalH))
+    # 只剩一行时也得容下一块卡片，否则卡片会被压没。
+    if ($formH -lt ($headerH + $footerH + 108)) { $formH = $headerH + $footerH + 108 }
 
     # ---- 窗体 ----
     $form = New-SnipDarkForm
@@ -273,7 +269,7 @@ function Show-SnipResult {
     $form.KeyPreview = $true
     $form.BackColor = $t.Window
     $form.Size = New-Object System.Drawing.Size($formW, $formH)
-    $form.MinimumSize = New-Object System.Drawing.Size($minWidth, $floorH)
+    $form.MinimumSize = New-Object System.Drawing.Size($minWidth, ($headerH + $footerH + 108))
     $form.Location = New-Object System.Drawing.Point(
         ($work.X + [int](($work.Width - $formW) / 2)),
         ($work.Y + [int](($work.Height - $formH) / 2))
@@ -394,19 +390,7 @@ function Show-SnipResult {
                 $pen = New-Object System.Drawing.Pen($theme.SurfaceLine, 1)
                 try { $e.Graphics.DrawRectangle($pen, 0, 0, ($sender.Width - 1), ($sender.Height - 1)) } finally { $pen.Dispose() }
 
-                # 溢出才画拇指：4px 圆角条，不画轨道，避免"永远一条空槽"。
-                $state = $sender.Tag
-                if ($state.Thumb) {
-                    $h = $sender.Height
-                    $thumbH = [int][Math]::Max(30, ($h * $state.Ratio))
-                    if ($thumbH -gt ($h - 8)) { $thumbH = $h - 8 }
-                    $track = $h - 8 - $thumbH
-                    $thumbY = 4 + [int]($state.Progress * [Math]::Max(0, $track))
-                    $path = New-SnipRoundPath -X ($sender.Width - 8.0) -Y ([single]$thumbY) -W 4 -H $thumbH -Radius 2
-                    $brush = New-Object System.Drawing.SolidBrush($theme.Thumb)
-                    try { $e.Graphics.FillPath($brush, $path) } finally { $brush.Dispose() }
-                    $path.Dispose()
-                }
+
             })
 
         $box = New-Object System.Windows.Forms.TextBox
@@ -434,12 +418,14 @@ function Show-SnipResult {
                 Lines   = $block.Measure.LineCount
                 LineH   = $block.Measure.LineHeight
                 CardH   = $block.CardH
+                WantWidth = $block.Measure.Width
+                Original = $block.Original
             })
     }
 
     # ---- 页脚 ----
     # 键帽与提示文字用的小字体，必须在页脚 Paint 之前建好（闭包会立即引用）。
-    $script:snipKeyFont = New-SnipMonoFont -Text '' -Size 8.5
+    $script:snipKeyFont = New-SnipTextFont -Size 8.5
     $script:snipHintFont = New-SnipUiFont -Size 8.5
 
     $footer = New-Object System.Windows.Forms.Panel
@@ -515,23 +501,35 @@ function Show-SnipResult {
         foreach ($section in $sections) {
             $want = $section.CardH
             if ($forCards -gt $sumWant) {
+                # 空间有富余：多出来的高度按行数分摊，卡片撑满窗口
                 $extra = $forCards - $sumWant
                 $want = [int]($section.CardH + $extra * ($section.Lines / $totalLines))
+            } elseif ($forCards -lt $sumWant) {
+                # 空间不够：卡片必须压回窗口内，否则卡片超出窗口底部被裁掉，
+                # 而且"内容比卡片高"这个条件永远不成立，滚动条也不会出现，文字就看不到了。
+                $want = [int]($section.CardH * ($forCards / [double]$sumWant))
             }
             if ($want -lt $minCardH) { $want = $minCardH }
 
             $section.Caption.SetBounds($padX, $offset, 220, $labelH)
             $section.Card.SetBounds($padX, ($offset + $labelH + $labelGap), ($w - $padX * 2), $want)
 
-            $innerW = ($w - $padX * 2) - 26
+            $boxW = ($w - $padX * 2) - 26
             $innerH = $want - ($cardPadY * 2)
-            $section.Box.SetBounds(14, $cardPadY, $innerW, $innerH)
-
             $contentH = $section.Lines * $section.LineH
-            $ratio = if ($contentH -gt $innerH) { $innerH / [double]$contentH } else { 1.0 }
-            $section.Card.Tag.Thumb = ($ratio -lt 0.985)
-            $section.Card.Tag.Ratio = $ratio
-            $section.Card.Invalidate()
+            $contentWid = $section.WantWidth
+
+            # 装不下就开滚动条：宁可出现滚动条，也不能让文字悄无声息地被截掉。
+            $needV = ($contentH -gt ($innerH + 2))
+            $needH = ($contentWid -gt ($boxW + 2))
+            $bars = if ($needV -and $needH) { [System.Windows.Forms.ScrollBars]::Both }
+                    elseif ($needV) { [System.Windows.Forms.ScrollBars]::Vertical }
+                    elseif ($needH) { [System.Windows.Forms.ScrollBars]::Horizontal }
+                    else { [System.Windows.Forms.ScrollBars]::None }
+            if ($section.Box.ScrollBars -ne $bars) { $section.Box.ScrollBars = $bars }
+            # 竖向滚动条会占宽度，留 18px 给它，免得最后一列被压住。
+            if ($bars -eq [System.Windows.Forms.ScrollBars]::Vertical -or $bars -eq [System.Windows.Forms.ScrollBars]::Both) { $boxW -= 18 }
+            $section.Box.SetBounds(14, $cardPadY, $boxW, $innerH)
 
             $offset += $labelH + $labelGap + $want + $cardGap
         }
@@ -543,7 +541,7 @@ function Show-SnipResult {
     # ---- 交互 ----
     $doCopy = {
         $parts = @()
-        foreach ($section in $sections) { $parts += $section.Box.Text }
+        foreach ($section in $sections) { $parts += $section.Original }
         $payload = ($parts -join "`r`n`r`n")
         try { [System.Windows.Forms.Clipboard]::SetText($payload) } catch { }
         $copyButton.Tag.Text = '已复制'
@@ -580,26 +578,6 @@ function Show-SnipResult {
             elseif ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::C) { & $doCopy }
             elseif ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { & $doCopy }
         })
-
-    # 滚动：TextBox 自己会滚（ScrollBars=None 仍受滚轮驱动），这里只同步拇指位置。
-    $syncThumb = {
-        param($section)
-        try {
-            $first = [WinSnipScroll]::FirstVisibleLine($section.Box.Handle)
-            $visible = [int][Math]::Max(1, [int]($section.Box.Height / [Math]::Max(1, $section.LineH)))
-            $scrollable = [Math]::Max(1, $section.Lines - $visible)
-            $section.Card.Tag.Progress = [Math]::Min(1.0, [Math]::Max(0.0, $first / [double]$scrollable))
-            $section.Card.Invalidate()
-        } catch { }
-    }
-    foreach ($section in $sections) {
-        $target = $section
-        $target.Box.Add_MouseWheel({
-                param($s, $e)
-                $card = $target.Card
-                try { $card.BeginInvoke([Action]{ & $syncThumb $target }) | Out-Null } catch { }
-            })
-    }
 
     [void]$form.ShowDialog()
 }

@@ -434,9 +434,8 @@ function Set-SnipClipboardImage {
 .DESCRIPTION
     layout.ts 是按"全角=2、半角=1"这个假设补空格的，字体比例不对，列就会错位。
     光看字体名不可靠：不同 Windows 版本、不同语言版本装的字体集合完全不同
-    （本机是英文版，连微软雅黑都没有，只有 MS Gothic；中文版 Windows 通常有
-    NSimSun 新宋体而没有 MS Gothic）。所以这里直接量字宽做判断。
-    允许 1.85~2.15 的偏差，覆盖 GDI 取整误差。
+    （本机是 zh-CN，微软雅黑 msyh.ttc 在；英文版 Windows 则可能只有 Segoe UI）。
+    所以这里直接量字宽做判断。允许 1.85~2.15 的偏差，覆盖 GDI 取整误差。
 #>
 function Test-SnipMonoFont {
     param([Parameter(Mandatory = $true)][System.Drawing.Font]$Font)
@@ -483,16 +482,19 @@ function New-SnipMonoFont {
         [single]$Size = 10
     )
     $hasCjk = $Text -match '[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]'
+    # 中文字体排在 MS Gothic 前面：MS Gothic 是日文字体，中文用它渲染是日文字形。
     $candidates = if ($hasCjk) {
-        @('MS Gothic', 'NSimSun', 'SimSun', 'SimHei', 'Cascadia Mono', 'Consolas')
+        @('NSimSun', 'SimSun', 'MS Gothic', 'Cascadia Mono', 'Consolas')
     } else {
         @('Cascadia Mono', 'Consolas', 'Courier New')
     }
     foreach ($name in $candidates) {
         try {
             $font = New-Object System.Drawing.Font($name, $Size)
-            # GDI+ 找不到字体不抛异常，而是静默换成别的字体；用名字比对确认真的拿到了。
-            if ($font.Name -ne $name) { $font.Dispose(); continue }
+            # GDI+ 找不到字体不抛异常，而是静默换成别的字体，所以要看名字。
+            # 注意本地化字体名：请求 NSimSun 拿到的是"新宋体"，此时用字宽实测来确认。
+            $nameOk = ($font.Name -eq $name) -or (Test-SnipMonoFont -Font $font)
+            if (-not $nameOk) { $font.Dispose(); continue }
             # 纯西文场景不要求全角比例；有中文时必须实测通过，否则换下一个候选。
             if (-not $hasCjk -or (Test-SnipMonoFont -Font $font)) { return $font }
             $font.Dispose()
@@ -510,6 +512,146 @@ function New-SnipMonoFont {
 
 <#
 .SYNOPSIS
+    取界面与正文字体：优先微软雅黑。
+.DESCRIPTION
+    辉哥要求正文也用微软雅黑。雅黑不是等宽字体：实测汉字 14.45px、空格 4.45px
+    （空格只有汉字的 0.31 宽），所以"用空格对齐"的识别结果直接显示会往前缩、列错位。
+    解决办法不是换字体，而是保留雅黑、按实测字宽重算空格（见 Format-SnipAlignedText）。
+#>
+function New-SnipTextFont {
+    param(
+        [single]$Size = 10.5,
+        [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular
+    )
+    foreach ($name in @('Microsoft YaHei UI', 'Microsoft YaHei', 'DengXian', 'SimSun', 'Segoe UI')) {
+        try {
+            $font = New-Object System.Drawing.Font($name, $Size, $Style)
+            # GDI+ 找不到字体不报错，会静默替换；比对名字确认真的拿到了。
+            if ($font.Name -eq $name) { return $font }
+            $font.Dispose()
+        } catch { }
+    }
+    return New-Object System.Drawing.Font([System.Drawing.FontFamily]::GenericSansSerif, $Size, $Style)
+}
+
+<#
+.SYNOPSIS
+    判断一个字符占几格（识别结果按"全角=2 格、半角=1 格"排版）。
+#>
+function Get-SnipCellWidth {
+    param([char]$Char)
+    $code = [int]$Char
+    if (($code -ge 0x2E80 -and $code -le 0xA4CF) -or
+        ($code -ge 0xAC00 -and $code -le 0xD7A3) -or
+        ($code -ge 0xF900 -and $code -le 0xFAFF) -or
+        ($code -ge 0xFE30 -and $code -le 0xFE6F) -or
+        ($code -ge 0xFF00 -and $code -le 0xFF60) -or
+        ($code -ge 0xFFE0 -and $code -le 0xFFE6)) {
+        return 2
+    }
+    return 1
+}
+
+<#
+.SYNOPSIS
+    量一个字符的推进宽度（重复 20 次取平均）。
+.DESCRIPTION
+    必须重复取平均：GDI 对极短字符串会加上边缘留白，单字符测量严重虚高
+    （微软雅黑 10.5 号下，单个空格量出 13px，真实值只有 4.45px；
+    单个汉字量出 23px，真实 14.45px）。用单字符读数算出来的排版必然是错的。
+.PARAMETER Cache
+    调用方传入并复用同一个哈希表，避免每次重算。
+#>
+function Get-SnipCharAdvance {
+    param(
+        [Parameter(Mandatory = $true)][System.Drawing.Font]$Font,
+        [Parameter(Mandatory = $true)][hashtable]$Cache,
+        [Parameter(Mandatory = $true)][char]$Char
+    )
+    $key = [string]$Char
+    if ($Cache.ContainsKey($key)) { return [double]$Cache[$key] }
+
+    $flags = [System.Windows.Forms.TextFormatFlags]::NoPadding
+    $probe = New-Object System.Drawing.Size(20000, 200)
+    $width = [double][System.Windows.Forms.TextRenderer]::MeasureText(($key * 20), $Font, $probe, $flags).Width / 20.0
+    $Cache[$key] = $width
+    return $width
+}
+
+<#
+.SYNOPSIS
+    按字符推进宽度累加，算出一行文本的渲染宽度。
+.DESCRIPTION
+    比直接 MeasureText 整行更稳：短行不会被边缘留白虚高（"合计" 这种两字行尤其明显），
+    结果窗宽度是按最长行算的，虚高会让窗口无谓变宽。
+#>
+function Measure-SnipLineWidth {
+    param(
+        [string]$Line,
+        [System.Drawing.Font]$Font,
+        [hashtable]$Cache
+    )
+    if ([string]::IsNullOrEmpty($Line)) { return 0.0 }
+    $total = 0.0
+    foreach ($ch in $Line.ToCharArray()) { $total += Get-SnipCharAdvance -Font $Font -Cache $Cache -Char $ch }
+    return $total
+}
+
+<#
+.SYNOPSIS
+    把"靠空格对齐"的识别文本，按目标字体的实测字宽重算每段空格数。
+.DESCRIPTION
+    模型按"全角=2 格"补空格，等宽字体下正好列对齐。微软雅黑的空格只有汉字的 0.31 宽
+    （4.45px vs 14.45px），直接显示会让每列往前缩、表格散架。这里逐行重算：
+      1. 按格子数算出每个空格段结束时应到达的横向位置（格数 × 半字宽）；
+      2. 用当前已排宽度与目标位置之差，除以目标字体空格的真实宽度，得到要补几个空格。
+    每一列都按绝对位置对齐，误差不会累积（最大不超过一个空格宽）。
+    所有宽度都来自"按字符测量累加"，不量前缀字符串，避免短串虚高。
+    注意：只有显示用这份重排后的文本；复制走的仍是原始文本。
+#>
+function Format-SnipAlignedText {
+    param([string]$Content, [System.Drawing.Font]$Font)
+
+    if ([string]::IsNullOrEmpty($Content)) { return $Content }
+    # 字体本身就满足"全角=2 半角"时，原空格已经能对齐，不动它。
+    if (Test-SnipMonoFont -Font $Font) { return $Content }
+
+    $cache = @{}
+    $cell = (Get-SnipCharAdvance -Font $Font -Cache $cache -Char '名') / 2.0
+    $spaceW = Get-SnipCharAdvance -Font $Font -Cache $cache -Char ' '
+    if ($cell -le 0 -or $spaceW -le 0) { return $Content }
+
+    $result = New-Object System.Collections.ArrayList
+    foreach ($line in [regex]::Split($Content, "`r?`n")) {
+        # 没有连续空格的行不用补（缩进与分栏都靠连续空格）。
+        if ($line -notmatch '  ') { [void]$result.Add($line); continue }
+
+        $sb = New-Object System.Text.StringBuilder
+        $cells = 0
+        $current = 0.0
+        $i = 0
+        while ($i -lt $line.Length) {
+            $ch = $line[$i]
+            if ($ch -eq ' ') {
+                while ($i -lt $line.Length -and $line[$i] -eq ' ') { $cells += 1; $i++ }
+                $target = $cells * $cell
+                $count = [int][Math]::Round(($target - $current) / $spaceW)
+                if ($count -lt 1) { $count = 1 }
+                [void]$sb.Append(' ' * $count)
+                $current += $count * $spaceW
+            } else {
+                [void]$sb.Append($ch)
+                $current += Get-SnipCharAdvance -Font $Font -Cache $cache -Char $ch
+                $cells += Get-SnipCellWidth -Char $ch
+                $i++
+            }
+        }
+        [void]$result.Add($sb.ToString())
+    }
+    return ($result -join "`r`n")
+}
+<#
+.SYNOPSIS
     生成一个深色小窗（结果窗、浮窗、输入框共用的外观基线）。
 #>
 function New-SnipDarkForm {
@@ -519,7 +661,7 @@ function New-SnipDarkForm {
     $form.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 34)
     $form.TopMost = $true
     $form.ShowInTaskbar = $false
-    $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+    $form.Font = New-SnipTextFont -Size 9
     return $form
 }
 
