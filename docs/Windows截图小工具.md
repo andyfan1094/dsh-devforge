@@ -77,9 +77,12 @@ Alt+A（RegisterHotKey，助手进程常驻）
 | `hotkey` | `Alt+A` | 全局热键，形如 `Alt+A`、`Ctrl+Shift+S` |
 | `saveDir` | 图片/DSH截图 | 保存目录，空则用系统图片目录下 DSH截图 |
 | `copyOnFinish` | `true` | 框选完成即复制到剪贴板 |
-| `visionProvider` | `auto` | `auto` / `minimax` / `openai`（openai = 中转站） |
-| `visionModel` | 空 | 走中转站时的视觉模型名 |
 | `translateTarget` | `auto` | `auto`（中↔英自动判断）/ `zh` / `en` |
+
+识别与翻译**没有独立配置项**：它们直接走 DSH 当前使用的模型
+（`ctx.llm` + `ctx.attachments`），沿用面板里已配好的 provider 与凭据，
+不需要另填 Key 或模型名。选模型时按 `inputModalities` 判断是否支持图片，
+默认模型看不了图会自动换一个能看图的。
 
 ## 六、文件清单
 
@@ -88,7 +91,7 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - `src/win-snip/protocol.ts` — 契约：路由常量、配置与状态类型、热键解析
 - `src/win-snip/store.ts` — 配置读写与默认值、保存目录解析
 - `src/win-snip/paths.ts` — 运行目录与原生脚本定位
-- `src/win-snip/vision.ts` — 视觉模型通道（识别/翻译），凭据经受管引用解析
+- `src/win-snip/vision.ts` — 识别/翻译：截图登记为附件后走 DSH 当前模型，含排版归一化
 - `src/win-snip/assistant.ts` — 助手进程生命周期、文件队列轮询、状态读取
 - `src/win-snip/routes.ts` — 面板 HTTP 路由
 - `src/win-snip/activate.ts` — 能力装配（注册路由、按配置启动助手）
@@ -139,3 +142,59 @@ Alt+A（RegisterHotKey，助手进程常驻）
 4. 点「识别」拿到文字，点「翻译」拿到译文，均可复制；
 5. 点「钉图」，确认浮窗置顶、可拖动、滚轮缩放、Esc 关闭；
 6. 点「保存」落到配置目录，点「复制」在别处能粘贴出图。
+
+## 九、识别结果怎么做到"按截图排版"
+
+排版能还原是四件事一起做成的，缺一件就会错乱：
+
+1. **提示词约束**：要求一行对一行、保留空行与缩进层级、保留项目符号与编号、
+   表格用半角空格补齐列、不要 Markdown 装饰、看不清用「□」不猜。
+2. **排版归一化**（`normalizeLayout`）：模型常混用全角空格（U+3000）、制表符、
+   不换行空格（U+00A0），这些在等宽字体里宽度不等于半角空格，会让列错位。
+   统一换算成半角空格（一个全角 = 两个半角），并去掉行尾空格、压缩多余空行；
+   注意**不能用 `trim()`**，那会把首行缩进一起吃掉。
+3. **等宽字体**：结果窗用 `New-SnipMonoFont`。含中文时选 `MS Gothic`
+   （本机实测没有 NSimSun/SimSun，而 MS Gothic 的中文与半角字符都是定宽，
+   实测中文 15px、西文 7.5px，正好 2 倍关系），纯西文用 `Cascadia Mono`。
+   GDI+ 找不到字体不抛异常而是静默替换，所以必须用 `font.Name` 比对确认。
+4. **关闭自动换行**：TextBox 的 `WordWrap = $false` + `ScrollBars = Both`，
+   否则长行被重排，列对齐立刻失效；窗体宽度按最长行自适应。
+
+实测（2026-10-18，经宿主真实模型通道）：
+
+```
+|Item        Qty        Price|
+|apple       12         3.50|
+|banana      7          2.10|
+|- first point|
+|    nested detail|
+```
+
+```
+|名称        数量        单价|
+|苹果        12          3.50|
+|香蕉        7           2.10|
+|合计        19          5.60|
+|• 第一项|
+|  补充说明|
+```
+
+## 十、踩过的坑（都别再踩）
+
+- **`Application::DoEvents()` 会吞掉 `WM_HOTKEY`**：主循环早期用 DoEvents 泵消息，
+  Alt+A 注册成功却毫无反应；改成显式 `PeekMessage`/`DispatchMessage` 才收得到。
+- **低层键盘钩子才是兜底**：LOL、wegame、RustDesk、NVIDIA Overlay 等程序也挂着
+  `WH_KEYBOARD_LL` 并抢先吃掉 Alt+A，`RegisterHotKey` 收不到。助手额外装一个
+  更晚注册的钩子，匹配成功就记一次命中并吞掉事件。
+- **WinForms 未处理异常会弹 .NET 崩溃框并结束进程**：钉图窗早期在事件回调里访问
+  局部 `$state`（函数已返回），抛"在此对象上找不到属性 Drag"，整进程退出。
+  修法：状态放 `$script:SnipFloatStates[$form]`，每个回调包 try/catch，
+  再加 `Enable-SnipCrashGuard` 注册 `Application.ThreadException` 与
+  `AppDomain.UnhandledException` 兜底。
+- **单实例清理不能按文件名模糊匹配**：曾用 `-like '*win-snip-assistant.ps1*'`
+  匹配命令行，把"命令行里恰好提到该文件名的排查终端"一起杀掉
+  （表现为命令莫名 exit code 4294967295）。只能匹配
+  `-File\s+\S*win-snip-assistant\.ps1` 这种真正的启动形式。
+- **`.ps1` 必须是 UTF-8 带 BOM**：PowerShell 5.1 把无 BOM 当 GBK 解，直接报
+  "表达式或语句中包含意外的标记"；队列与状态 JSON 反之必须无 BOM。
+  `edit`/`write` 会丢 BOM，需用 `[System.IO.File]::WriteAllText` 显式补回。

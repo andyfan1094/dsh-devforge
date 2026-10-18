@@ -23,10 +23,22 @@ function Show-SnipResult {
     $hasText = $Text -ne ''
     if (-not $hasTranslation -and -not $hasText) { $Text = '（没有识别到文字）' ; $hasText = $true }
 
+    # 按原排版显示：用等宽字体 + 关闭自动换行，否则缩进和表格列宽会被"重排"掉。
+    $allText = ($Text + "`n" + $Translation)
+    $bodyFont = New-SnipMonoFont -Text $allText -Size 10
+
     $form = New-SnipDarkForm
     $form.Text = $Title
     $form.KeyPreview = $true
-    $form.Width = 640
+    # 宽度跟着最长的行走：短内容不浪费屏，宽表格也不至于一开就要拖滚动条。
+    $longest = 0
+    foreach ($line in ($allText -split "`r?`n")) {
+        if ($line.Length -gt $longest) { $longest = $line.Length }
+    }
+    $measured = 0
+    try { $measured = [System.Windows.Forms.TextRenderer]::MeasureText(('M' * [Math]::Min($longest, 200)), $bodyFont).Width } catch { $measured = 0 }
+    if ($measured -le 0) { $measured = [Math]::Min($longest, 120) * 8 }
+    $form.Width = [int][Math]::Max(560, [Math]::Min(1280, $measured + 72))
     $form.Height = if ($hasTranslation -and $hasText) { 460 } else { 340 }
 
     $work = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
@@ -83,12 +95,14 @@ function Show-SnipResult {
 
         $box = New-Object System.Windows.Forms.TextBox
         $box.Multiline = $true
-        $box.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+        # 关掉自动换行：换行会破坏原排版，长行改用横向滚动条。
+        $box.WordWrap = $false
+        $box.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
         $box.ReadOnly = $true
         $box.BorderStyle = [System.Windows.Forms.BorderStyle]::None
         $box.BackColor = [System.Drawing.Color]::FromArgb(24, 24, 26)
         $box.ForeColor = [System.Drawing.Color]::FromArgb(226, 226, 230)
-        $box.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+        $box.Font = $bodyFont
         $box.Text = $Text
         $box.SetBounds(16, $y, ($form.Width - 32), $boxHeight)
         $form.Controls.Add($box)
@@ -105,11 +119,13 @@ function Show-SnipResult {
 
         $box2 = New-Object System.Windows.Forms.TextBox
         $box2.Multiline = $true
-        $box2.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+        # 关掉自动换行：换行会破坏原排版，长行改用横向滚动条。
+        $box2.WordWrap = $false
+        $box2.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
         $box2.BorderStyle = [System.Windows.Forms.BorderStyle]::None
         $box2.BackColor = [System.Drawing.Color]::FromArgb(24, 24, 26)
         $box2.ForeColor = [System.Drawing.Color]::FromArgb(226, 226, 230)
-        $box2.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+        $box2.Font = $bodyFont
         $box2.Text = $Translation
         $box2.SetBounds(16, $y, ($form.Width - 32), $boxHeight)
         $form.Controls.Add($box2)

@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseTranslateOutput, readModelTarget, WinSnipVision } from '../src/win-snip/vision.ts'
+import { normalizeLayout, parseTranslateOutput, readModelTarget, WinSnipVision } from '../src/win-snip/vision.ts'
 
 /** 构造一个只满足 WinSnipVision 需要的最小上下文。 */
 function makeCtx(options: {
@@ -135,4 +135,29 @@ test('readModelTarget 只接受字符串形式的 provider/model', () => {
   assert.deepEqual(readModelTarget({ provider: 'a', model: 'b' }), { provider: 'a', model: 'b' })
   assert.equal(readModelTarget({ provider: '', model: 'b' }), undefined)
   assert.equal(readModelTarget(null), undefined)
+})
+
+test('排版归一化：全角空格、制表符、不换行空格统一成半角空格', () => {
+  // 全角空格等于一个汉字宽，换算成两个半角空格才能在等宽字体里对齐。
+  assert.equal(normalizeLayout('名称\u3000\u3000数量'), '名称    数量')
+  assert.equal(normalizeLayout('a\tb'), 'a    b')
+  assert.equal(normalizeLayout('a\u00a0b'), 'a b')
+})
+
+test('排版归一化：保留换行与缩进，只去掉行尾空格', () => {
+  assert.equal(normalizeLayout('  缩进一行  \n第二行\n\n第三行'), '  缩进一行\n第二行\n\n第三行')
+})
+
+test('排版归一化：连续空行压成一个空行，不改列对齐', () => {
+  assert.equal(normalizeLayout('a   b\n\n\n\nc   d'), 'a   b\n\nc   d')
+})
+
+test('识别结果按原排版返回：行数与列对齐都不被压平', async () => {
+  const layout = '名称        数量\n苹果         12\nbanana       7'
+  const { ctx } = makeCtx({
+    selection: { provider: 'tiangong', model: 'm1' },
+    chunks: [{ type: 'text-delta', text: layout }, { type: 'finish', reason: { kind: 'stop' } }],
+  })
+  const result = await new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) })
+  assert.equal(result.text, layout, '空格与换行必须原样保留')
 })

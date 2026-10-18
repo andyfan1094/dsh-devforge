@@ -327,6 +327,38 @@ function Read-SnipVisionResponse {
 
 <#
 .SYNOPSIS
+    取一个用于"按原排版看文字"的等宽字体。
+.DESCRIPTION
+    识别结果要还原截图的排版（缩进、表格列对齐），比例字体会让空格宽度不等，
+    排版必然错乱，所以结果窗必须用等宽字体。
+    本机实测（2026-10-18）没有 NSimSun / SimSun，中文等宽只有 MS Gothic 可用：
+    它的中文与半角字符都是定宽，中英混排能对齐；纯西文用 Cascadia Mono / Consolas。
+    字体取不到时回落到系统默认，不能因为字体问题让结果窗打不开。
+.PARAMETER Text
+    用来判断是否需要中文字形的正文。
+.PARAMETER Size
+    字号，默认 10。
+#>
+function New-SnipMonoFont {
+    param(
+        [string]$Text = '',
+        [single]$Size = 10
+    )
+    $hasCjk = $Text -match '[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]'
+    $candidates = if ($hasCjk) { @('MS Gothic', 'NSimSun', 'SimSun', 'Cascadia Mono', 'Consolas') } else { @('Cascadia Mono', 'Consolas', 'Courier New') }
+    foreach ($name in $candidates) {
+        try {
+            $font = New-Object System.Drawing.Font($name, $Size)
+            # GDI+ 找不到字体不抛异常，而是静默换成别的字体；用名字比对确认真的拿到了。
+            if ($font.Name -eq $name) { return $font }
+            $font.Dispose()
+        } catch { }
+    }
+    return New-Object System.Drawing.Font('Microsoft YaHei UI', $Size)
+}
+
+<#
+.SYNOPSIS
     生成一个深色小窗（结果窗、浮窗、输入框共用的外观基线）。
 #>
 function New-SnipDarkForm {

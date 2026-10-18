@@ -36,14 +36,27 @@ function describeTarget(target: WinSnipTranslateTarget): string {
   return '中文或英文（若图中是中文则译成英文，若图中是英文则译成中文）'
 }
 
-/** 识别提示词：只要文字本身，避免模型加解释。 */
-const OCR_PROMPT = '请识别这张截图中的全部文字，保持原有换行与阅读顺序。只输出文字本身，不要解释、不要加任何前后缀。'
+/** 识别提示词：只要文字本身，并且必须还原截图里的排版。 */
+const OCR_PROMPT = [
+  '请把这张截图里的文字原样抄写出来，要求还原截图的排版：',
+  '1. 严格保持原有的换行、空行与段落顺序，一行对一行，不要把多行合并成一段；',
+  '2. 保持原有的缩进层级、项目符号与编号（如 -、•、1.、(a)），缩进用半角空格表示；',
+  '3. 如果截图里有表格或多列对齐的内容，用半角空格补齐各列使其对齐：',
+  '   一个汉字占两个半角空格的位置，同一列的文字起始位置要上下对齐；',
+  '4. 不要翻译、不要改写、不要补全、不要添加解释、不要用 Markdown 装饰（如 **、#、反引号、表格竖线），除非原图本身就有这些符号；',
+  '5. 看不清的字用「□」代替，不要凭猜测编造内容。',
+  '只输出抄写结果本身。',
+].join('\n')
 
 /** 翻译提示词：一次返回原文与译文，便于结果窗左右对照。 */
 function translatePrompt(target: WinSnipTranslateTarget): string {
-  return '请先识别这张截图中的全部文字，再把它翻译成'
-    + describeTarget(target)
-    + '。严格只输出一个 JSON 对象，形如 {"text":"原文","translation":"译文"}，不要输出代码块标记或任何解释。'
+  return [
+    '请先识别这张截图中的全部文字，再把它翻译成' + describeTarget(target) + '。',
+    '识别结果要还原截图的排版：保持原有换行、空行、缩进层级、项目符号与表格列对齐，一行对一行，不要合并段落；缩进用半角空格，一个汉字按两个半角空格计。',
+    '译文同样保持原文的行结构，逐行对应，便于左右对照。',
+    '严格只输出一个 JSON 对象，形如 {"text":"原文","translation":"译文"}；',
+    '两个字段内部用 \\n 表示换行；不要输出代码块标记或任何解释。',
+  ].join('\n')
 }
 
 /** 去掉模型可能加的 ```json 围栏。 */
@@ -53,18 +66,46 @@ function stripFence(raw: string): string {
   return fenced === null ? trimmed : fenced[1]
 }
 
+/**
+ * 归一化模型输出的排版字符，让"按截图排版"在等宽显示里真的成立。
+ *
+ * 起因：模型常混用全角空格、制表符、不换行空格，这些在等宽字体里的宽度
+ * 与半角空格不一致（全角空格恰好等于一个汉字宽），会让原本对齐的列错位。
+ * 这里统一成半角空格与普通换行，并去掉行尾多余空白（行尾空格不影响对齐，
+ * 留着只会让复制出去的文本变脏）。
+ *
+ * @param raw 模型原始输出。
+ * @returns 归一化后的文本，行数不变。
+ */
+export function normalizeLayout(raw: string): string {
+  const lines = raw
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t/g, '    ')
+    .replace(/\u00a0/g, ' ')
+    // 全角空格换算成两个半角空格：一个全角字宽 = 两个半角字宽。
+    .replace(/\u3000/g, '  ')
+    .split('\n')
+    .map((line) => line.replace(/[ ]+$/, ''))
+  // 只去掉整段首尾的空行，不用 trim()：那会把首行的缩进一起吃掉，
+  // 而缩进本身就是"按截图排版"的一部分。
+  while (lines.length > 0 && lines[0] === '') lines.shift()
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n')
+}
+
 /** 从模型输出里取出 { text, translation }；解析失败时把整段当译文。 */
 export function parseTranslateOutput(raw: string): WinSnipVisionResult {
   const body = stripFence(raw)
   try {
     const parsed = JSON.parse(body) as { text?: unknown; translation?: unknown }
-    const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
-    const translation = typeof parsed.translation === 'string' ? parsed.translation.trim() : ''
+    // 排版相关字符在原文与译文里都要归一化，否则两侧列宽对不上。
+    const text = typeof parsed.text === 'string' ? normalizeLayout(parsed.text) : ''
+    const translation = typeof parsed.translation === 'string' ? normalizeLayout(parsed.translation) : ''
     if (translation !== '') return { text, translation }
   } catch {
     // 落到下面的兜底：模型没按 JSON 返回时，整段视作译文。
   }
-  return { text: '', translation: body }
+  return { text: '', translation: normalizeLayout(body) }
 }
 
 /** 附件服务最小形状（只用到登记图片）。 */
@@ -216,6 +257,7 @@ export class WinSnipVision {
       clearTimeout(timer)
     }
     if (raw.trim() === '') throw new Error('模型没有返回任何内容。')
-    return request.kind === 'ocr' ? { text: raw.trim() } : parseTranslateOutput(raw)
+    // 识别结果同样要归一化排版字符，否则全角空格/制表符会让列对不齐。
+    return request.kind === 'ocr' ? { text: normalizeLayout(raw) } : parseTranslateOutput(raw)
   }
 }
