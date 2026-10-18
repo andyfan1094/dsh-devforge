@@ -111,7 +111,7 @@ export function normalizeMemoryText(text: string): string {
 }
 
 /**
- * 证据引文长度上限（0.51.0）。
+ * 证据引文长度上限（0.53.0）。
  *
  * 原为 500 字，等于把工具结果原文整段永久存进 memory.meta。生产实测：evidence 字段占
  * memory.meta 15.23 MB 里的 13.04 MB（86%），长引文 13584 个实例去重后只有 2591 种唯一文本，
@@ -123,7 +123,7 @@ const EVIDENCE_QUOTE_LIMIT = 200
 const TRANSIENT_STATE_PATTERN = /(未提交|尚未提交|暂未提交|未推送|暂未推送|尚未推送|待验收|稍后继续|下次继续|回头再)/u
 
 /**
- * 任务过程播报过滤器（0.51.0）。
+ * 任务过程播报过滤器（0.53.0）。
  *
  * 生产实测：4871 条活跃记忆里约四分之一的低价值条目属于两类——
  * ① 带任务编号与行号的完成宣告（“P2 hero 四件套已并入 renderInstallCmds 数组（L133-134）”）
@@ -227,7 +227,7 @@ function turnDetails(events: readonly unknown[], sessionId: string, scope: Memor
 
 /**
  * 按 digest（缺省退回 quote 文本）去重证据数组，保留首次出现的位置。
- * 0.51.0：证据此前从不跨条去重，同一段工具输出被复制到多条记忆，最大重复 121 次。
+ * 0.53.0：证据此前从不跨条去重，同一段工具输出被复制到多条记忆，最大重复 121 次。
  */
 export function dedupeEvidence(items: readonly MemoryEvidence[]): MemoryEvidence[] {
   const seen = new Set<string>()

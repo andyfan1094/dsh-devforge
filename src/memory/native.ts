@@ -94,14 +94,14 @@ function cleanScope(value: unknown): MemoryScopeContext {
 }
 
 /**
- * 证据引文长度上限（0.51.0），与 sediment.ts 的同名常量口径一致。
+ * 证据引文长度上限（0.53.0），与 sediment.ts 的同名常量口径一致。
  * 证据只用于回读核对来源，不需要保存工具结果全文；生产实测该字段曾占 13 MB。
  */
 const EVIDENCE_QUOTE_LIMIT = 200
 
 function cleanEvidence(value: unknown): MemoryEvidence[] {  if (!Array.isArray(value)) return []
   const out: MemoryEvidence[] = []
-  // 0.51.0：按 digest/quote 去重。此前同一段工具输出能以多条「独立证据」的身份重复入库，
+  // 0.53.0：按 digest/quote 去重。此前同一段工具输出能以多条「独立证据」的身份重复入库，
   // 生产实测单段文本最多重复 121 次、证据域 13 MB 里只有 2591 种唯一文本。
   const seen = new Set<string>()
   for (const raw of value.slice(0, 8)) {

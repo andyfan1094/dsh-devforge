@@ -46,7 +46,7 @@ const MAX_AUDIT = 2_000
  */
 const AUDIT_TRIM_EVERY = 20
 /**
- * 已解决候选的墓碑化（0.51.0）。
+ * 已解决候选的墓碑化（0.53.0）。
  *
  * 生产实况（2026-10-18 排查）：memory.candidate 曾达 6065 条 / 17.40 MB，其中 6057 条状态为
  * auto-activated——候选被采纳成正式记忆后，整份副本（正文 + 证据 + 作用域，单条约 2.8 KB）永久
@@ -78,7 +78,7 @@ export interface MemoryCandidateInput {
   /**
    * 去重/冲突比对时排除的条目 id（通常是被更新的那条自己）。
    *
-   * 修 0.51.0 缺陷：memory_manage update 把内容改写成与现有条目相近的表述时，propose() 的
+   * 修 0.53.0 缺陷：memory_manage update 把内容改写成与现有条目相近的表述时，propose() 的
    * 包含式比对会把**被更新的那条自身**认成重复，于是更新被拒并报“更新后内容与现有记忆重复，
    * 未落盘（已有 id=自己）”。语义上自己不该算自己的重复。
    */
@@ -241,7 +241,7 @@ export class MemoryGovernanceService {
   }
 
   /**
-   * 把超过保留期的已解决候选压缩成墓碑（0.51.0）。
+   * 把超过保留期的已解决候选压缩成墓碑（0.53.0）。
    *
    * 只处理终态候选：approved / auto-activated / rejected / deduped。pending 与
    * needs-resolution 是待人工处理的，体积再大也不能动——那是用户还要裁决的活数据。
@@ -530,7 +530,7 @@ export class MemoryGovernanceService {
 
   quality(): MemoryQualityStats {
     const quality = this.native.qualityBase()
-    // 0.51.0 修统计失真：原实现用 listCandidates({ limit: 1000 }) 计数，而 listCandidates 的 limit
+    // 0.53.0 修统计失真：原实现用 listCandidates({ limit: 1000 }) 计数，而 listCandidates 的 limit
     // 被 Math.min(1000, …) 硬封顶——候选一旦超过 1000 条（生产曾达 6065 条），待审数就永远停在
     // 1000 以内，面板显示的“待审候选”是假的。改为直接扫原始域行按状态计数，不受 limit 影响。
     // 单次解析全部候选行的开销与原先的 listCandidates 相同（都是全量 flatMap），没有额外代价。
