@@ -380,6 +380,56 @@ function Resize-SnipImage {
 }
 <#
 .SYNOPSIS
+    把位图放进剪贴板，让所有程序都能粘贴出图片。
+.DESCRIPTION
+    辉哥反馈"图像黏贴也不行"。实测下来 .NET 的 Clipboard 类在这个场景根本不可靠：
+      - Clipboard::SetImage 只给 CF_BITMAP，微信/飞书/浏览器读的是 CF_DIB 或 PNG，
+        于是"复制成功但粘贴没图"；
+      - Clipboard::SetDataObject 在无消息泵的宿主里直接抛"所请求的剪贴板操作失败"，
+        实测 9 秒后失败，而截图的复制动作就在这条路上。
+    所以改用纯 Win32 API：OpenClipboard + EmptyClipboard + SetClipboardData，
+    一次写入 CF_DIB、PNG、CF_DIBV5 三种格式。实测整屏 2560x1440 只要约 100ms，
+    并且 .NET、画图、浏览器都能读到。
+.PARAMETER Bitmap
+    要复制的位图；函数内部自己编码，调用方可以安全 Dispose 原图。
+.RETURNS
+    成功返回 $true，失败返回 $false（原因写入日志，不抛异常打断截图流程）。
+#>
+function Set-SnipClipboardImage {
+    param([Parameter(Mandatory = $true)][System.Drawing.Bitmap]$Bitmap)
+
+    if (-not ('SnipClipboard' -as [type])) {
+        <#
+            注意：无命名空间的静态类用 '-as [type]' 判断会失效（会每次重新编译，
+            实测让单次复制多花 1.6 秒），所以用 AppDomain 里按全名查找。
+        #>
+        $existing = [AppDomain]::CurrentDomain.GetAssemblies() |
+            ForEach-Object { $_.GetType('SnipClipboard', $false) } |
+            Where-Object { $null -ne $_ } |
+            Select-Object -First 1
+        if ($null -eq $existing) {
+            # C# 源码放在同目录的 win-snip-clipboard.cs，构建时一并复制过来。
+            $sourcePath = Join-Path $PSScriptRoot 'win-snip-clipboard.cs'
+            if (-not (Test-Path $sourcePath)) {
+                Write-SnipLog ('剪贴板源码缺失：' + $sourcePath)
+                return $false
+            }
+            Add-Type -TypeDefinition ([System.IO.File]::ReadAllText($sourcePath, [System.Text.Encoding]::UTF8)) -ReferencedAssemblies System.Drawing, System.Drawing.Primitives, System.Runtime.InteropServices
+        }
+    }
+
+    $errorText = ''
+    try {
+        $ok = [SnipClipboard]::SetImage($Bitmap, [ref]$errorText)
+        if (-not $ok) { Write-SnipLog ('复制图片失败：' + $errorText) }
+        return $ok
+    } catch {
+        Write-SnipLog ('复制图片异常：' + $_.Exception.Message)
+        return $false
+    }
+}
+<#
+.SYNOPSIS
     取一个用于"按原排版看文字"的等宽字体。
 .DESCRIPTION
     识别结果要还原截图的排版（缩进、表格列对齐），比例字体会让空格宽度不等，

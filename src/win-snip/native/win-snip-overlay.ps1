@@ -1,4 +1,4 @@
-# win-snip-overlay.ps1 —— 遮罩框选 + 就地标注编辑器
+﻿# win-snip-overlay.ps1 —— 遮罩框选 + 就地标注编辑器
 #
 # 交互（参考 Snipaste / 飞书截图 / kImageAnnotator 的做法）：
 #   按下热键 → 整屏遮罩（冻结截图） → 拖框选 → 松手进入编辑
@@ -470,7 +470,10 @@ function Invoke-SnipToolbarAction {
         'copy' {
             $bitmap = Get-SnipComposite -State $State
             try {
-                [System.Windows.Forms.Clipboard]::SetImage($bitmap)
+                if (-not (Set-SnipClipboardImage -Bitmap $bitmap)) {
+                    [System.Windows.Forms.MessageBox]::Show('复制到剪贴板失败：剪贴板可能被其它程序占用，请稍后重试。', '截图小工具') | Out-Null
+                    return
+                }
                 $State.Action = 'copy'
             } catch {
                 [System.Windows.Forms.MessageBox]::Show('复制到剪贴板失败：' + $_.Exception.Message, '截图小工具') | Out-Null
@@ -791,7 +794,7 @@ function Show-SnipOverlay {
                     Write-SnipLog ('进入编辑态 选区=' + $s.Sel.X + ',' + $s.Sel.Y + ' ' + $s.Sel.Width + 'x' + $s.Sel.Height)
                     if ($CopyOnFinish) {
                         $copy = Get-SnipComposite -State $s
-                        try { [System.Windows.Forms.Clipboard]::SetImage($copy) } catch { } finally { $copy.Dispose() }
+                        try { [void](Set-SnipClipboardImage -Bitmap $copy) } finally { $copy.Dispose() }
                     }
                     Update-SnipToolbar -State $s
                 } else {

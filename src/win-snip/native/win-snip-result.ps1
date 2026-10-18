@@ -1,4 +1,4 @@
-# win-snip-result.ps1 —— 识别 / 翻译结果窗
+﻿# win-snip-result.ps1 —— 识别 / 翻译结果窗
 #
 # 设计目标（辉哥反馈"界面很丑"后重做）：
 # - 深色卡片 + 圆角 + 1px 描边，标题区 / 正文区 / 操作区分层清楚；
@@ -212,6 +212,12 @@ function Show-SnipResult {
     #>
     $addBody = {
         param([string]$Caption, [string]$Content, [int]$Top, [int]$Height)
+        <#
+            关键：WinForms 的 TextBox 只把 \r\n 当换行，单独的 \n 会被忽略，
+            整段内容会挤成一行（辉哥反馈"还是没按排版来"就是这个原因）。
+            数据从 Node 侧经 JSON 传过来，换行一律是 \n，所以这里必须先转成 CRLF。
+        #>
+        $Content = [regex]::Replace($Content, "`r?`n", "`r`n")
         $captionLabel = New-Object System.Windows.Forms.Label
         $captionLabel.Text = $Caption
         $captionLabel.BackColor = [System.Drawing.Color]::Transparent
@@ -242,6 +248,11 @@ function Show-SnipResult {
         $box.Font = $bodyFont
         $box.Text = $Content
         $box.SetBounds(10, 8, ($panel.Width - 20), ($panel.Height - 16))
+        # 不要抢焦点、不要默认全选：否则整段文字会变成蓝底选中，既难读又像出错。
+        $box.TabStop = $false
+        $box.HideSelection = $true
+        $box.SelectionStart = 0
+        $box.SelectionLength = 0
         $panel.Controls.Add($box)
         return $box
     }

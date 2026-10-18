@@ -51,6 +51,11 @@ mkdirSync(nativeDst, { recursive: true })
 const BOM = '\uFEFF'
 let copied = 0
 for (const name of readdirSync(nativeSrc)) {
+  // .cs 是剪贴板实现（C# 源码，由 PowerShell 运行时 Add-Type 编译），原样复制即可。
+  if (name.toLowerCase().endsWith('.cs')) {
+    writeFileSync(join(nativeDst, name), readFileSync(join(nativeSrc, name), 'utf8'), 'utf8')
+    continue
+  }
   if (!name.toLowerCase().endsWith('.ps1')) continue
   const text = readFileSync(join(nativeSrc, name), 'utf8').replace(new RegExp('^' + BOM), '')
   writeFileSync(join(nativeDst, name), BOM + text, 'utf8')
