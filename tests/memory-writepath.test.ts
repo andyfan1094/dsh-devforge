@@ -156,10 +156,24 @@ test('低价值过滤：任务过程播报与一次性验收数字被拦下', ()
     'P2 hero 四件套已并入 renderInstallCmds 数组（L133-134）',
     'P1 showFormErr 已从字符串改为数组版，使用 <ul> 逐条渲染（L271-278）',
     'dsh-devforge 0.50.2 测试全部通过：679/679 通过',
-    '构建耗时 38.8 秒稳定完成',
     '本轮改动尚未推送，待验收',
   ]
   for (const text of junk) assert.equal(isLowValueMemory(text), true, '应被拦截：' + text)
+})
+
+test('低价值过滤：刻意做窄，宁可漏也不误伤（真实库回放校正后的精度取舍）', () => {
+  // 初版宽模式（P 编号+完成动词 / 耗时+通过）在生产 3875 条上命中 22 条，12 条是误报：
+  // 记录归档规则本身的记忆、以及「服务器已接入，winrm_test 耗时 808ms 通过」这类真实事实。
+  // 收紧后只保留「任务编号+真实行号」与「N/N 测试比」两个强信号，其余交给提示词主防线。
+  const passThrough = [
+    // 描述规则本身——初版会被自己的规则命中
+    '记忆审阅采用固定判定规则：任务播报（含 P0–P4 编号、已完成/已上线宣告、具体行号）应归档。',
+    // 真实事实 + 附带一次性耗时
+    'junhui-model（192.168.10.198）已纳入 DSH 服务器管理体系，winrm_test 耗时 808ms 通过，可执行 PowerShell',
+    // 单次耗时播报：精度太低，宁可放行
+    '构建耗时 38.8 秒稳定完成',
+  ]
+  for (const text of passThrough) assert.equal(isLowValueMemory(text), false, '应放行：' + text)
 })
 
 test('低价值过滤：真正有价值的规则、机制、教训不被误伤', () => {
@@ -172,6 +186,22 @@ test('低价值过滤：真正有价值的规则、机制、教训不被误伤',
     '发布流程为：推送 CNB → 部署 → 重启服务 → 健康检查',
   ]
   for (const text of keep) assert.equal(isLowValueMemory(text), false, '不应被拦截：' + text)
+})
+
+test('低价值过滤：长文档与多行内容不做过程播报判定（真实库回放发现的误报边界）', () => {
+  // 生产回放实证：初版规则命中 22 条，其中 12 条是「记录归档规则本身」的记忆被自己的规则命中。
+  // 分界是真垃圾为单行短句、误报为多行结构化文档，故长文档与多行一律放行。
+  const ruleDoc = '记忆审阅采用固定判定规则：任务播报（含 P0–P4 编号、已完成/已上线宣告、具体行号）、过期版本与旧端口应归档。'
+  assert.equal(isLowValueMemory(ruleDoc), false, '描述规则的单一长句不应被拦截')
+
+  const multiLine = [
+    '# 项目维护要点（2026-09-10）',
+    '',
+    '## 环境',
+    '- P1 部署已完成（L120-130）',
+    '- 679/679 测试通过',
+  ].join('\n')
+  assert.equal(isLowValueMemory(multiLine), false, '多行文档即使含播报片段也不应整条拦截')
 })
 
 test('更新自身不算重复：excludeEntryIds 排除被更新的条目', () => {
