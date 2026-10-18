@@ -490,7 +490,7 @@ export class MemoryCuratorService {
           // 计划是合并前算的：已被合并转为 superseded 的条目不该再归档一次（会污染审计口径）
           const live = this.native.get(item.id)
           if (live === undefined || live.state !== 'active') continue
-          this.native.archive(item.id, true)
+          this.native.archive(item.id, true, 'curator')
           summary.evicted += 1
           if (plan.overCapacity > 0) summary.capacityEvicted += 1
           this.audit('curator-evict', [item.id], '价值分 ' + item.score + ' 低于阈值 ' + cfg.evictThreshold + '：' + item.reasons.slice(-3).join('；'))

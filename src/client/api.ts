@@ -17,6 +17,7 @@ import { ARK_API, type ArkStatus, type ArkUsageCredentialsResult, type ArkUsageD
 import { OPENAI_GATEWAY_API, type OpenAiGatewayConfigPatch, type OpenAiGatewayEndpointConfig, type OpenAiGatewayFetchModelsResult, type OpenAiGatewayModelPatch, type OpenAiGatewayStatus } from '../openai/protocol.ts'
 import { SILICONFLOW_API, type SiliconFlowStatus } from '../siliconflow/protocol.ts'
 import { MEMORY_API, type MemoryCandidate, type MemoryDreamStatus, type MemoryEpisode, type MemoryGraph, type MemoryQualityStats, type MemoryRecallFeedback, type MemoryRecallTrace, type MemorySettings, type MemoryStatus, type MemoryUserProfile, type MirrorSyncResult, type NativeMemoryEntry, type NativeMemoryMigrationResult, type ProjectIndexResult } from '../memory/protocol.ts'
+import type { CuratorPlan, CuratorRunSummary } from '../memory/curator.ts'
 import { MCP_API, type McpRuntimeStatus, type McpServerSaveRequest, type McpServerSummary, type McpTestResult } from '../mcp/protocol.ts'
 import { DB_ADMIN_API, type DbAdminConfigFilesResult, type DbAdminConfigName, type DbAdminCredentialRefsResult, type DbAdminRowsResult, type DbAdminTablesResult } from '../store/dbadmin-protocol.ts'
 import { MODAGENTAI_API, type ModagentaiLoginResult, type ModagentaiProfile, type ModagentaiStatus } from '../modagentai/protocol.ts'
@@ -1074,6 +1075,33 @@ export class DevforgeApi {
   async getMemoryQuality(signal?: AbortSignal): Promise<MemoryQualityStats> {
     const data = await readJson<{ quality: MemoryQualityStats }>(await fetch(MEMORY_API.quality, { signal }))
     return data.quality
+  }
+
+  /** 记忆管家预演：只算不落库，返回淘汰候选（带原因）与同类合并候选。 */
+  async getMemoryCuratorPlan(signal?: AbortSignal): Promise<CuratorPlan> {
+    const data = await readJson<{ plan: CuratorPlan }>(await fetch(MEMORY_API.curator, { signal }))
+    return data.plan
+  }
+
+  /** 执行记忆管家：dryRun 缺省为 true（安全默认），传 false 才真正归档/合并。 */
+  async runMemoryCurator(options?: { dryRun?: boolean; evict?: string[]; merge?: string[] }, signal?: AbortSignal): Promise<{ summary: CuratorRunSummary; plan?: CuratorPlan }> {
+    return await readJson<{ summary: CuratorRunSummary; plan?: CuratorPlan }>(await fetch(MEMORY_API.curatorRun, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(options ?? {}),
+      ...(signal === undefined ? {} : { signal }),
+    }))
+  }
+
+  /** 把被管家误归档的条目恢复为活跃。 */
+  async restoreCuratedMemory(ids: string[], signal?: AbortSignal): Promise<number> {
+    const data = await readJson<{ restored: number }>(await fetch(MEMORY_API.curatorRestore, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      ...(signal === undefined ? {} : { signal }),
+    }))
+    return data.restored
   }
 
   /** 读取待审核候选（states 缺省返回 pending 与 needs-resolution）。 */

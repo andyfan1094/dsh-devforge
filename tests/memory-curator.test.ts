@@ -197,6 +197,19 @@ test('curator：用户身份自述即使没有记忆键也受保护', () => {
   assert.equal(ids.includes('id-2'), false, '身份自述不得被淘汰')
 })
 
+test('curator：归档要标来源为管家（面板据此区分人工/管家/做梦）', () => {
+  const { store, curator } = makeRig({ curatorMaxEntries: 0, curatorEvictThreshold: 60 })
+  seed(store, 'who-1', '这条会被管家归档，来源必须标成 curator 而不是人工')
+  curator.execute({ dryRun: false })
+  const entry = store.get('who-1')
+  assert.ok(entry !== undefined)
+  assert.equal(entry!.state, 'archived')
+  assert.equal(entry!.archivedBy, 'curator', '必须记录归档来源')
+  // 恢复后来源标记应清除，避免面板继续显示"管家归档"
+  curator.restore(['who-1'])
+  assert.equal(store.get('who-1')!.archivedBy, undefined)
+})
+
 test('curator：淘汰与恢复都写审计（可追溯）', () => {
   const { store, curator, audits } = makeRig({ curatorMaxEntries: 0, curatorEvictThreshold: 60 })
   seed(store, 'audit-1', '这条会被淘汰，动作必须留下审计痕迹')

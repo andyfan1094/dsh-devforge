@@ -16,6 +16,9 @@ export const MEMORY_API = {
   migrationStatus: '/api/dsh-devforge/memory/migration-status',
   dream: '/api/dsh-devforge/memory/dream',
   dreamRun: '/api/dsh-devforge/memory/dream/run',
+  curator: '/api/dsh-devforge/memory/curator',
+  curatorRun: '/api/dsh-devforge/memory/curator/run',
+  curatorRestore: '/api/dsh-devforge/memory/curator/restore',
   memoryItem: '/api/dsh-devforge/memory/memories/item',
   memoriesPreview: '/api/dsh-devforge/memory/memories/preview',
   profile: '/api/dsh-devforge/memory/profile',
@@ -231,6 +234,8 @@ export interface NativeMemoryEntry {
   pinned?: boolean
   /** 做梦整理标记：true=已归档（软删除，可恢复），不参与注入/检索/图谱。 */
   archived?: boolean
+  /** 归档来源（0.51.0）：区分人工归档 / 记忆管家 / 做梦。 */
+  archivedBy?: 'user' | 'curator' | 'dream' | 'system'
 }
 
 /** 内置记忆写入输入。 */
@@ -318,6 +323,8 @@ export interface MemoryEntryMeta {
   harmfulCount: number
   lastAccessedAt?: number
   updatedAt: number
+  /** 归档来源（0.51.0）：区分人工归档 / 记忆管家 / 做梦，面板据此显示不同标签。 */
+  archivedBy?: 'user' | 'curator' | 'dream' | 'system'
 }
 
 /** 模型提炼和外部导入只进入候选域；pending 候选永不参与召回。 */

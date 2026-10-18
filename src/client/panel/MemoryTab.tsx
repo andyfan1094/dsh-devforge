@@ -11,6 +11,7 @@ import type { RagDocument } from '../../rag/protocol.ts'
 import css from './panel.module.css'
 import { MemoryGraphView } from './MemoryGraphView.tsx'
 import { MemoryGovernance } from './MemoryGovernance.tsx'
+import { MemoryCuratorCard } from './MemoryCuratorCard.tsx'
 
 type Notice = { kind: 'success' | 'error'; text: string }
 type MemoryTabId = 'library' | 'policy' | 'ops'
@@ -366,7 +367,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         </div>
       </div>}
 
-      {tab === 'ops' && <MemoryGovernance api={api} />}
+      {tab === 'ops' && <><MemoryCuratorCard api={api} /><MemoryGovernance api={api} /></>}
     </section>
   )
 }
