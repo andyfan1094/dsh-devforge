@@ -119,25 +119,43 @@ test('curator：同分类高相似才会合并，跨分类绝不合并', () => {
   assert.ok(allLosers.includes('dup-b') || allLosers.includes('dup-a'), '同分类近似条目应进合并候选')
   assert.equal(allLosers.includes('cross-a') && allLosers.includes('cross-b'), false, '跨分类条目不得互相合并')
 
+  const before = store.listAll().filter((entry) => entry.state === 'active').length
   const result = curator.execute({ dryRun: false })
   assert.ok(result.summary.mergedGroups >= 1, '应执行至少一组合并')
   const merged = store.listAll().filter((entry) => entry.state === 'superseded')
   assert.ok(merged.length >= 1, '被合并的条目应转为 superseded 而不是消失')
+  // 回归点：初版按 loser 逐条 supersede，每条都会新建一个 keeper 副本，导致活跃数一条都不减
+  // （生产实测活跃数只减了归档量、合并量为 0）。合并必须真正收敛条数。
+  const after = store.listAll().filter((entry) => entry.state === 'active').length
+  const groupsTotal = plan.merge.reduce((sum, group) => sum + group.loserIds.length, 0)
+  assert.equal(after, before - groupsTotal, '合并后活跃条数必须按被合并数下降')
 })
 
-test('curator：合并会把同类补充事实拼进保留者，不丢信息', () => {
+test('curator：钉选条目不参与合并（supersede 遇钉选会抛错）', () => {
+  const { store, curator } = makeRig({ curatorMaxEntries: 0, curatorEvictThreshold: 0 })
+  seed(store, 'pin-a', '钉选的这条记忆内容与其他条目高度相似用于验证合并禁令', { pinned: true })
+  seed(store, 'pin-b', '钉选的这条记忆内容与其他条目高度相似用于验证合并禁令')
+  const plan = curator.plan()
+  const inMerge = plan.merge.some((group) => group.keeperId === 'pin-a' || group.loserIds.includes('pin-a'))
+  assert.equal(inMerge, false, '钉选条目不得出现在合并组')
+  const result = curator.execute({ dryRun: false })
+  assert.equal(result.summary.errors.length, 0, '不得因钉选抛错')
+})
+
+test('curator：合并会把同类补充事实拼进新条目，不丢信息', () => {
   const { store, curator } = makeRig({ curatorMaxEntries: 0, curatorEvictThreshold: 0 })
   seed(store, 'k-1', '发票识别链路：预处理 3.5s、GPT 定位 7s、三区域 PaddleOCR 并发 21-31s')
   seed(store, 'k-2', '发票识别链路：预处理 3.5s、GPT 定位 7s、三区域 PaddleOCR 并发 21-31s，整票兜底 OCR 后 GPT 修复')
 
   const plan = curator.plan()
   assert.ok(plan.merge.length >= 1, '应识别出同类组')
-  const keeperId = plan.merge[0].keeperId
   curator.execute({ dryRun: false })
-  const keeper = store.get(keeperId)
-  assert.ok(keeper !== undefined)
-  // 保留者应是最长的那条（信息最全），合并后仍含兜底 OCR 事实
-  assert.ok(String(keeper!.content).includes('兜底 OCR'), '保留者必须是信息最全的那条')
+
+  // 合并走 supersede：新旧条目都转 superseded，产出唯一一条承载合并内容的新条目。
+  const live = store.listAll().filter((entry) => entry.state === 'active')
+  assert.equal(live.length, 1, '两条合成一条')
+  assert.ok(String(live[0].content).includes('兜底 OCR'), '合并后的条目必须保住原有补充事实')
+  assert.ok(String(live[0].content).includes('预处理'), '保留者的主体内容不能丢')
 })
 
 test('curator：单次淘汰受 curatorMaxEvict 限制（防一次失手清空）', () => {
@@ -156,6 +174,40 @@ test('curator：库容未超限且分数达标时什么都不做', () => {
   assert.equal(result.summary.evicted, 0)
   assert.equal(result.summary.capacityOk, true)
   assert.equal(store.get('fine-1')!.state, 'active')
+})
+
+test('curator：带记忆键的事实槽位必须硬保护（身份卡/称呼类不经过召回，靠分数会误杀）', () => {
+  const { store, curator } = makeRig({ curatorEvictThreshold: 100 })
+  // 生产实证：这条 24 分，差点被淘汰；它的 accessCount 恒为 0，因为身份卡由注入链路直供、不走召回。
+  store.create({ content: '用户称呼为「辉哥」', category: 'preference', source: 'test', importance: 2, scope: { kind: 'global' }, memoryKey: 'user.address-name' }, 'slot-1')
+  const plan = curator.plan()
+  assert.equal(plan.evict.some((item) => item.id === 'slot-1'), false, '带 memoryKey 的槽位绝不能进淘汰候选')
+  const scored = plan.evict.length === 0 ? undefined : plan.evict[0]
+  assert.equal(scored, undefined, '阈值拉满时也不该有槽位候选')
+})
+
+test('curator：用户身份自述即使没有记忆键也受保护', () => {
+  const { store, curator } = makeRig({ curatorEvictThreshold: 100 })
+  // 生产实证：这两条 accessCount=0（身份设定走注入不走召回），分数 16/25，会被稳定误杀。
+  seed(store, 'id-1', '用户被称为辉哥，在方案 A 与方案 B 之间拥有决策权', { category: 'context', importance: 2 })
+  seed(store, 'id-2', '用户称呼辉哥，交流氛围偏口语化的团队协作风格', { category: 'context', importance: 2 })
+  const plan = curator.plan()
+  const ids = plan.evict.map((item) => item.id)
+  assert.equal(ids.includes('id-1'), false, '身份自述不得被淘汰')
+  assert.equal(ids.includes('id-2'), false, '身份自述不得被淘汰')
+})
+
+test('curator：归档要标来源为管家（面板据此区分人工/管家/做梦）', () => {
+  const { store, curator } = makeRig({ curatorMaxEntries: 0, curatorEvictThreshold: 60 })
+  seed(store, 'who-1', '这条会被管家归档，来源必须标成 curator 而不是人工')
+  curator.execute({ dryRun: false })
+  const entry = store.get('who-1')
+  assert.ok(entry !== undefined)
+  assert.equal(entry!.state, 'archived')
+  assert.equal(entry!.archivedBy, 'curator', '必须记录归档来源')
+  // 恢复后来源标记应清除，避免面板继续显示"管家归档"
+  curator.restore(['who-1'])
+  assert.equal(store.get('who-1')!.archivedBy, undefined)
 })
 
 test('curator：淘汰与恢复都写审计（可追溯）', () => {

@@ -93,17 +93,29 @@ function cleanScope(value: unknown): MemoryScopeContext {
   return { kind: scope.kind, ...(id === undefined ? {} : { id }), ...(label === undefined ? {} : { label }) }
 }
 
-function cleanEvidence(value: unknown): MemoryEvidence[] {
-  if (!Array.isArray(value)) return []
+/**
+ * 证据引文长度上限（0.53.0），与 sediment.ts 的同名常量口径一致。
+ * 证据只用于回读核对来源，不需要保存工具结果全文；生产实测该字段曾占 13 MB。
+ */
+const EVIDENCE_QUOTE_LIMIT = 200
+
+function cleanEvidence(value: unknown): MemoryEvidence[] {  if (!Array.isArray(value)) return []
   const out: MemoryEvidence[] = []
+  // 0.53.0：按 digest/quote 去重。此前同一段工具输出能以多条「独立证据」的身份重复入库，
+  // 生产实测单段文本最多重复 121 次、证据域 13 MB 里只有 2591 种唯一文本。
+  const seen = new Set<string>()
   for (const raw of value.slice(0, 8)) {
     if (raw === null || typeof raw !== 'object') continue
     const item = raw as Partial<MemoryEvidence>
     if (!['user', 'tool', 'assistant', 'manual', 'migration'].includes(String(item.kind))) continue
     if (typeof item.quote !== 'string' || item.quote.trim() === '') continue
+    const quote = item.quote.trim().slice(0, EVIDENCE_QUOTE_LIMIT)
+    const key = typeof item.digest === 'string' && item.digest !== '' ? item.digest : quote
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push({
       kind: item.kind as MemoryEvidence['kind'],
-      quote: item.quote.trim().slice(0, 500),
+      quote,
       ...(typeof item.sourceId === 'string' && item.sourceId !== '' ? { sourceId: item.sourceId.slice(0, 300) } : {}),
       ...(typeof item.sessionId === 'string' && item.sessionId !== '' ? { sessionId: item.sessionId.slice(0, 200) } : {}),
       ...(typeof item.turn === 'number' && Number.isSafeInteger(item.turn) && item.turn >= 0 ? { turn: item.turn } : {}),
@@ -186,6 +198,7 @@ function asMeta(data: unknown, entry: StoredMemoryEntry): MemoryEntryMeta {
     helpfulCount: cleanCounter(value.helpfulCount),
     harmfulCount: cleanCounter(value.harmfulCount),
     ...(typeof value.lastAccessedAt === 'number' && value.lastAccessedAt > 0 ? { lastAccessedAt: value.lastAccessedAt } : {}),
+    ...(value.archivedBy === 'user' || value.archivedBy === 'curator' || value.archivedBy === 'dream' || value.archivedBy === 'system' ? { archivedBy: value.archivedBy } : {}),
     updatedAt: typeof value.updatedAt === 'number' && value.updatedAt > 0 ? value.updatedAt : entry.updatedAt,
   }
 }
@@ -209,6 +222,7 @@ function hydrateEntry(entry: StoredMemoryEntry, meta: MemoryEntryMeta): NativeMe
     helpfulCount: meta.helpfulCount,
     harmfulCount: meta.harmfulCount,
     ...(meta.lastAccessedAt === undefined ? {} : { lastAccessedAt: meta.lastAccessedAt }),
+    ...(meta.archivedBy === undefined ? {} : { archivedBy: meta.archivedBy }),
     ...(inactive ? { archived: true } : entry.archived === true ? { archived: true } : {}),
   }
 }
@@ -569,7 +583,13 @@ export class NativeMemoryStore {
 
   activeCount(): number { return this.all().filter((entry) => this.isRecallable(entry)).length }
 
-  archive(id: string, value: boolean): NativeMemoryEntry {
+  /**
+   * 归档/恢复。
+   *
+   * actor 用来区分「谁归档的」（0.51.0）：面板此前把 archived 一律显示成"人工归档"，
+   * 但记忆管家与做梦也会归档，混在一起用户分不清是系统清的还是自己点的。
+   */
+  archive(id: string, value: boolean, actor: 'user' | 'curator' | 'dream' | 'system' = 'user'): NativeMemoryEntry {
     const entry = this.get(id)
     const meta = this.getMeta(id)
     if (entry === undefined || meta === undefined) throw new Error('记忆不存在：' + id)
@@ -578,7 +598,13 @@ export class NativeMemoryStore {
     if (value && entry.pinned === true) throw new Error('钉选条目不可归档，请先取消钉选：' + id)
     const now = Date.now()
     const stored = this.normalizeStored({ ...entry, archived: value }, id, entry.createdAt, now)
-    const nextMeta: MemoryEntryMeta = { ...meta, state: value ? 'archived' : 'active', revision: meta.revision + 1, updatedAt: now }
+    const nextMeta: MemoryEntryMeta = {
+      ...meta,
+      state: value ? 'archived' : 'active',
+      revision: meta.revision + 1,
+      updatedAt: now,
+      ...(value ? { archivedBy: actor } : { archivedBy: undefined }),
+    }
     this.persist(id, stored, nextMeta)
     return hydrateEntry(stored, nextMeta)
   }

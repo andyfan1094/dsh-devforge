@@ -128,6 +128,15 @@ function configOf(settings: MemorySettings): {
 
 const DAY_MS = 86_400_000
 
+/**
+ * 用户身份自述识别（只用于「保护」，绝不会用于淘汰）。
+ *
+ * 生产实证：`用户被称为辉哥…`(16 分)、`用户称呼'辉哥'…`(25 分) 这两条没有任何 memoryKey，
+ * 靠分数会被稳定误杀。但身份自述由注入链路直供、不经过召回，accessCount 恒为 0，
+ * 正是「分数模型最不擅长判断」的一类。宁可多保护几条，也不能把用户的身份设定清掉。
+ */
+const IDENTITY_PATTERN = /(用户|我)(的)?(称呼|被称为|名字|身份|偏好|喜欢|习惯|要求)/u
+
 export class MemoryCuratorService {
   private readonly native: NativeMemoryStore
   private readonly config: () => MemorySettings
@@ -252,6 +261,18 @@ export class MemoryCuratorService {
       protectedFlag = true
       reasons.push('【保护】高重要度且有证据')
     }
+    // 带记忆键 = 可更新的事实槽位（后续同名写入会覆盖它）。淘汰它等于丢槽位，
+    // 而且这类记忆常常不经过召回（身份卡、称呼、常用配置），accessCount 恒为 0，
+    // 靠分数判会稳定误杀——实测生产里"用户称呼为辉哥"就差点被 24 分淘掉。
+    if (entry.memoryKey !== undefined) {
+      protectedFlag = true
+      reasons.push('【保护】带记忆键的事实槽位')
+    }
+    // 身份自述（称呼/偏好/习惯）同样不走召回，一律保护。
+    if (IDENTITY_PATTERN.test(String(entry.content ?? ''))) {
+      protectedFlag = true
+      reasons.push('【保护】用户身份/偏好自述')
+    }
 
     const clamped = Math.max(0, Math.min(100, Math.round(score)))
     return {
@@ -315,7 +336,10 @@ export class MemoryCuratorService {
    */
   private planMerge(entries: NativeMemoryEntry[], cfg: ReturnType<typeof configOf>): CuratorMergeGroup[] {
     if (cfg.maxMerge <= 0) return []
-    const items = entries.map((entry) => ({ entry, g: grams(entry.content), len: String(entry.content ?? '').length }))
+    // 钉选条目一律不参与合并：supersede 遇到钉选会直接抛错，而且钉选本身就代表用户要它保持原样。
+    const items = entries
+      .filter((entry) => entry.pinned !== true)
+      .map((entry) => ({ entry, g: grams(entry.content), len: String(entry.content ?? '').length }))
     const index = new Map<string, number[]>()
     items.forEach((item, i) => {
       for (const g of item.g) {
@@ -433,21 +457,21 @@ export class MemoryCuratorService {
               const text = String(loser.content ?? '').trim()
               if (text !== '' && !keeper.content.includes(text)) extras.push(text)
             }
-            for (const id of group.loserIds) {
-              this.native.supersede([id], {
-                content: keeper.content,
-                category: keeper.category,
-                tags: keeper.tags,
-                importance: keeper.importance,
-                scope: keeper.scope,
-                source: 'curator-merge',
-                ...(keeper.memoryKey === undefined ? {} : { memoryKey: keeper.memoryKey }),
-              }, '记忆管家合并同类：并入 ' + group.keeperId, 'dream')
-            }
-            if (extras.length > 0) {
-              // 补充事实追加到保留者（不删原文，只加"另有"段落）
-              this.native.update(group.keeperId, { content: keeper.content + '\n\n（合并自同类记忆）\n' + extras.join('\n') })
-            }
+            const mergedContent = extras.length === 0
+              ? keeper.content
+              : keeper.content + '\n\n（合并自同类记忆）\n' + extras.join('\n')
+            // supersede 的语义是「一次调用建一条新条目 + 把传入的全部旧 id 标记为被取代」。
+            // 所以必须把 keeper 也一起传进去，否则每合并一条就会多造一条 keeper 的副本
+            // （初版按 loser 逐条调用，生产实测活跃数只减了归档量、完全没减合并量，就是踩了这个）。
+            this.native.supersede([group.keeperId, ...group.loserIds], {
+              content: mergedContent,
+              category: keeper.category,
+              tags: keeper.tags,
+              importance: keeper.importance,
+              scope: keeper.scope,
+              source: 'curator-merge',
+              ...(keeper.memoryKey === undefined ? {} : { memoryKey: keeper.memoryKey }),
+            }, '记忆管家合并同类：原文并入 ' + group.keeperId, 'dream')
             summary.mergedGroups += 1
             summary.mergedEntries += group.loserIds.length
             this.audit('curator-merge', [group.keeperId, ...group.loserIds], '相似度 ' + group.similarity + ' 合并 ' + group.loserIds.length + ' 条')
@@ -466,7 +490,7 @@ export class MemoryCuratorService {
           // 计划是合并前算的：已被合并转为 superseded 的条目不该再归档一次（会污染审计口径）
           const live = this.native.get(item.id)
           if (live === undefined || live.state !== 'active') continue
-          this.native.archive(item.id, true)
+          this.native.archive(item.id, true, 'curator')
           summary.evicted += 1
           if (plan.overCapacity > 0) summary.capacityEvicted += 1
           this.audit('curator-evict', [item.id], '价值分 ' + item.score + ' 低于阈值 ' + cfg.evictThreshold + '：' + item.reasons.slice(-3).join('；'))

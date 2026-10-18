@@ -235,14 +235,14 @@ export function MemoryGovernance({ api }: { api: DevforgeApi }): JSX.Element {
 
         <section className={css['memoryPanel']}>
           <div className={css['panelHeading']}>
-            <div><h3 className={css['sectionTitle']}>归档与恢复</h3><p className={css['sectionHint']}>被取代、隔离或人工归档的记忆在这里可追溯，人工归档可直接恢复。</p></div>
+            <div><h3 className={css['sectionTitle']}>归档与恢复</h3><p className={css['sectionHint']}>被取代、隔离或归档的记忆在这里可追溯（标签区分人工/管家/做梦），归档的可直接恢复。</p></div>
             <span className={css['badge']}>{archived.length} 条</span>
           </div>
           {archived.length === 0
             ? <div className={css['govEmpty']}><span>暂无归档记忆：取代与隔离都会先落到这里，不会直接删除。</span></div>
             : <><div className={css['govArchiveList']}>{shownArchived.map((entry) => <div key={entry.id} className={css['govArchive']}>
               <span className={css['govArchiveText']} title={entry.content}>{entry.content}</span>
-              <span className={css['categoryBadge']}>{entry.state === 'archived' ? '人工归档' : entry.state === 'quarantined' ? '已隔离' : '已取代'}</span>
+              <span className={css['categoryBadge']}>{entry.state === 'archived' ? (entry.archivedBy === 'curator' ? '管家归档' : entry.archivedBy === 'dream' ? '做梦归档' : '人工归档') : entry.state === 'quarantined' ? '已隔离' : '已取代'}</span>
               {entry.state === 'archived'
                 ? <button type="button" className={css['ghostButton']} disabled={busy} onClick={() => { void restore(entry.id) }}>恢复</button>
                 : <span className={css['nativeTime']}>需先处理冲突</span>}

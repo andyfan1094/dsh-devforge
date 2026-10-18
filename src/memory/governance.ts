@@ -45,6 +45,21 @@ const MAX_AUDIT = 2_000
  * 一次收紧到上限，生产在几十次治理写入内就能回到 2000 条；此后每次只删超出的一小截，开销恒定。
  */
 const AUDIT_TRIM_EVERY = 20
+/**
+ * 已解决候选的墓碑化（0.53.0）。
+ *
+ * 生产实况（2026-10-18 排查）：memory.candidate 曾达 6065 条 / 17.40 MB，其中 6057 条状态为
+ * auto-activated——候选被采纳成正式记忆后，整份副本（正文 + 证据 + 作用域，单条约 2.8 KB）永久
+ * 留在库里，没有任何裁剪路径。它比记忆正文（memory.entry 2.21 MB）大 8 倍，是 store.db 膨胀的
+ * 最大单一来源。审计域的无界增长在 0.43.0 已修，候选域同样的问题漏掉了。
+ *
+ * 处理方式不是删除而是墓碑化：保留 id / state / resolvedAt / resultEntryId / duplicateIds 这五个
+ * 对账字段，丢掉 content / evidence / tags / scope / reason。既断掉体积膨胀，又保住
+ * 「这条候选后来对应哪条记忆」的可追溯性。
+ */
+const CANDIDATE_TOMBSTONE_DAYS = 3
+/** 候选裁剪节流：每 N 次候选写入才实扫一次（候选域可达数千条，不能每次 propose 都全表排序）。 */
+const CANDIDATE_PRUNE_EVERY = 20
 
 export interface MemoryCandidateInput {
   content: string
@@ -60,6 +75,14 @@ export interface MemoryCandidateInput {
   sourceId?: string
   sessionId?: string
   turn?: number
+  /**
+   * 去重/冲突比对时排除的条目 id（通常是被更新的那条自己）。
+   *
+   * 修 0.53.0 缺陷：memory_manage update 把内容改写成与现有条目相近的表述时，propose() 的
+   * 包含式比对会把**被更新的那条自身**认成重复，于是更新被拒并报“更新后内容与现有记忆重复，
+   * 未落盘（已有 id=自己）”。语义上自己不该算自己的重复。
+   */
+  excludeEntryIds?: string[]
 }
 
 export interface MemoryReviewInput {
@@ -170,8 +193,9 @@ export class MemoryGovernanceService {
     }
     const scope = validScope(input.scope)
     const category = CATEGORIES.has(input.category as NativeMemoryCategory) ? input.category as NativeMemoryCategory : 'general'
+    const excluded = new Set(input.excludeEntryIds ?? [])
     const active = this.native.listAll()
-    const sameScope = active.filter((entry) => entry.archived !== true && entry.scope.kind === scope.kind && entry.scope.id === scope.id)
+    const sameScope = active.filter((entry) => entry.archived !== true && !excluded.has(entry.id) && entry.scope.kind === scope.kind && entry.scope.id === scope.id)
     const contentKey = normalized(content)
     const duplicates = sameScope.filter((entry) => normalized(entry.content) === contentKey || normalized(entry.content).includes(contentKey) || contentKey.includes(normalized(entry.content))).map((entry) => entry.id)
     const memoryKey = clip(input.memoryKey, 300)
@@ -202,7 +226,65 @@ export class MemoryGovernanceService {
       this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, candidate.id, candidate)
       this.audit('propose', [candidate.id], candidate.state)
     })
+    // 候选只经 propose 增长，因此在这里节流裁剪与增长点天然配对（同 audit 域 0.43.0 的做法）。
+    this.pruneResolvedCandidatesThrottled()
     return candidate
+  }
+
+  /** 候选裁剪节流计数（进程内）。 */
+  private candidateWrites = 0
+
+  private pruneResolvedCandidatesThrottled(): void {
+    this.candidateWrites += 1
+    if (this.candidateWrites % CANDIDATE_PRUNE_EVERY !== 0) return
+    try { this.pruneResolvedCandidates() } catch { /* 裁剪失败不影响候选写入主链路，下次触发重试 */ }
+  }
+
+  /**
+   * 把超过保留期的已解决候选压缩成墓碑（0.53.0）。
+   *
+   * 只处理终态候选：approved / auto-activated / rejected / deduped。pending 与
+   * needs-resolution 是待人工处理的，体积再大也不能动——那是用户还要裁决的活数据。
+   *
+   * 返回本次墓碑化的条数，便于做梦维护与面板展示。
+   */
+  pruneResolvedCandidates(keepDays = CANDIDATE_TOMBSTONE_DAYS): number {
+    const now = Date.now()
+    const cutoff = now - Math.max(0, keepDays) * 86_400_000
+    const terminal = new Set<MemoryCandidate['state']>(['approved', 'auto-activated', 'rejected', 'deduped'])
+    const rows = this.rag.listDomainDocs(MEMORY_CANDIDATE_DOMAIN)
+    const victims: Array<{ id: string; tombstone: Record<string, unknown> }> = []
+    for (const row of rows) {
+      const data = row.data as Record<string, unknown> | null
+      if (data === null || typeof data !== 'object') continue
+      const state = String(data.state ?? '')
+      if (!terminal.has(state as MemoryCandidate['state'])) continue
+      // 已墓碑化的行没有 content 字段，跳过避免重复写入。
+      if (typeof data.content !== 'string') continue
+      const resolvedAt = typeof data.resolvedAt === 'number' ? data.resolvedAt : 0
+      const createdAt = typeof data.createdAt === 'number' ? data.createdAt : 0
+      if (Math.max(resolvedAt, createdAt) > cutoff) continue
+      victims.push({
+        id: row.id,
+        tombstone: {
+          id: row.id,
+          state,
+          ...(typeof data.resolvedAt === 'number' ? { resolvedAt: data.resolvedAt } : {}),
+          ...(typeof data.createdAt === 'number' ? { createdAt: data.createdAt } : {}),
+          ...(typeof data.resultEntryId === 'string' && data.resultEntryId !== '' ? { resultEntryId: data.resultEntryId } : {}),
+          ...(Array.isArray(data.duplicateIds) && data.duplicateIds.length > 0 ? { duplicateIds: data.duplicateIds.slice(0, 10) } : {}),
+          ...(typeof data.source === 'string' && data.source !== '' ? { source: data.source.slice(0, 120) } : {}),
+          tombstoned: true,
+          tombstonedAt: now,
+        },
+      })
+    }
+    if (victims.length === 0) return 0
+    this.rag.withDomainTransaction(() => {
+      for (const victim of victims) this.rag.putDomainDoc(MEMORY_CANDIDATE_DOMAIN, victim.id, victim.tombstone)
+      this.audit('candidate-tombstone', victims.map((item) => item.id), '已解决候选超过 ' + keepDays + ' 天，压缩为墓碑以阻止体积膨胀')
+    })
+    return victims.length
   }
 
   listCandidates(options?: { states?: MemoryCandidate['state'][]; limit?: number }): MemoryCandidate[] {
@@ -448,10 +530,24 @@ export class MemoryGovernanceService {
 
   quality(): MemoryQualityStats {
     const quality = this.native.qualityBase()
-    // 候选一次全量、内存分组计数：两个状态各扫一遍域是双倍 JSON 解析开销（0.34.2 性能修复）。
-    const candidateRows = this.listCandidates({ limit: 1000 })
-    quality.candidates = candidateRows.filter((item) => item.state === 'pending' || item.state === 'needs-resolution').length
-    quality.conflicts = this.native.listRelations().filter((item) => item.kind === 'conflicts-with').length + candidateRows.filter((item) => item.state === 'needs-resolution').length
+    // 0.53.0 修统计失真：原实现用 listCandidates({ limit: 1000 }) 计数，而 listCandidates 的 limit
+    // 被 Math.min(1000, …) 硬封顶——候选一旦超过 1000 条（生产曾达 6065 条），待审数就永远停在
+    // 1000 以内，面板显示的“待审候选”是假的。改为直接扫原始域行按状态计数，不受 limit 影响。
+    // 单次解析全部候选行的开销与原先的 listCandidates 相同（都是全量 flatMap），没有额外代价。
+    const rawRows = this.rag.listDomainDocs(MEMORY_CANDIDATE_DOMAIN)
+    let pendingOrResolution = 0
+    let needsResolution = 0
+    for (const row of rawRows) {
+      const data = row.data as Record<string, unknown> | null
+      if (data === null || typeof data !== 'object') continue
+      // 墓碑行没有 content，语义上已不是候选，不计入任何状态统计。
+      if (typeof data.content !== 'string') continue
+      const state = String(data.state ?? 'pending')
+      if (state === 'pending' || state === 'needs-resolution') pendingOrResolution += 1
+      if (state === 'needs-resolution') needsResolution += 1
+    }
+    quality.candidates = pendingOrResolution
+    quality.conflicts = this.native.listRelations().filter((item) => item.kind === 'conflicts-with').length + needsResolution
     const feedback = this.rag.listDomainDocs(MEMORY_FEEDBACK_DOMAIN).map((row) => row.data as Partial<MemoryRecallFeedback>)
     quality.helpful = feedback.filter((item) => item.verdict === 'useful').length
     quality.irrelevant = feedback.filter((item) => item.verdict === 'irrelevant').length
