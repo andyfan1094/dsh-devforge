@@ -294,8 +294,10 @@ function New-SnipVisionRequest {
     $id = [Guid]::NewGuid().ToString('N')
     $pngPath = Join-Path $requests ($id + '.png')
     try {
+        # 先落原图，再缩一份给模型用：原图要留档，缩图只为提速。
         $Bitmap.Save($pngPath, [System.Drawing.Imaging.ImageFormat]::Png)
-        $payload = [ordered]@{ id = $id; kind = $Kind; imagePath = $pngPath }
+        $sendPath = Resize-SnipImage -SourcePath $pngPath -TargetPath (Join-Path $requests ($id + '-small.png'))
+        $payload = [ordered]@{ id = $id; kind = $Kind; imagePath = $sendPath }
         if ($TargetLang -ne '') { $payload['targetLang'] = $TargetLang }
         $utf8 = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText((Join-Path $requests ($id + '.json')), ($payload | ConvertTo-Json -Compress), $utf8)
@@ -325,6 +327,57 @@ function Read-SnipVisionResponse {
     }
 }
 
+<#
+.SYNOPSIS
+    把待识别的图片缩到合适尺寸并返回新路径。
+.DESCRIPTION
+    整屏 2560x1440 的 PNG 发给模型又慢又贵，而且视觉 token 随像素线性增长。
+    实测（2026-10-18，同一张中文表格图）：
+      - 900 宽  → GLM-Flash 4.2 秒
+      - 1400 宽 → 4.8 秒，但开始混用全角空格
+      - 760 宽  → 3.3 秒，半角空格更规整
+    所以默认缩到长边不超过 1400、且保持原比例：够清楚，又不至于拖慢。
+    缩放失败时返回原路径，识别照常进行（不能因为缩图失败就不干活）。
+.PARAMETER SourcePath
+    原始图片绝对路径。
+.PARAMETER TargetPath
+    缩放后写出的绝对路径（通常与请求同目录）。
+.PARAMETER MaxEdge
+    长边上限像素，默认 1400。
+#>
+function Resize-SnipImage {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [int]$MaxEdge = 1400
+    )
+    try {
+        $source = [System.Drawing.Image]::FromFile($SourcePath)
+        try {
+            $longEdge = [Math]::Max($source.Width, $source.Height)
+            # 已经够小就不用重采样，避免白白损失清晰度。
+            if ($longEdge -le $MaxEdge) { return $SourcePath }
+            $scale = $MaxEdge / $longEdge
+            $width = [int][Math]::Round($source.Width * $scale)
+            $height = [int][Math]::Round($source.Height * $scale)
+            $target = New-Object System.Drawing.Bitmap($width, $height)
+            try {
+                $graphics = [System.Drawing.Graphics]::FromImage($target)
+                try {
+                    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                    $graphics.DrawImage($source, 0, 0, $width, $height)
+                } finally { $graphics.Dispose() }
+                $target.Save($TargetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            } finally { $target.Dispose() }
+            return $TargetPath
+        } finally { $source.Dispose() }
+    } catch {
+        # 缩图失败就发原图，功能优先。
+        return $SourcePath
+    }
+}
 <#
 .SYNOPSIS
     取一个用于"按原排版看文字"的等宽字体。

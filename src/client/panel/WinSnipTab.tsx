@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { WinSnipSettings, WinSnipStatus } from '../../win-snip/protocol.ts'
+import type { ModelCatalogProvider } from '../../model-catalog.ts'
 import css from './panel.module.css'
 
 
@@ -22,6 +23,7 @@ const TARGETS: ReadonlyArray<{ value: WinSnipSettings['translateTarget']; label:
 export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [status, setStatus] = useState<WinSnipStatus | null>(null)
   const [settings, setSettings] = useState<WinSnipSettings | null>(null)
+  const [models, setModels] = useState<ReadonlyArray<{ id: string; name: string; provider: string }>>([])
   const [hotkeyDraft, setHotkeyDraft] = useState('')
   const [saveDirDraft, setSaveDirDraft] = useState('')
   const [busy, setBusy] = useState('')
@@ -35,6 +37,17 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       const [nextStatus, nextSettings] = await Promise.all([api.getWinSnipStatus(), api.getWinSnipSettings()])
       setStatus(nextStatus)
       setSettings(nextSettings)
+      // 模型目录用于识别模型下拉：列出模型来源与名称，用户自己决定用快的还是聪明的。
+      try {
+        const catalog: ModelCatalogProvider[] = await api.getModelCatalog()
+        const flat: Array<{ id: string; name: string; provider: string }> = []
+        for (const provider of catalog) {
+          for (const model of provider.models ?? []) {
+            flat.push({ id: model.id, name: model.name ?? model.id, provider: provider.id })
+          }
+        }
+        setModels(flat)
+      } catch { setModels([]) }
       setHotkeyDraft(nextSettings.hotkey)
       setSaveDirDraft(nextSettings.saveDir)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
@@ -138,9 +151,29 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
         <span className={css['sectionHint']}>留空即用默认目录（图片\DSH截图）</span>
       </div>
 
-      {/* 识别与翻译不需要单独配置：直接走 DSH 当前使用的模型。 */}
+      {/* 识别模型：默认自动挑快且能看图的；实测模型之间差好几倍，所以允许手动改。 */}
       <div className={css['formRow']}>
-        <span className={css['sectionHint']}>识别与翻译直接使用 DSH 当前模型，无需单独配置 Key 或模型名。</span>
+        <label className={css['fieldLabel']}>
+          识别模型
+          <select
+            value={settings?.ocrModel ?? ''}
+            disabled={busy !== '' || settings === null}
+            onChange={(event) => { save({ ocrModel: event.target.value }) }}
+          >
+            <option value="">自动（优先快且能看图，约 4 秒）</option>
+            {models.map((model) => (
+              <option key={model.provider + '/' + model.id} value={model.id}>
+                {model.name}（{model.provider}）
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className={css['formRow']}>
+        <span className={css['sectionHint']}>
+          走插件里已配好的模型与凭据，不用单独填 Key。实测同一张图：GLM-Flash 4.2 秒、gpt-6.1-sol 4.5 秒、
+          Kimi-K3 10.9 秒、gpt-5.6-terra 34.7 秒；DeepSeek V4.1 Flash 看不了图（返回空）。
+        </span>
       </div>
 
       <div className={css['formRow']}>
@@ -193,7 +226,7 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
           停止后台
         </button>
         <span className={css['sectionHint']}>
-          热键、保存目录、开关的改动都会重启后台进程后才生效；识别通道与模型名在每次识别时读取。
+          热键、保存目录、开关的改动会重启后台进程后才生效；识别模型在每次识别时现读，改完立刻生效。
         </span>
       </div>
 

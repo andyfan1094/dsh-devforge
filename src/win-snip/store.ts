@@ -24,6 +24,7 @@ export const DEFAULT_WIN_SNIP_SETTINGS: WinSnipSettings = {
   saveDir: '',
   copyOnFinish: true,
   translateTarget: 'auto',
+  ocrModel: '',
 }
 
 
@@ -62,6 +63,8 @@ export function readWinSnipSettings(): WinSnipSettings {
     translateTarget: TARGETS.includes(stored.translateTarget as WinSnipTranslateTarget)
       ? stored.translateTarget as WinSnipTranslateTarget
       : DEFAULT_WIN_SNIP_SETTINGS.translateTarget,
+    // 模型 id 不做白名单校验：模型目录会变，存个字符串，用时找不到会明确报错。
+    ocrModel: typeof stored.ocrModel === 'string' ? stored.ocrModel.trim().slice(0, 120) : DEFAULT_WIN_SNIP_SETTINGS.ocrModel,
   }
 }
 
@@ -89,6 +92,7 @@ export function mergeWinSnipSettings(current: WinSnipSettings, patch: WinSnipSet
   if (typeof patch.saveDir === 'string') next.saveDir = patch.saveDir.trim().slice(0, 512)
   if (typeof patch.copyOnFinish === 'boolean') next.copyOnFinish = patch.copyOnFinish
 
+  if (typeof patch.ocrModel === 'string') next.ocrModel = patch.ocrModel.trim().slice(0, 120)
   if (typeof patch.translateTarget === 'string' && TARGETS.includes(patch.translateTarget as WinSnipTranslateTarget)) {
     next.translateTarget = patch.translateTarget as WinSnipTranslateTarget
   }

@@ -31,6 +31,13 @@ export interface WinSnipSettings {
 
   /** 翻译目标语言。 */
   translateTarget: WinSnipTranslateTarget
+  /**
+   * 识别/翻译用的模型 id；空字符串表示自动。
+   *
+   * 自动会挑"快且能看图"的模型（实测 GLM-Flash、gpt-6.1-sol 都在 4~5 秒，
+   * 重度推理模型要 10~35 秒，所以不该撞上哪个算哪个）。
+   */
+  ocrModel: string
 }
 
 /** 面板保存用的增量补丁：字段缺省表示保持原值。 */
@@ -89,6 +96,14 @@ export interface WinSnipVisionRequest {
 }
 
 /** 宿主回给原生助手的处理结果。 */
+export interface WinSnipVisionResponseExtras {
+  /** 实际使用的模型名：结果窗要标出来，辉哥问过"用的什么模型"。 */
+  model?: string
+  /** 模型耗时（毫秒）：同上，慢的时候要一眼看出慢在哪。 */
+  elapsedMs?: number
+}
+
+/** 宿主回给原生助手的处理结果。 */
 export interface WinSnipVisionResponse {
   /** 对应请求 id。 */
   id: string
@@ -96,6 +111,10 @@ export interface WinSnipVisionResponse {
   ok: boolean
   /** 识别出的原文（kind=ocr 时为结果，kind=translate 时同时给出）。 */
   text?: string
+  /** 实际使用的模型名，结果窗标注用。 */
+  model?: string
+  /** 模型耗时（毫秒），结果窗标注用。 */
+  elapsedMs?: number
   /** 译文（kind=translate 时给出）。 */
   translation?: string
   /** 失败原因（中文、已脱敏）。 */

@@ -24,7 +24,8 @@ function makeCtx(options: {
   }
   const llm = {
     listProviders: () => options.providers ?? [{ id: 'tiangong' }],
-    listModels: async (provider: string) => options.models?.[provider] ?? [],
+    // 默认给一个模型：新实现要遍历模型清单按"快且能看图"排序，空清单会直接报"没有可用模型"。
+    listModels: async (provider: string) => options.models?.[provider] ?? [{ id: 'm1' }],
     stream: (args: Record<string, unknown>) => {
       calls.stream.push(args)
       const chunks = options.chunks ?? [{ type: 'text-delta', text: '识别结果' }, { type: 'finish', reason: { kind: 'stop' } }]
@@ -122,7 +123,7 @@ test('模型什么都没返回时给出明确错误', async () => {
   const { ctx } = makeCtx({ selection: { provider: 'tiangong', model: 'm1' }, chunks: [{ type: 'finish', reason: { kind: 'stop' } }] })
   await assert.rejects(
     () => new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) }),
-    /没有返回任何内容/,
+    /没有返回内容/,
   )
 })
 

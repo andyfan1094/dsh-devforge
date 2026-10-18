@@ -258,19 +258,25 @@ export class WinSnipAssistant {
       // 直接走 DSH 的模型服务：把图片字节登记为附件后交给当前默认模型，
       // 用户不需要为识别/翻译单独配置任何 Key。
       const imageBytes = readFileSync(imagePath)
+      const settings = this.deps.settings()
       const result = await this.deps.vision.run({
         kind: request.kind,
         imageBytes,
         ...(request.targetLang !== undefined ? { targetLang: request.targetLang } : {}),
+        // 面板里指定的识别模型；留空则自动挑"快且能看图"的模型。
+        ...(settings.ocrModel !== '' ? { model: settings.ocrModel } : {}),
       })
       const response: WinSnipVisionResponse = {
         id,
         ok: true,
         ...(result.text !== '' ? { text: result.text } : {}),
         ...(result.translation !== undefined ? { translation: result.translation } : {}),
+        // 模型名与耗时一并回传：结果窗要标出来，慢的时候能一眼看到是谁、用了多久。
+        ...(result.model !== undefined ? { model: result.model } : {}),
+        ...(result.elapsedMs !== undefined ? { elapsedMs: result.elapsedMs } : {}),
       }
       writeFileSync(responsePath, JSON.stringify(response), 'utf8')
-      this.deps.log('[dsh-devforge] win-snip: 处理完成 %s（%s）', id, request.kind)
+      this.deps.log('[dsh-devforge] win-snip: 处理完成 %s（%s，模型=%s，耗时=%sms）', id, request.kind, result.model ?? '未知', result.elapsedMs ?? 0)
     } catch (error) {
       const response: WinSnipVisionResponse = { id, ok: false, error: describe(error) }
       writeFileSync(responsePath, JSON.stringify(response), 'utf8')
@@ -278,6 +284,8 @@ export class WinSnipAssistant {
     } finally {
       try { unlinkSync(requestPath) } catch { /* 已删除 */ }
       try { rmSync(join(paths.requests, id + '.png'), { force: true }) } catch { /* 已删除 */ }
+      // 缩图副本一并清掉，否则 requests 目录会慢慢堆积。
+      try { rmSync(join(paths.requests, id + '-small.png'), { force: true }) } catch { /* 已删除 */ }
     }
   }
 

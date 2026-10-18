@@ -1,4 +1,4 @@
-﻿# win-snip-overlay.ps1 —— 遮罩框选 + 就地标注编辑器
+# win-snip-overlay.ps1 —— 遮罩框选 + 就地标注编辑器
 #
 # 交互（参考 Snipaste / 飞书截图 / kImageAnnotator 的做法）：
 #   按下热键 → 整屏遮罩（冻结截图） → 拖框选 → 松手进入编辑
@@ -861,7 +861,11 @@ function Show-SnipOverlay {
                 $s.BusyText = $null
                 $s.Form.Invalidate()
                 if ($result.ok) {
-                    Show-SnipResult -Title $pending.Title -Text ([string]$result.text) -Translation ([string]$result.translation)
+                    # 把模型名与耗时传给结果窗：页脚要标出来，慢的时候一眼看到是谁。
+                    $modelName = if ($null -ne $result.model) { [string]$result.model } else { '' }
+                    $elapsed = 0
+                    if ($null -ne $result.elapsedMs) { [void][int]::TryParse([string]$result.elapsedMs, [ref]$elapsed) }
+                    Show-SnipResult -Title $pending.Title -Text ([string]$result.text) -Translation ([string]$result.translation) -Model $modelName -ElapsedMs $elapsed
                 } else {
                     [System.Windows.Forms.MessageBox]::Show([string]$result.error, '截图小工具') | Out-Null
                 }
