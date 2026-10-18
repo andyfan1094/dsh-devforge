@@ -264,6 +264,16 @@ function feedbackScore(entry: { helpfulCount: number; harmfulCount: number }): n
   return ((helpful - harmful) / (total + 2)) * 0.04
 }
 
+/**
+ * 做梦轮转快照的一页：本批待整理条目、下一轮游标、是否已绕回起点。
+ * 游标是不透明字符串（时间戳补零 + id），调用方只负责原样回传，不要解析。
+ */
+export interface NativeDreamSnapshotPage {
+  entries: NativeMemoryEntry[]
+  nextCursor: string
+  wrapped: boolean
+}
+
 /** 内置记忆 CRUD、版本元数据和可解释词法检索门面。 */
 export class NativeMemoryStore {
   private readonly rag: RagStore
@@ -509,6 +519,47 @@ export class NativeMemoryStore {
 
   dreamSnapshot(limit: number): NativeMemoryEntry[] {
     return this.all().filter((entry) => this.isRecallable(entry)).sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, Math.max(1, Math.floor(limit)))
+  }
+
+  /**
+   * 做梦选条（0.50.2：修「94% 记忆永久进不了整理视野」）。
+   *
+   * 旧实现 dreamSnapshot 按 updatedAt 倒序只取最新 N 条：2026-10-18 实测 5167 条活跃记忆里，
+   * 第 300 新的一条已经是当日凌晨，等于 4867 条老记忆永远轮不到整理——错误结论自然越积越多，
+   * 这正是「记忆库里全是过期结论」的结构性根因。新实现两层配额：
+   * - 轮转主体（约 3/4）：按 (updatedAt, id) 全序从游标之后继续扫，扫到底自动绕回，整库一轮内全覆盖；
+   * - 新条目插队（约 1/4）：固定留给最新更新的条目，刚写错的记忆不必等一整圈才被发现。
+   * 游标用字符串全序比较（时间戳补零 + id），同毫秒写入的条目靠 id 定序，既不会留覆盖盲区，也不会原地打转。
+   */
+  dreamSnapshotPage(limit: number, cursor = ''): NativeDreamSnapshotPage {
+    const total = Math.max(1, Math.floor(limit))
+    const newestQuota = total <= 2 ? 0 : Math.max(1, Math.floor(total / 4))
+    const rotateQuota = total - newestQuota
+    const active = this.all().filter((entry) => this.isRecallable(entry))
+    if (active.length === 0) return { entries: [], nextCursor: '', wrapped: false }
+    const keyOf = (entry: NativeMemoryEntry): string => String(entry.updatedAt).padStart(16, '0') + ':' + entry.id
+    const ordered = [...active].sort((a, b) => {
+      const left = keyOf(a)
+      const right = keyOf(b)
+      return left < right ? -1 : left > right ? 1 : 0
+    })
+    const rest = cursor === '' ? ordered : ordered.filter((entry) => keyOf(entry) > cursor)
+    let pool = rest
+    let wrapped = false
+    if (pool.length < rotateQuota) {
+      // 触底：从头补齐，本轮跨过结尾。nextCursor 取补齐后的最后一条，下一轮自然接在它后面。
+      wrapped = true
+      const need = Math.min(rotateQuota - pool.length, ordered.length - pool.length)
+      if (need > 0) pool = [...pool, ...ordered.slice(0, need)]
+    }
+    const rotated = pool.slice(0, rotateQuota)
+    const rotatedIds = new Set(rotated.map((entry) => entry.id))
+    const newest = [...active]
+      .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .filter((entry) => !rotatedIds.has(entry.id))
+      .slice(0, newestQuota)
+    const last = rotated[rotated.length - 1]
+    return { entries: [...newest, ...rotated], nextCursor: last === undefined ? '' : keyOf(last), wrapped }
   }
 
   activityFingerprint(): { count: number; maxUpdatedAt: number } {

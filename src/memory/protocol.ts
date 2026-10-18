@@ -87,6 +87,24 @@ export interface MemorySettings {
   sedimentProvider: string
   /** 沉淀模型名覆盖；空串 = 跟随全局默认路由。 */
   sedimentModel: string
+  /** 记忆管家总开关：按使用价值自动淘汰无用条目、合并同类（规则驱动，零 LLM 成本）。 */
+  curatorEnabled: boolean
+  /** 管家自动执行：库容超限时自动淘汰超出部分（超多少淘多少）；关闭则只出预演计划。 */
+  curatorAutoApply: boolean
+  /** 库容上限（活跃条目数）；0 = 不限制。超限时管家自动止损。 */
+  curatorMaxEntries: number
+  /** 淘汰价值分阈值（0-100）：低于此分的未受保护条目进入淘汰候选。 */
+  curatorEvictThreshold: number
+  /** 保护期（天）：最近 N 天内被召回过的条目永不淘汰。 */
+  curatorProtectDays: number
+  /** 合并相似度阈值（0.3-1）：同分类内超过此值视为同类，合并为一条。 */
+  curatorMergeSimilarity: number
+  /** 单次手动大扫除最多淘汰条数（防止一次失手清空）。 */
+  curatorMaxEvict: number
+  /** 单次最多合并组数。 */
+  curatorMaxMerge: number
+  /** 管家自动巡检间隔（小时）；仅库容超限时才会真正动手。 */
+  curatorIntervalHours: number
 }
 
 /** 记忆层状态（面板顶栏）。 */

@@ -382,9 +382,66 @@ export class MemoryGovernanceService {
       if (input.verdict === 'useful') this.native.markFeedback(input.entryId, true)
       if (input.verdict === 'incorrect' || input.verdict === 'outdated') {
         this.native.markFeedback(input.entryId, false)
+        // 与 submitDirectFeedback 同口径：被证伪/过时的说法必须落负层，否则召回时没有警示。
+        try {
+          const entry = this.native.get(input.entryId)
+          if (entry !== undefined) {
+            this.negatives.record({
+              id: 'neg-' + input.entryId,
+              content: entry.content,
+              reason: (input.verdict === 'outdated' ? '已过时：' : '已被证伪：') + (clip(input.note, 200) || '召回反馈标记'),
+              kind: input.verdict === 'outdated' ? 'superseded' : 'falsified',
+              scope: entry.scope,
+              actor: 'user',
+              sourceId: input.entryId,
+            })
+          }
+        } catch { /* 负层写入失败不阻塞反馈落账。 */ }
         try { this.native.quarantine(input.entryId) } catch { /* 钉选或已失效条目只记录反馈，等待人工处理。 */ }
       }
       this.audit('feedback:' + input.verdict, [input.recallId, input.entryId], feedback.note ?? '')
+      return feedback
+    })
+  }
+
+  /**
+   * 直接按记忆 id 提交反馈（0.50.2 新增）。
+   *
+   * 原 submitFeedback 要求调用方提供 recallId，并校验该 entry 确实出现在那条召回轨迹里——
+   * 但这个 id 是内部轨迹标识，模型在会话里根本拿不到，所以 6044 条记忆的
+   * helpfulCount/harmfulCount 长期全是 0，反馈回路等于从未接通（2026-10-18 实测）。
+   * 这里允许只给 entryId：优先挂到最近一条包含它的召回轨迹上，没有轨迹也能落账。
+   */
+  submitDirectFeedback(input: { entryId: string; verdict: MemoryRecallFeedback['verdict']; note?: string }): MemoryRecallFeedback {
+    const entry = this.native.get(input.entryId)
+    if (entry === undefined) throw new Error('记忆不存在：' + input.entryId)
+    const recall = this.listRecalls(500).find((item) => item.hits.some((hit) => hit.entryId === input.entryId && hit.included))
+    const recallId = recall?.id ?? 'direct'
+    const id = createHash('sha256').update(recallId + '\u0000' + input.entryId + '\u0000' + input.verdict).digest('hex').slice(0, 40)
+    const existing = this.rag.listDomainDocs(MEMORY_FEEDBACK_DOMAIN).find((row) => row.id === id)
+    if (existing !== undefined) return existing.data as MemoryRecallFeedback
+    const feedback: MemoryRecallFeedback = { id, recallId, entryId: input.entryId, verdict: input.verdict, ...(clip(input.note, 500) === '' ? {} : { note: clip(input.note, 500) }), createdAt: Date.now() }
+    return this.rag.withDomainTransaction(() => {
+      this.rag.putDomainDoc(MEMORY_FEEDBACK_DOMAIN, id, feedback)
+      if (input.verdict === 'useful') this.native.markFeedback(input.entryId, true)
+      if (input.verdict === 'incorrect' || input.verdict === 'outdated') {
+        this.native.markFeedback(input.entryId, false)
+        // 负记忆落层（0.50.2）：光隔离/降权不够——被证伪的说法必须进 memory.rejected，
+        // 否则同一条错误结论换个措辞又会从沉淀里长回来，召回时也没有警示。
+        try {
+          this.negatives.record({
+            id: 'neg-' + input.entryId,
+            content: entry.content,
+            reason: (input.verdict === 'outdated' ? '已过时：' : '已被证伪：') + (clip(input.note, 200) || '召回反馈标记'),
+            kind: input.verdict === 'outdated' ? 'superseded' : 'falsified',
+            scope: entry.scope,
+            actor: 'agent',
+            sourceId: input.entryId,
+          })
+        } catch { /* 负层写入失败不阻塞反馈落账：隔离已生效，召回仍会跳过。 */ }
+        try { this.native.quarantine(input.entryId) } catch { /* 钉选或已失效条目只记录反馈，等待人工处理。 */ }
+      }
+      this.audit('feedback:' + input.verdict, [recallId, input.entryId], feedback.note ?? '')
       return feedback
     })
   }
@@ -425,6 +482,11 @@ export class MemoryGovernanceService {
 
   /** 审计裁剪节流计数（进程内；累计满 AUDIT_TRIM_EVERY 次写入触发一次实扫）。 */
   private auditWrites = 0
+
+  /** 对外审计入口（记忆管家等外部服务复用同一套审计域与裁剪口径）。 */
+  recordAudit(action: string, ids: string[], reason: string): void {
+    try { this.audit(action, ids, reason) } catch { /* 审计失败绝不影响业务主链路 */ }
+  }
 
   private audit(action: string, ids: string[], reason: string): void {
     const id = randomUUID()

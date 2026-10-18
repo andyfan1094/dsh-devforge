@@ -14,6 +14,7 @@ import { mnemonDataRoot, readHindsightConfig, resolveBankId, syncHindsightMirror
 import { collectHindsightItems, collectMnemeItems, collectMnemonItems } from './migrate.ts'
 import { buildMemoryGraph } from './graph.ts'
 import type { MemoryDreamService } from './dream.ts'
+import type { MemoryCuratorService } from './curator.ts'
 import type { MemoryGovernanceService } from './governance.ts'
 import type { MemorySedimentService } from './sediment.ts'
 import type { MemoryStatsStore } from './stats.ts'
@@ -73,6 +74,19 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   // 沉淀路由同样默认走官网 DeepSeek（0.26.6 起该路由可独立配置）。
   sedimentProvider: MEMORY_DEFAULT_ROUTE.provider,
   sedimentModel: MEMORY_DEFAULT_ROUTE.model,
+  // ---- 记忆管家（0.51.0）：规则驱动的价值评估与自动淘汰/合并 ----
+  // 生产实况驱动：每天新增 100~340 条、做梦每天只归档 30~60 条，入不敷出必然膨胀；
+  // 5194 条活跃里 3282 条（63%）从未被召回过。管家就是把这件可量化的事变成库容调节阀。
+  curatorEnabled: true,
+  // 自动默认只做「库容止损」（超多少淘多少），不做分数大扫除——避免半夜自己清库。
+  curatorAutoApply: true,
+  curatorMaxEntries: 8000,
+  curatorEvictThreshold: 30,
+  curatorProtectDays: 14,
+  curatorMergeSimilarity: 0.55,
+  curatorMaxEvict: 200,
+  curatorMaxMerge: 50,
+  curatorIntervalHours: 12,
 }
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
@@ -136,6 +150,16 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     dreamMaxChars: clampNumber(body.dreamMaxChars, 60, 2000, current.dreamMaxChars),
     sedimentProvider: cleanRoute(body.sedimentProvider, current.sedimentProvider),
     sedimentModel: cleanRoute(body.sedimentModel, current.sedimentModel),
+    // 管家配置（0.51.0）：阈值与天数都夹紧，脏输入不会把库清空。
+    curatorEnabled: typeof body.curatorEnabled === 'boolean' ? body.curatorEnabled : current.curatorEnabled,
+    curatorAutoApply: typeof body.curatorAutoApply === 'boolean' ? body.curatorAutoApply : current.curatorAutoApply,
+    curatorMaxEntries: clampNumber(body.curatorMaxEntries, 0, 200_000, current.curatorMaxEntries),
+    curatorEvictThreshold: clampNumber(body.curatorEvictThreshold, 0, 100, current.curatorEvictThreshold),
+    curatorProtectDays: clampNumber(body.curatorProtectDays, 0, 365, current.curatorProtectDays),
+    curatorMergeSimilarity: typeof body.curatorMergeSimilarity === 'number' && body.curatorMergeSimilarity >= 0.3 && body.curatorMergeSimilarity <= 1 ? body.curatorMergeSimilarity : current.curatorMergeSimilarity,
+    curatorMaxEvict: clampNumber(body.curatorMaxEvict, 0, 5000, current.curatorMaxEvict),
+    curatorMaxMerge: clampNumber(body.curatorMaxMerge, 0, 500, current.curatorMaxMerge),
+    curatorIntervalHours: clampNumber(body.curatorIntervalHours, 1, 168, current.curatorIntervalHours),
   }
 }
 
@@ -156,6 +180,8 @@ export interface MemoryRouteDeps {
   governance: MemoryGovernanceService
   /** 做梦整理服务：状态查询与手动触发入口。 */
   dream: MemoryDreamService
+  /** 记忆管家：价值评估、自动淘汰、同类合并。 */
+  curator: MemoryCuratorService
 }
 
 /** 确保来源知识库存在（按名称查，缺则建）。 */
@@ -166,7 +192,7 @@ function ensureKb(rag: RagService, name: string, source: 'project' | 'mirror', d
 }
 
 export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
-  const { rag, sediment, native, injection, stats, getProfile, putProfile, dream, governance } = deps
+  const { rag, sediment, native, injection, stats, getProfile, putProfile, dream, governance, curator } = deps
   return [
     {
       kind: 'exact', path: '/api/dsh-devforge/memory/quality',
@@ -231,8 +257,13 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
         try {
           const body = await readJsonBody(req)
           const verdicts = new Set(['useful', 'irrelevant', 'incorrect', 'outdated'])
-          if (body === null || typeof body.recallId !== 'string' || typeof body.entryId !== 'string' || !verdicts.has(String(body.verdict))) { writeJson(res, 400, { ok: false, error: 'recallId、entryId 与 verdict 无效' }); return }
-          writeJson(res, 200, { ok: true, feedback: governance.submitFeedback(body as never) })
+          if (body === null || typeof body.entryId !== 'string' || !verdicts.has(String(body.verdict))) { writeJson(res, 400, { ok: false, error: 'entryId 与 verdict 无效' }); return }
+          // 0.50.2：recallId 从必填改为可选。它只是内部召回轨迹 id，模型侧拿不到，
+          // 要求必填会把反馈回路永远锁死在「只有面板能点」的状态（实测 6044 条计数全为 0）。
+          const feedback = typeof body.recallId === 'string' && body.recallId !== ''
+            ? governance.submitFeedback(body as never)
+            : governance.submitDirectFeedback({ entryId: body.entryId, verdict: body.verdict as never, ...(typeof body.note === 'string' ? { note: body.note } : {}) })
+          writeJson(res, 200, { ok: true, feedback })
         } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },
     },
@@ -378,6 +409,50 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
         if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
         try { const result = await dream.triggerNow(); writeJson(res, 200, { ok: result.started, ...result }) }
         catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      // 记忆管家预演：只算不落库，返回淘汰候选（带原因）与合并候选组，供面板勾选。
+      kind: 'exact', path: '/api/dsh-devforge/memory/curator',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try { writeJson(res, 200, { ok: true, plan: curator.plan() }) }
+        catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      // 执行管家：body 里 dryRun 缺省 true（安全默认）；传 false 才真正归档/合并。
+      // evict/merge 数组存在时只处理指定 id（面板勾选式执行）。
+      kind: 'exact', path: '/api/dsh-devforge/memory/curator/run',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const ids = (value: unknown): string[] | undefined =>
+            Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').slice(0, 5000) : undefined
+          const result = curator.execute({
+            dryRun: body?.dryRun !== false,
+            ...(ids(body?.evict) === undefined && ids(body?.merge) === undefined ? {} : { only: { ...(ids(body?.evict) === undefined ? {} : { evict: ids(body?.evict)! }), ...(ids(body?.merge) === undefined ? {} : { merge: ids(body?.merge)! }) } }),
+            capacityOnly: body?.capacityOnly === true,
+          })
+          writeJson(res, 200, { ok: true, summary: result.summary, plan: result.summary.dryRun ? result.plan : undefined })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
+      },
+    },
+    {
+      // 误淘汰救援：把归档条目恢复为活跃。
+      kind: 'exact', path: '/api/dsh-devforge/memory/curator/restore',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        try {
+          const body = await readJsonBody(req)
+          const list = Array.isArray(body?.ids) ? body.ids.filter((item): item is string => typeof item === 'string').slice(0, 5000) : []
+          if (list.length === 0) { writeJson(res, 400, { ok: false, error: 'ids 不能为空' }); return }
+          writeJson(res, 200, { ok: true, restored: curator.restore(list) })
+        } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },
     },
     {

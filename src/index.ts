@@ -46,6 +46,7 @@ import { RagStore } from './rag/rag-store.ts'
 import { RagEmbeddingError, ZhipuEmbedder } from './rag/embedder.ts'
 import { ZhipuReranker } from './rag/rerank.ts'
 import { MemoryDreamService } from './memory/dream.ts'
+import { MemoryCuratorService } from './memory/curator.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
 import { generateReflectionWithTokenSteps } from './memory/reflect.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
@@ -968,6 +969,41 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   dream.start()
   ctx.effect(() => () => dream.dispose(), 'dsh-devforge: memory dream')
 
+  // ---- 记忆管家：规则驱动的价值评估 / 自动淘汰 / 同类合并（0.51.0）----
+  // 与做梦分工：做梦靠 LLM 做语义裁决（慢、贵、不可预演）；管家零 LLM、可预演、可解释、秒级跑全库。
+  // 自动路径只做「库容止损」（超多少淘多少），分数大扫除必须人工触发，避免半夜自己清库。
+  const curator = new MemoryCuratorService({
+    native: nativeMemory,
+    config: () => {
+      const settings = memorySettingsRead()
+      return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
+    },
+    log: (message) => ctx.logger.info(message),
+    // 审计复用治理服务（memory.audit 域，自带 2000 条裁剪上限）
+    audit: (action, ids, reason) => memoryGovernance.recordAudit(action, ids, reason),
+  })
+  let curatorTimer: ReturnType<typeof setInterval> | undefined
+  const curatorTick = (): void => {
+    try {
+      const settings = memorySettingsRead()
+      if (settings.curatorEnabled !== true) return
+      if (settings.curatorAutoApply !== true) return
+      const plan = curator.plan()
+      if (plan.overCapacity <= 0) return
+      const result = curator.execute({ dryRun: false, capacityOnly: true })
+      ctx.logger.info('[dsh-devforge] 记忆管家自动止损：库容 %d 超上限 %d，归档 %d 条', plan.liveCount, plan.maxEntries, result.summary.evicted)
+    } catch (error) {
+      ctx.logger.warn('[dsh-devforge] 记忆管家巡检失败：%s', error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (memorySettingsRead().curatorEnabled === true) {
+    const hours = Math.max(1, memorySettingsRead().curatorIntervalHours || 12)
+    curatorTimer = setInterval(curatorTick, hours * 3_600_000)
+    // 启动 5 分钟后先跑一次，不必等满一个周期
+    setTimeout(curatorTick, 5 * 60_000)
+  }
+  ctx.effect(() => () => { if (curatorTimer !== undefined) clearInterval(curatorTimer) }, 'dsh-devforge: memory curator')
+
   /** 旧版本面板引导用户填入的专用裁决路由（产品建议值，不是用户本意，故可安全迁移）。 */
   const LEGACY_ADVISED_PROVIDER = 'minimax-cn'
 
@@ -1149,7 +1185,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       },
     }),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream, curator }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
     // 数据管理（0.39.0）：库表透明浏览 + 密钥掩码/明文复制（reveal 走审计日志，值不入日志）。
