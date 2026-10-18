@@ -28,12 +28,17 @@ const DEFAULT_AGENT_PRESET = 'cordis'
 // 与 handleCommand 的分支一一对应，新增命令时两边同步改。
 const KNOWN_COMMANDS = new Set(['whoami', 'help', 'model', 'status', 'stop', 'new'])
 
-export function feishuSessionTitleOf(text) {
+export function feishuSessionTitleOf(text, botName = '') {
   const compact = String(text ?? '').replace(/^!+\s*/, '').replace(/\s+/g, ' ').trim()
+  // 多机器人同时在线时把机器人名嵌进标题，会话列表里才能一眼分辨来源；
+  // 只配一个机器人时保持原样（不制造多余噪音）。
+  const tag = String(botName ?? '').trim()
+  const bare = tag === '' ? '飞书会话' : '飞书 · ' + tag
   const greeting = compact.toLowerCase().replace(/[?？!！,.，。~～\s]/g, '')
-  if (/^(在|在吗|在不|你好|您好|hi|hello|测试|test)$/.test(greeting)) return '飞书会话'
+  if (/^(在|在吗|在不|你好|您好|hi|hello|测试|test)$/.test(greeting)) return bare
   const summary = Array.from(compact).slice(0, 24).join('')
-  return summary === '' ? '飞书会话' : '飞书 · ' + summary
+  if (summary === '') return bare
+  return tag === '' ? '飞书 · ' + summary : '飞书 · ' + tag + ' · ' + summary
 }
 
 export function normalizeConfig(config = {}) {
@@ -377,12 +382,14 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  const ensureSessionTitle = (conversation, text) => {
+  const ensureSessionTitle = (conversation, text, bot) => {
     const session = conversation?.agent?.session
     if (session === undefined) return
     try {
       const current = ctx.sessionTitle.get(session)
-      const title = feishuSessionTitleOf(text)
+      // 仅当同时在线多个机器人时把名字放进标题，单机器人维持原有简洁格式。
+      const botName = enabledBotEntries().length > 1 ? String(bot?.name ?? '') : ''
+      const title = feishuSessionTitleOf(text, botName)
       if (current === undefined || (current.title === '飞书会话' && title !== '飞书会话')) ctx.sessionTitle.rename(session, title)
     } catch (error) {
       warn('failed to title Feishu session ' + conversation.sessionId + ': ' + (error instanceof Error ? error.message : String(error)))
@@ -1027,7 +1034,7 @@ export function apply(ctx, config = {}) {
           })
         }
       }
-      ensureSessionTitle(conversation, hasImages && imageText === '' ? '图片' : imageText)
+      ensureSessionTitle(conversation, hasImages && imageText === '' ? '图片' : imageText, bot)
       // 通道提示只在开启新一轮的消息上注入；运行中插队（含「!」显式插话）发生在
       // 当前轮次内部，轮次首条消息已带提示，重复注入只会增加噪音。
       const hintText = (deliverAsSteer || isSteer) ? promptText : withFeishuChannelHint(promptText)

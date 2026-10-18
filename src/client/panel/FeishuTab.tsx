@@ -57,6 +57,53 @@ const BOT_ROLE_LABELS: Record<FeishuBotRole, string> = {
   both: '聊天 + 通知',
 }
 
+/**
+ * 飞书自建应用必须手工开通的权限（代码无法代开，只能一键复制后去后台批量导入）。
+ * 缺任何一项的表现都很隐蔽，2026-10-18 实测踩过：
+ * - 少了 p2p_msg：应用能主动发消息、长连接显示已连接，但用户私聊消息永远收不到；
+ * - 少了 cardkit:card:write：卡片接口返回 Access denied，回复自动降级成纯文本。
+ */
+const REQUIRED_SCOPES: Array<{ group: string; hint: string; scopes: Array<{ code: string; label: string }> }> = [
+  {
+    group: '必需（单聊对话）',
+    hint: '缺任何一项都会导致收不到消息或收不到回复',
+    scopes: [
+      { code: 'im:message', label: '获取与发送单聊、群组消息' },
+      { code: 'im:message.p2p_msg:readonly', label: '读取用户发给机器人的单聊消息' },
+      { code: 'im:message:readonly', label: '获取单聊、群组消息' },
+      { code: 'im:message:send_as_bot', label: '以应用的身份发消息' },
+    ],
+  },
+  {
+    group: '卡片回复（流式卡片）',
+    hint: '缺这两项时回复会退回纯文本',
+    scopes: [
+      { code: 'cardkit:card:read', label: '获取卡片信息' },
+      { code: 'cardkit:card:write', label: '创建与更新卡片' },
+    ],
+  },
+  {
+    group: '群聊（要把机器人拉进群才需要）',
+    hint: '只做单聊可以不勾',
+    scopes: [
+      { code: 'im:message.group_at_msg:readonly', label: '获取群组中用户@机器人消息' },
+      { code: 'im:message.group_at_msg.include_bot:readonly', label: '获取群组中其他机器人和用户@当前机器人的消息' },
+    ],
+  },
+]
+
+/** 批量导入飞书后台所需的事件订阅（长连接方式）。 */
+const REQUIRED_EVENTS: Array<{ code: string; label: string }> = [
+  { code: 'im.message.receive_v1', label: '接收消息' },
+  { code: 'card.action.trigger', label: '卡片回传交互（停止按钮等卡片操作依赖它）' },
+]
+
+/** 拼出飞书「批量导入/导出权限」可直接粘贴的 JSON。 */
+function buildScopesJson(): string {
+  const tenant = REQUIRED_SCOPES.flatMap((group) => group.scopes.map((scope) => scope.code))
+  return JSON.stringify({ scopes: { tenant } }, null, 2)
+}
+
 /** 内嵌页属性。 */
 export interface FeishuTabProps {
   /** 天工造梦统一 API 客户端。 */
@@ -103,6 +150,42 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
   const [notice, setNotice] = useState('')
   // 机器人编辑态：仅存放未保存的输入值（Secret/名称等）；保存时整体提交 bots[]。
   const [botDrafts, setBotDrafts] = useState<Record<string, { name?: string; appId?: string; appSecret?: string; role?: FeishuBotRole }>>({})
+  // 权限清单复制结果反馈（复制成功的权限码会短暂显示在按钮旁）。
+  const [scopeCopyHint, setScopeCopyHint] = useState('')
+
+  /**
+   * 复制权限 JSON。navigator.clipboard 在非 HTTPS 上下文会缺失，退回隐藏 textarea 方案，
+   * 两者都失败时明确告知用户，绝不静默。
+   */
+  const copyScopes = async (): Promise<void> => {
+    const text = buildScopesJson()
+    const fallback = (): boolean => {
+      try {
+        const area = document.createElement('textarea')
+        area.value = text
+        area.style.position = 'fixed'
+        area.style.opacity = '0'
+        document.body.appendChild(area)
+        area.select()
+        const ok = document.execCommand('copy')
+        document.body.removeChild(area)
+        return ok
+      } catch {
+        return false
+      }
+    }
+    let copied = false
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined) {
+        await navigator.clipboard.writeText(text)
+        copied = true
+      }
+    } catch {
+      copied = fallback()
+    }
+    if (!copied) copied = fallback()
+    setScopeCopyHint(copied ? '已复制 ' + REQUIRED_SCOPES.flatMap((group) => group.scopes).length + ' 项权限 JSON，去飞书「批量导入」粘贴' : '复制失败：请手动选中下面的 JSON 复制')
+  }
 
   /** 当前 Provider 下可选模型。留空 Provider 表示跟随 DSH 默认模型。 */
   const availableModels = useMemo(
@@ -344,6 +427,40 @@ export function FeishuTab({ api }: FeishuTabProps): JSX.Element {
             <span className={css['fieldLabel']}>开放平台地址</span>
             <input className={css['input']} value={config.domain} onChange={(event) => { setConfig({ ...config, domain: event.target.value }) }} />
           </label>
+        </section>
+
+        <section className={[css['githubSection'], css['feishuWide']].join(' ')}>
+          {cardTitle('plug', '应用权限', '飞书后台手工开通 · 一键复制清单')}
+          <div className={css['form']}>
+            <div className={css['resourceMeta']}>
+              权限只能在飞书开发者后台开通，代码无法代开。点「复制权限 JSON」后依次进入
+              权限管理 → 批量导入/导出权限 → 粘贴 → 下一步 → 确认开通。
+              注意粘贴前先全选清空编辑器：它是追加写入，直接粘贴会把 JSON 拼坏。
+            </div>
+            {REQUIRED_SCOPES.map((group) => (
+              <div key={group.group} className={css['field']}>
+                <span className={css['fieldLabel']}>{group.group}</span>
+                <div className={css['resourceMeta']}>{group.hint}</div>
+                {group.scopes.map((scope) => (
+                  <div key={scope.code} className={css['resourceMeta']}>
+                    <span className={css['monoText']}>{scope.code}</span> · {scope.label}
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className={css['field']}>
+              <span className={css['fieldLabel']}>事件与回调（订阅方式选「使用长连接接收事件」）</span>
+              {REQUIRED_EVENTS.map((event) => (
+                <div key={event.code} className={css['resourceMeta']}>
+                  <span className={css['monoText']}>{event.code}</span> · {event.label}
+                </div>
+              ))}
+            </div>
+            <div className={css['toolbar']}>
+              <button type="button" className={css['ghostButton']} onClick={() => { void copyScopes() }}>复制权限 JSON</button>
+              {scopeCopyHint !== '' && <span className={css['resourceMeta']}>{scopeCopyHint}</span>}
+            </div>
+          </div>
         </section>
 
         <section className={css['githubSection']}>
