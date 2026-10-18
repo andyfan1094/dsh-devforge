@@ -21,6 +21,18 @@ export type DreamGenerateFn = (input: { system: string; user: string; maxTokens?
 /** 做梦审计的 docs 域名（store.db，随 CNB 备份跨端）。 */
 export const MEMORY_DREAM_RUN_DOMAIN = 'memory.dreamrun'
 
+/**
+ * 做梦轮转游标域（0.50.2）：记录上一轮扫到哪儿，下一轮从游标之后继续。
+ * 没有它就只能每轮都从头挑，等于老条目永远轮不到（旧实现的 94% 盲区就是这么来的）。
+ */
+export const MEMORY_DREAM_CURSOR_DOMAIN = 'memory.dreamcursor'
+
+/** 游标单文档 id（该域只存一行）。 */
+const CURSOR_DOC_ID = 'cursor'
+
+/** 重试时 max_tokens 的封顶值：推理模型吃预算时靠放宽预算救回，但不能无限放大。 */
+const MAX_DREAM_TOKENS_CEILING = 32_768
+
 /** 审计保留条数上限：只留最近 20 次，防止域无限膨胀。 */
 const MAX_AUDIT_RUNS = 20
 
@@ -34,17 +46,30 @@ const MAX_SKIPPED_RECORDS = 20
 export function buildDreamSystemPrompt(): string {
   return [
     '你是记忆库整理员。下面给出内置长期记忆库的活跃条目快照（JSON 数组），请找出应当整理的条目并输出决策。',
-    '目标：合并语义重复/高度同主题的条目、归档已过期或一次性的临时状态条目、修订内容有错漏的条目。',
+    '目标（按优先级）：① 修订内容已过时或已被推翻的条目；② 合并语义重复/高度同主题的条目；③ 归档已失效的一次性临时状态条目。',
     '可用动作：',
-    '- merge：把 2 条及以上同分类（category 相同）的重复条目合并为 1 条。必须给出 content（合并后的完整内容，信息不丢失）、可选 keepId（保留哪条的 id，缺省用 ids 第一条）、可选 tags/importance。',
+    '- update：修订单条记忆的 content/category/tags/importance，必须产生真实变化。条目的结论已与当前事实不符（配置改过、端口/地址变了、方案已废弃、两条记忆互相矛盾）时，用 update 把它改成正确结论——这是首选动作，不要靠新增条目回避。',
+    '- merge：把 2 条及以上重复条目合并为 1 条。必须给出 content（合并后的完整内容，信息不丢失）、可选 keepId（保留哪条的 id，缺省用 ids 第一条）、可选 tags/importance。同分类可直接合并；确实需要跨分类合并时，必须同时给出 category 指明合并后归属，缺 category 的跨分类合并会被丢弃。',
     '- archive：归档过期、失效或一次性的条目（软删除，可恢复）。',
-    '- update：修订单条记忆的 content/category/tags/importance，必须产生真实变化。',
     '- keep：明确保留（通常不需要输出，未点名的条目一律视为 keep）。',
-    '红线：不要输出任何未列出的 id；不要合并不同分类的条目；宁可少动也不误删——拿不准的一律 keep。',
+    '红线：不要输出任何未列出的 id；不要编造快照之外的事实；宁可少动也不误删——拿不准的一律 keep。',
+    '判据：同一主题给出不同结论的两条记忆，保留与快照中更晚、更具体事实一致的那条，另一条按情况 update 或 archive。',
     'ids 必须逐字复制快照里的完整 id（不得缩写或截断）；只整理确实需要动作的条目，输出可以是空数组。',
     '单轮最多输出 12 条决策，挑最明显的先做，其余留给下一轮（真实踩坑：129 条快照放开写会撑爆 max_tokens 把 JSON 截断）。',
     '只输出 JSON 数组，不输出解释。数组元素形如：',
+    '[{"action":"update","ids":["id1"],"content":"修订后的正确结论","reason":"端口已从 51739 变为 50354"}]',
     '[{"action":"merge","ids":["id1","id2"],"keepId":"id1","content":"合并后的内容","importance":4,"reason":"同一主题重复 3 条"}]',
+  ].join('\n')
+}
+
+/**
+ * 重试用的极简系统提示（0.50.2）：首轮「空输出」多半是推理模型把 max_tokens 全吃在思考上，
+ * 此时重复一遍长提示只会再失败一次。第二轮压短输入、放宽预算，只要 JSON 就行。
+ */
+export function buildDreamSystemPromptStrict(): string {
+  return [
+    '你是记忆库整理员。只输出一个 JSON 数组，不要输出任何解释、思考过程或代码块围栏。',
+    '数组元素形如 {"action":"update","ids":["id1"],"content":"修订后的正确结论"}；没有需要整理的条目就输出 []。',
   ].join('\n')
 }
 
@@ -185,7 +210,12 @@ export function applyDreamDecisions(store: NativeMemoryStore, decisions: readonl
         }
         if (invalid !== '') { skip(ids, invalid); continue }
         const categories = new Set(targets.map((entry) => entry.category))
-        if (categories.size > 1) { skip(ids, 'merge 不能跨分类（' + [...categories].join(', ') + '）'); continue }
+        if (categories.size > 1 && decision.category === undefined) {
+          // 跨分类合并必须显式指明合并后的归属：否则分类语义会被悄悄污染，
+          // 只跳过不整批作废（0.50.2：模型常提议跨分类合并，此前这些提议全部被丢弃）。
+          skip(ids, 'merge 不能跨分类（' + [...categories].join(', ') + '），未指定合并后的 category')
+          continue
+        }
         const content = typeof decision.content === 'string' ? decision.content.trim() : ''
         if (content === '') { skip(ids, 'merge 需要非空 content'); continue }
         const keepId = typeof decision.keepId === 'string' && ids.includes(decision.keepId) ? decision.keepId : targets[0].id
@@ -341,7 +371,8 @@ export class MemoryDreamService {
     }
     this.running = true
     try {
-      const snapshot = this.native.dreamSnapshot(settings.dreamMaxEntries)
+      const page = this.native.dreamSnapshotPage(settings.dreamMaxEntries, this.readCursor())
+      const snapshot = page.entries
       run.snapshot = snapshot.length
       if (snapshot.length < MIN_SNAPSHOT) {
         run.status = 'skipped'
@@ -384,11 +415,15 @@ export class MemoryDreamService {
         // 解析失败自动重试一次：附更严格的「只输出 JSON 数组」硬约束。
         // （真实踩坑：glm-5.3-flash 曾输出整段口语说明没有数组，一次失败就干等 6 小时下一轮。）
         const firstMessage = firstError instanceof Error ? firstError.message : String(firstError)
+        // 0.50.2：首轮「空输出」基本都是推理把 max_tokens 吃光——第二轮压短提示并把预算翻倍；
+        // 重复一遍同样的长提示只会再失败一次（实测 20 次里 6 次 failed，全是空输出或 JSON 截断）。
+        const emptyOutput = firstMessage.includes('空输出')
+        const retryMaxTokens = Math.min(MAX_DREAM_TOKENS_CEILING, Math.max(settings.dreamMaxTokens, 4096) * 2)
         try {
           const retryRaw = await this.generate({
-            system: buildDreamSystemPrompt(),
+            system: emptyOutput ? buildDreamSystemPromptStrict() : buildDreamSystemPrompt(),
             user: buildDreamUserPrompt(snapshot, settings.dreamMaxChars) + '\n\n补充硬性要求：上一次输出无法解析（' + firstMessage.slice(0, 120) + '）。请严格只输出 JSON 数组本身：第一个字符必须是 [，最后一个字符必须是 ]，不要输出任何解释、思考过程或代码块围栏。',
-            maxTokens: settings.dreamMaxTokens,
+            maxTokens: retryMaxTokens,
             ...(route.provider !== '' ? { provider: route.provider } : {}),
             ...(route.model !== '' ? { model: route.model } : {}),
           })
@@ -411,6 +446,8 @@ export class MemoryDreamService {
       run.updated = applied.updated
       run.skipped = applied.skipped
       run.status = applied.skipped.length > 0 ? 'degraded' : 'ok'
+      // 只有真正跑完一轮整理才推进游标：解析失败不推进，否则这一批条目会被永久跳过。
+      this.writeCursor(page.nextCursor)
       return run
     } finally {
       run.finishedAt = Date.now()
@@ -434,6 +471,25 @@ export class MemoryDreamService {
 
   /** 运行完成回调（接线层注入统计存储；与核心逻辑解耦便于测试）。 */
   onRunFinished: ((run: MemoryDreamRun) => void) | undefined
+
+  /** 读取上一轮扫到的位置（域内单文档；缺失或损坏都退回空串＝从头开始）。 */
+  private readCursor(): string {
+    try {
+      const row = this.listDomain(MEMORY_DREAM_CURSOR_DOMAIN).find((item) => item.id === CURSOR_DOC_ID)
+      const value = row?.data as { cursor?: unknown } | undefined
+      return typeof value?.cursor === 'string' ? value.cursor : ''
+    } catch {
+      return ''
+    }
+  }
+
+  /** 保存本轮末尾位置：写失败只影响下一轮从哪开始，绝不让整理主流程失败。 */
+  private writeCursor(cursor: string): void {
+    if (cursor === '') return
+    try {
+      this.putDomain(MEMORY_DREAM_CURSOR_DOMAIN, CURSOR_DOC_ID, { cursor, updatedAt: Date.now() })
+    } catch { /* 游标是优化项：写失败只是下一轮重新从头扫，已应用的决策不受影响。 */ }
+  }
 
   /** 读取最近运行记录（新到旧，最多 20 条）。 */
   private recentRuns(): MemoryDreamRun[] {

@@ -166,7 +166,9 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
     name: 'memory_manage',
     description: '管理天工造梦内置长期记忆（memory.entry）：save 保存记忆并自动激活（有明确用户指令时为确认信任，否则按证据链分级）；search/list/get/update/delete 用于检索和维护。需要每轮固定记住时 pinned=true。',
     parameters: {
-      action: { type: 'string', enum: ['list', 'get', 'save', 'search', 'update', 'delete'], description: '操作类型，默认 list。' },
+      action: { type: 'string', enum: ['list', 'get', 'save', 'search', 'update', 'delete', 'feedback'], description: '操作类型，默认 list。feedback 用于标注某条记忆是否可用（接通风控反馈回路）。' },
+      verdict: { type: 'string', enum: ['useful', 'irrelevant', 'incorrect', 'outdated'], description: 'feedback 必填：useful 有用；irrelevant 不相关；incorrect 内容有错；outdated 已过时（incorrect/outdated 会隔离该条并把旧说法写入负记忆层）。' },
+      note: { type: 'string', description: 'feedback 可选：补充说明，用于审计与负记忆理由。' },
       id: { type: 'string', description: 'get/update/delete 使用的记忆 id。' },
       content: { type: 'string', description: 'save 必填；update 时为新内容。' },
       category: { type: 'string', enum: categories, description: '记忆分类。' },
@@ -188,6 +190,20 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
       const enforceScope = options?.scopeOfAgent !== undefined
       const visible = (entry: NativeMemoryEntry): boolean => !enforceScope || memoryScopeMatches(entry, scope, true)
       const scopeOptions = enforceScope ? { scope, isolateScope: true as const } : {}
+      /** 更新把旧结论换掉时，把旧说法写进负层，避免它换个措辞又被当成有效答案召回（0.50.2）。 */
+      const recordSupersededNegative = (old: NativeMemoryEntry, note?: string): void => {
+        try {
+          options?.governance?.negatives.record({
+            id: 'neg-' + old.id,
+            content: old.content,
+            reason: '已被新结论取代：' + (note === undefined ? '同一条记忆更新' : note).slice(0, 200),
+            kind: 'superseded',
+            scope: old.scope,
+            actor: 'agent',
+            sourceId: old.id,
+          })
+        } catch { /* 负层写入失败不影响更新结果。 */ }
+      }
       try {
         if (action === 'list') {
           const entries = store.list({ limit: args.limit, category: args.category, ...scopeOptions })
@@ -244,8 +260,26 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           const requestedContent = args.content ?? current.content
           const verified = verifyLatestUserRequest(exec, requestedContent, 'update')
           if (options?.governance !== undefined && !verified.explicit) {
+            // 缺 memoryKey 的条目（实测 1038/5167 条）无法靠取代链去重：给新条目编一个 memoryKey
+            // 也匹配不到旧条目，结果就是「更新 = 新增一条 + 旧条目原样留着」，越更新越重复。
+            // 这里对这一类直接就地改写它自己（0.50.2）。
+            if (current.memoryKey === undefined) {
+              const inPlace = Object.fromEntries(Object.entries({
+                content: args.content,
+                category: args.category,
+                tags: args.tags,
+                importance: args.importance,
+                source: 'agent-update-proposal',
+                ...(args.sourceId === undefined ? {} : { sourceId: args.sourceId }),
+                ...(verified.evidence === undefined ? {} : { evidence: [...current.evidence, verified.evidence] }),
+              }).filter(([, value]) => value !== undefined))
+              const written = store.update(args.id, inPlace)
+              if (args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
+              return { ok: true, action, committed: true, entry: written }
+            }
             // 全自动路径：更新类写入也直接激活，同 memoryKey 旧事实自动取代。
             const auto = options.governance.activateAuto({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] })
+            if (auto.entry !== undefined && args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
             return auto.entry !== undefined
               ? { ok: true, action, committed: auto.candidate.state !== 'deduped', ...(auto.candidate.state === 'deduped' ? { pendingReason: 'duplicate', message: '更新后内容与现有记忆重复，未落盘（已有 id=' + auto.entry.id + '）' } : {}), entry: auto.entry }
               : { ok: true, action, committed: false, pendingReason: 'pending', message: '更新未落盘，已进入待审核候选：' + auto.candidate.id, missing: resolutionMissing(auto.candidate) }
@@ -253,14 +287,43 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           const verifiedSourceId = verified.evidence === undefined ? args.sourceId : ['direct-user', verified.evidence.sessionId, verified.evidence.messageId, verified.evidence.digest].filter(Boolean).join(':')
           const governed = options?.governance === undefined ? {} : { source: 'user-confirmed', sourceId: verifiedSourceId, trust: 'confirmed' as const, confidence: 1, evidence: verified.evidence === undefined ? current.evidence : [...current.evidence, verified.evidence] }
           const patch = Object.fromEntries(Object.entries({ content: args.content, category: args.category, tags: args.tags, source: args.source, sourceId: args.sourceId, importance: args.importance, pinned: args.pinned, ...governed }).filter(([, value]) => value !== undefined))
-          return { ok: true, action, committed: true, entry: store.update(args.id, patch) }
+          const updated = store.update(args.id, patch)
+          if (args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
+          return { ok: true, action, committed: true, entry: updated }
+        }
+        if (action === 'feedback') {
+          if (!args.id) return { ok: false, action, committed: false, message: 'feedback 需要 id' }
+          if (args.verdict === undefined) return { ok: false, action, committed: false, message: 'feedback 需要 verdict（useful/irrelevant/incorrect/outdated）', missing: ['verdict：必填，写明这条记忆是否有用'] }
+          const target = store.get(args.id)
+          if (target === undefined || !visible(target)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
+          if (options?.governance === undefined) {
+            // 无治理层（单元测试/精简接线）时退化为直接累计计数，保证动作语义不丢。
+            store.markFeedback(args.id, args.verdict === 'useful')
+            return { ok: true, action, committed: true, entry: store.get(args.id), message: '已记录反馈：' + args.verdict }
+          }
+          const feedback = options.governance.submitDirectFeedback({ entryId: args.id, verdict: args.verdict, ...(args.note === undefined ? {} : { note: args.note }) })
+          const after = store.get(args.id) ?? target
+          return { ok: true, action, committed: true, entry: after, message: '已记录反馈：' + feedback.verdict + (args.verdict === 'incorrect' || args.verdict === 'outdated' ? '，该条已隔离并写入负记忆层' : '') }
         }
         if (action === 'delete') {
           if (!args.id) return { ok: false, action, committed: false, message: 'delete 需要 id' }
           const entry = store.get(args.id)
           if (entry === undefined || !visible(entry)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
           if (options?.governance !== undefined && !verifyLatestUserRequest(exec, entry.content, 'delete').explicit) return { ok: false, action, committed: false, message: '归档未通过 Host 用户确认校验，请明确说明要删除的记忆内容或在记忆工作台操作', missing: ['用户确认：请在消息里明确说明要删除的记忆内容（归档是不可逆状态变更，必须有用户原话证据）'] }
-          return { ok: true, action, committed: true, entry: store.archive(args.id, true), message: '已软归档内置长期记忆：' + args.id }
+          const archived = store.archive(args.id, true)
+          // 归档的说法必须进负层（0.50.2）：否则同一错误结论会以别的措辞从沉淀里长回来，召回也没有警示。
+          try {
+            options?.governance?.negatives.record({
+              id: 'neg-' + entry.id,
+              content: entry.content,
+              reason: '已归档：' + (args.note === undefined ? '用户/助手确认不再适用' : args.note).slice(0, 200),
+              kind: 'rejected',
+              scope: entry.scope,
+              actor: 'user',
+              sourceId: entry.id,
+            })
+          } catch { /* 负层写入失败不影响归档结果。 */ }
+          return { ok: true, action, committed: true, entry: archived, message: '已软归档内置长期记忆：' + args.id }
         }
         return { ok: false, action, committed: false, message: '不支持的 memory_manage action：' + action }
       } catch (error) {
