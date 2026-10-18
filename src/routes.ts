@@ -79,7 +79,7 @@ export function makeRoutes(
   restartManager: DshWebRestartManager,
   pluginBrief: () => { enabled: boolean; text: string; diag: { loaderResolved: boolean; entryCount: number; userCount: number; error: string } },
   pluginUpdate: {
-    check: () => Promise<{ enabled: boolean; items: UpdateCheckItem[] }>
+    check: () => Promise<{ enabled: boolean; items: UpdateCheckItem[]; target: import('./plugin-update.ts').ActiveProfile }>
     apply: (packageName: string) => Promise<PluginUpdateApplyResult>
     /** DSH 本体检查（官方 GitHub Tags，含预发布版本比较与升级命令引导）。 */
     harnessCheck: () => Promise<HarnessUpdateCheckItem>
@@ -128,7 +128,8 @@ export function makeRoutes(
         if (!guard(req, res)) return
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         const result = await pluginUpdate.check()
-        writeJson(res, 200, { ok: true, enabled: result.enabled, items: result.items })
+        // target：本次升级真正会写入的 profile（0.50.1 起面板要显示，避免「升到 web、桌面加载 desktop」）。
+        writeJson(res, 200, { ok: true, enabled: result.enabled, items: result.items, target: result.target })
       },
     },
     {

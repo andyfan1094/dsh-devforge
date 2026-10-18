@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
-import type { UpdateCheckItem } from '../../plugin-update.ts'
+import type { ActiveProfile, UpdateCheckItem } from '../../plugin-update.ts'
 import css from './panel.module.css'
 
 /** 状态徽标文案。 */
@@ -27,6 +27,8 @@ export interface UpdateCheckState {
   enabled: boolean
   /** 插件登记源检查结果。 */
   items: UpdateCheckItem[]
+  /** 本次升级将写入的 profile（0.50.1 起由宿主探测后下发，与 apply 实际写入同源）。 */
+  target?: ActiveProfile
   /** 插件检查通道错误。 */
   error: string
 }
@@ -70,7 +72,7 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
     }).catch(() => { setSession(null) })
   }, [api])
 
-  /** 一键升级：完成后刷新列表并提示重启生效。 */
+  /** 一键升级：完成后刷新列表并提示重启生效（回显真实写入的 profile）。 */
   const upgrade = (item: UpdateCheckItem): void => {
     if (busy) return
     void (async () => {
@@ -79,7 +81,9 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
         setApplyError('')
         setDone('')
         const result = await api.applyPluginUpdate(item.packageName)
-        setDone('已升级 ' + result.packageName + ' 到 v' + result.version + '：请点左下角「设置」旁的「重启」按钮生效。')
+        // 0.50.1：明确告诉用户包写进了哪个 profile，避免「升了但桌面还是旧版」再来一轮。
+        const fixes = result.notices.length > 0 ? '。升级前已修复：' + result.notices.join('；') : ''
+        setDone('已升级 ' + result.packageName + ' 到 v' + result.version + '，写入 profile「' + result.profile + '」' + fixes + '。请点左下角「设置」旁的「重启」按钮生效。')
         onRefresh()
       } catch (e) {
         setApplyError(e instanceof Error ? e.message : String(e))
@@ -144,6 +148,13 @@ export function PluginUpdateTab({ api, state, onRefresh }: { api: DevforgeApi; s
           {(item.latestDate !== undefined && item.latestDate !== '') && (
             <div className={css['puMetaRow']}>
               <span className={css['sectionHint']}>发布于 {item.latestDate} · 来源：官网下载中心</span>
+            </div>
+          )}
+
+          {/* 升级落点：目标 profile 与判定依据（0.50.1 起必须让用户看得见） */}
+          {state.target !== undefined && (
+            <div className={css['puMetaRow']}>
+              <span className={css['sectionHint']}>升级写入 profile：{state.target.name} · 判定依据：{state.target.note}</span>
             </div>
           )}
 

@@ -1,10 +1,11 @@
 /** 插件更新能力单测：官网登录（sid 解析）、semver 比较、官网清单解析、sha256、检查编排、白名单升级、官网账号设置校验与 site 路由。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  DEFAULT_PROFILE,
   PLUGIN_UPDATE_DEFAULT_SITE_API,
   PluginUpdateService,
   applySitePatch,
@@ -12,18 +13,27 @@ import {
   buildGatedDownloadUrl,
   checkOne,
   compareSemver,
+  decodeExitCode,
   decodeProcessOutput,
   downloadTgz,
   fetchDownloadTicket,
   loginSite,
+  normalizeAllowBuildsPlaceholders,
   normalizeSessionToken,
   parseSidFromSetCookie,
   parseSiteIndex,
+  prepareProfileForUpdate,
+  prunePluginCache,
+  repairDanglingTempDependencies,
+  resolveActiveProfile,
   resolveDesktopCliEntry,
+  resolveDshHome,
   resolveLatest,
+  resolvePluginCacheDir,
   sameOrigin,
   sha256Hex,
   siteApiRoot,
+  summarizePluginAddFailure,
   toSiteView,
   type LatestInfo,
   type PluginUpdateSiteConfig,
@@ -195,6 +205,22 @@ function siteLatest(version: string): LatestInfo {
   return { version, tgzUrl: 'https://modagentai.com/downloads/dsh-devforge-' + version + '.tgz', via: 'site', sha256: 'fedcba' }
 }
 
+/**
+ * 0.50.1 隔离桩：真实的 profile 探测/现场修复/旧包清理都会读写本机 `~/.dsh/profiles/<name>`，
+ * 单测里必须换成不落盘的假实现，否则跑测试会改动辉哥真实安装的 profile。
+ */
+const profileStub = {
+  resolveProfile: (configured: string) => ({
+    name: configured !== '' ? configured : 'web',
+    dir: join(tmpdir(), 'fake-profile'),
+    via: 'config' as const,
+    note: '测试固定',
+  }),
+  prepareProfile: async (): Promise<string[]> => [],
+  pruneCache: async (): Promise<string[]> => [],
+  resolveCacheDir: (): string => join(tmpdir(), 'fake-cache'),
+}
+
 test('checkOne：官网渠道可更新 / 已最新 / 本地更高（内测）', async () => {
   const available = await checkOne(siteSource, '0.13.0', async () => siteLatest('0.13.1'))
   assert.equal(available.status, 'update-available')
@@ -242,6 +268,8 @@ function service(overrides?: { latest?: LatestInfo; installed?: { version?: stri
       assert.ok(tgzPath.endsWith('.tgz'))
       return 'done'
     },
+    // 0.50.1：profile 探测与「升级前现场修复/旧包清理」全部注入假实现，绝不碰本机真实 profile。
+    ...profileStub,
   })
 }
 
@@ -293,6 +321,7 @@ test('PluginUpdateService.apply：面板登录态换票后走 /dl/ 带票下载�
       seenTicketArgs = apiUrl + '|' + sessionToken
       return 'ticket-9'
     },
+    ...profileStub,
   })
   const result = await svc.apply('dsh-devforge')
   assert.equal(result.ok, true)
@@ -376,17 +405,21 @@ test('downloadTgz：按传入地址下载且 headers 透传；401 明确报错',
     calls.push({ url: String(url), init })
     return new Response('tgz-bytes', { status: 200 })
   }) as typeof fetch
+  // 0.50.1：落点可注入；测试必须给临时目录，不能污染真实的 ~/.dsh/cache/plugins。
+  const cacheDir = mkdtempSync(join(tmpdir(), 'dsh-pu-cache-'))
   try {
     const gated = buildGatedDownloadUrl('https://modagentai.com/downloads/dsh-devforge-0.13.1.tgz', 'tk', PLUGIN_UPDATE_DEFAULT_SITE_API)
-    const target = await downloadTgz(gated, 'dsh-devforge', '0.13.1', { headers: { 'x-trace': '1' } })
+    const target = await downloadTgz(gated, 'dsh-devforge', '0.13.1', { headers: { 'x-trace': '1' }, targetDir: cacheDir })
     assert.equal(calls.length, 1)
     assert.equal(calls[0]?.url, 'https://modagentai.com/dl/dsh-devforge-0.13.1.tgz?token=tk')
     assert.deepEqual(calls[0]?.init?.headers, { 'x-trace': '1' })
-    assert.ok(target.endsWith('dsh-devforge-0.13.1.tgz'))
+    assert.equal(target, join(cacheDir, 'dsh-devforge-0.13.1.tgz'), '下载包必须落在注入的持久目录')
+    assert.equal(existsSync(target), true)
     globalThis.fetch = (async () => new Response('no', { status: 401 })) as typeof fetch
-    await assert.rejects(downloadTgz(gated, 'dsh-devforge', '0.13.1'), /HTTP 401/)
+    await assert.rejects(downloadTgz(gated, 'dsh-devforge', '0.13.1', { targetDir: cacheDir }), /HTTP 401/)
   } finally {
     globalThis.fetch = original
+    rmSync(cacheDir, { recursive: true, force: true })
   }
 })
 
@@ -395,12 +428,275 @@ test('downloadTgz：sha256 完整性校验（清单提供时强制）', async ()
   const content = 'tgz-bytes-for-hash'
   const good = sha256Hex(Buffer.from(content))
   globalThis.fetch = (async () => new Response(content, { status: 200 })) as typeof fetch
+  const cacheDir = mkdtempSync(join(tmpdir(), 'dsh-pu-cache-'))
   try {
-    await downloadTgz('https://modagentai.com/downloads/x.tgz', 'pkg', '1.0.0', { expectedSha256: good })
-    await assert.rejects(downloadTgz('https://modagentai.com/downloads/x.tgz', 'pkg', '1.0.0', { expectedSha256: '0'.repeat(64) }), /sha256 校验失败/)
+    await downloadTgz('https://modagentai.com/downloads/x.tgz', 'pkg', '1.0.0', { expectedSha256: good, targetDir: cacheDir })
+    await assert.rejects(downloadTgz('https://modagentai.com/downloads/x.tgz', 'pkg', '1.0.0', { expectedSha256: '0'.repeat(64), targetDir: cacheDir }), /sha256 校验失败/)
   } finally {
     globalThis.fetch = original
+    rmSync(cacheDir, { recursive: true, force: true })
   }
+})
+
+// ---------------------------------------------------------------------------
+// 0.50.1 修复回归：tgz 持久落点 / profile 自动探测 / 连续两次升级 / 错误透传
+// ---------------------------------------------------------------------------
+
+test('resolveDshHome / resolvePluginCacheDir：优先 DSH_HOME，绝不落到系统临时目录', () => {
+  assert.equal(resolveDshHome({ DSH_HOME: 'D:\\dsh-home' } as NodeJS.ProcessEnv), 'D:\\dsh-home')
+  const home = resolveDshHome({} as NodeJS.ProcessEnv)
+  assert.ok(home.endsWith('.dsh'), '缺省必须是 ~/.dsh')
+  const cache = resolvePluginCacheDir({ DSH_HOME: 'D:\\dsh-home' } as NodeJS.ProcessEnv)
+  assert.equal(cache, join('D:\\dsh-home', 'cache', 'plugins'))
+  assert.equal(cache.toLowerCase().includes(tmpdir().toLowerCase()), false, '缓存目录不得位于系统临时目录下')
+})
+
+test('resolveActiveProfile：显式配置 > 环境变量 > 命令行 > 依赖反查 > 兜底', () => {
+  const home = join(tmpdir(), 'dsh-home-fixed')
+  const profilesRoot = join(home, 'profiles')
+  // 1) 显式配置最高优先
+  const byConfig = resolveActiveProfile({ configured: 'desktop', env: { DSH_HOME: home, DSH_PROFILE: 'web' } as NodeJS.ProcessEnv, dshHome: home })
+  assert.equal(byConfig.name, 'desktop')
+  assert.equal(byConfig.via, 'config')
+
+  // 2) 环境变量（桌面/CLI 每次启动都会带）
+  const byEnv = resolveActiveProfile({ configured: '', env: { DSH_HOME: home, DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv, dshHome: home, argv: ['node', 'cli.js'] })
+  assert.equal(byEnv.name, 'desktop')
+  assert.equal(byEnv.via, 'env')
+  assert.equal(byEnv.dir, join(profilesRoot, 'desktop'))
+
+  // 2b) 只有 DSH_PROFILE_DIR 时也能认出来
+  const byDir = resolveActiveProfile({ configured: '', env: { DSH_PROFILE_DIR: join(profilesRoot, 'desktop') } as NodeJS.ProcessEnv, dshHome: home, argv: ['node'] })
+  assert.equal(byDir.name, 'desktop')
+
+  // 3) 命令行：桌面版实测 argv[2] 就是 profile 目录；也支持 --profile 形式
+  const byArgvDir = resolveActiveProfile({ configured: '', env: {} as NodeJS.ProcessEnv, dshHome: home, argv: ['electron.exe', 'resources\\app.asar\\dsh\\cli.js', join(profilesRoot, 'desktop')] })
+  assert.equal(byArgvDir.name, 'desktop')
+  assert.equal(byArgvDir.via, 'argv')
+  const byProfileFlag = resolveActiveProfile({ configured: '', env: {} as NodeJS.ProcessEnv, dshHome: home, argv: ['node', 'cli.js', '--profile', 'desktop'] })
+  assert.equal(byProfileFlag.name, 'desktop')
+  // 裸单词不算 profile（argv 里到处是 node、cli.js 这类词）
+  const notFooled = resolveActiveProfile({ configured: '', env: {} as NodeJS.ProcessEnv, dshHome: home, argv: ['node', 'cli.js'] })
+  assert.equal(notFooled.via, 'default')
+  assert.equal(notFooled.name, DEFAULT_PROFILE)
+
+  // 4) 依赖反查：profile 的 dependencies 指向当前运行的插件代码
+  const root = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  try {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'dsh-devforge' }))
+    mkdirSync(join(root, 'lib'), { recursive: true })
+    writeFileSync(join(root, 'lib', 'index.js'), '')
+    mkdirSync(join(root, 'profiles', 'desktop'), { recursive: true })
+    writeFileSync(join(root, 'profiles', 'desktop', 'package.json'), JSON.stringify({ dependencies: { 'dsh-devforge': 'link:' + root } }))
+    const byPackage = resolveActiveProfile({ configured: '', env: {} as NodeJS.ProcessEnv, dshHome: root, argv: ['node'], moduleUrl: 'file:///' + join(root, 'lib', 'index.js').replace(/\\/g, '/') })
+    assert.equal(byPackage.name, 'desktop')
+    assert.equal(byPackage.via, 'package')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('resolveActiveProfile：拒绝非法 profile 名（防路径穿越与 cmd 变量展开）', () => {
+  const home = join(tmpdir(), 'dsh-home-fixed')
+  const evil = resolveActiveProfile({ configured: '../evil&calc', env: {} as NodeJS.ProcessEnv, dshHome: home, argv: ['node'] })
+  assert.equal(evil.via, 'default', '非法名字必须被忽略并回到兜底')
+  assert.equal(evil.name, DEFAULT_PROFILE)
+})
+
+/**
+ * 模拟 pnpm add 的真实行为：安装前先校验已有的 `file:` 依赖是否还在。
+ * 这正是 0.49.3 事故的机制——旧 tgz 被系统清理后，后续每次 add 都先撞 ENOENT。
+ */
+function fakePnpmAdd(profileDir: string, tgzPath: string): string {
+  const pkgPath = join(profileDir, 'package.json')
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { dependencies?: Record<string, string> }
+  for (const spec of Object.values(pkg.dependencies ?? {})) {
+    if (!/^file:/i.test(spec)) continue
+    const target = spec.slice('file:'.length)
+    if (!existsSync(target)) {
+      throw new Error('dsh plugin add 失败：退出码 4294963238（即 -4058） · ENOENT 文件或目录不存在\n关键输出：\n  ENOENT: no such file or directory, open \'' + target + '\'')
+    }
+  }
+  pkg.dependencies = { ...(pkg.dependencies ?? {}), 'dsh-devforge': 'file:' + tgzPath }
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+  return 'added dsh-devforge'
+}
+
+test('连续两次升级：包落在持久缓存，清空 %TEMP% 后第二次升级仍然成功', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const profileDir = join(home, 'profiles', 'desktop')
+  const cacheDir = join(home, 'cache', 'plugins')
+  mkdirSync(profileDir, { recursive: true })
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'desktop-profile', dependencies: {} }, null, 2) + '\n')
+
+  let latestVersion = '0.50.0'
+  const svc = new PluginUpdateService({
+    // 生产默认值就是空串 = 自动探测；这里显式给 DSH_PROFILE 模拟桌面宿主环境。
+    getConfig: () => ({ enabled: true, profile: '', sources: [siteSource] }),
+    readInstalled: () => ({ version: '0.49.3' }),
+    resolveLatestFn: async () => siteLatest(latestVersion),
+    resolveProfile: (configured) => resolveActiveProfile({ configured, env: { DSH_HOME: home, DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv, dshHome: home }),
+    sessionToken: async () => 'sess-token-1',
+    fetchTicket: async () => 'ticket-1',
+    // 真实下载器按注入的 targetDir 落盘；这里复刻同样的落点规则。
+    download: async (_url, name, version, options) => {
+      const dir = options?.targetDir ?? ''
+      assert.equal(dir, cacheDir, 'apply 必须把持久缓存目录传给下载器')
+      mkdirSync(dir, { recursive: true })
+      const target = join(dir, name + '-' + version + '.tgz')
+      writeFileSync(target, 'bytes-' + version)
+      return target
+    },
+    runAdd: async (profile, tgzPath) => {
+      assert.equal(profile, 'desktop', '必须写进桌面实际加载的 profile，而不是固定 web')
+      return fakePnpmAdd(profileDir, tgzPath)
+    },
+    prepareProfile: (target, name, dir) => prepareProfileForUpdate(target, name, dir),
+    pruneCache: prunePluginCache,
+    resolveCacheDir: () => cacheDir,
+  })
+
+  const first = await svc.apply('dsh-devforge')
+  assert.equal(first.profile, 'desktop')
+  assert.equal(first.profileVia, 'env')
+  const firstDep = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8') as string).dependencies['dsh-devforge'] as string
+  assert.equal(firstDep, 'file:' + join(cacheDir, 'dsh-devforge-0.50.0.tgz'))
+  // 落点必须是「apply 指定的持久缓存目录」，而不是旧实现那种临时下载路径
+  // （默认落点不得在系统临时目录，这条策略由 resolvePluginCacheDir 用例单独覆盖）。
+  assert.equal(existsSync(join(cacheDir, 'dsh-devforge-0.50.0.tgz')), true)
+
+  // 模拟系统清理 %TEMP%：旧实现这里会把第一次的 tgz 删掉，导致第二次 add 必然 ENOENT。
+  // 清空的是一个独立临时目录；持久缓存里的包必须活下来。
+  const doomedTemp = mkdtempSync(join(tmpdir(), 'dsh-doomed-temp-'))
+  writeFileSync(join(doomedTemp, 'dsh-devforge-0.50.0.tgz'), 'stale')
+  rmSync(doomedTemp, { recursive: true, force: true })
+
+  latestVersion = '0.50.1'
+  const second = await svc.apply('dsh-devforge')
+  assert.equal(second.version, '0.50.1')
+  const secondDep = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8') as string).dependencies['dsh-devforge'] as string
+  assert.equal(secondDep, 'file:' + join(cacheDir, 'dsh-devforge-0.50.1.tgz'))
+  assert.equal(existsSync(join(cacheDir, 'dsh-devforge-0.50.1.tgz')), true)
+  // 旧版本包已无任何 profile 引用 → 清理掉，避免缓存无限膨胀。
+  assert.equal(existsSync(join(cacheDir, 'dsh-devforge-0.50.0.tgz')), false)
+
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('repairDanglingTempDependencies：清理指向已消失临时包的悬空依赖', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const profileDir = join(home, 'profiles', 'web')
+  const cacheDir = join(home, 'cache', 'plugins')
+  mkdirSync(profileDir, { recursive: true })
+  mkdirSync(cacheDir, { recursive: true })
+  const staleTemp = join(home, 'temp', 'dsh-devforge-0.49.3.tgz')
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+    dependencies: {
+      'dsh-devforge': 'file:' + staleTemp,
+      'other-plugin': 'file:' + join(home, 'temp', 'other-plugin-1.0.0.tgz'),
+    },
+  }, null, 2) + '\n')
+
+  const notices = await repairDanglingTempDependencies(profileDir, 'dsh-devforge', { cacheDir })
+  const deps = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8') as string).dependencies as Record<string, string>
+  assert.equal('dsh-devforge' in deps, false, '本次要升级的包：移除条目，随后 add 会写入新路径')
+  assert.equal('other-plugin' in deps, false, '缓存里没有该包且目标不存在：移除并如实提示')
+  assert.equal(notices.length, 2)
+  assert.ok(notices.some((line) => line.includes('已移除悬空依赖 dsh-devforge')))
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('repairDanglingTempDependencies：缓存里有同名包时改指持久路径；健康依赖不动', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const profileDir = join(home, 'profiles', 'web')
+  const cacheDir = join(home, 'cache', 'plugins')
+  mkdirSync(profileDir, { recursive: true })
+  mkdirSync(cacheDir, { recursive: true })
+  const healthy = join(home, 'src', 'local-plugin')
+  mkdirSync(healthy, { recursive: true })
+  const cached = join(cacheDir, 'other-plugin-1.2.0.tgz')
+  writeFileSync(cached, 'bytes')
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+    dependencies: {
+      'other-plugin': 'file:' + join(home, 'temp', 'other-plugin-1.0.0.tgz'),
+      'local-plugin': 'link:' + healthy,
+    },
+  }, null, 2) + '\n')
+
+  const notices = await repairDanglingTempDependencies(profileDir, 'dsh-devforge', { cacheDir })
+  const deps = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8') as string).dependencies as Record<string, string>
+  assert.equal(deps['other-plugin'], 'file:' + cached)
+  assert.equal(deps['local-plugin'], 'link:' + healthy, '指向存在的本地开发目录不得改动')
+  assert.ok(notices.some((line) => line.includes('已改指')))
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('normalizeAllowBuildsPlaceholders：把 pnpm 占位串改成布尔值，保留缩进与其余配置', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const profileDir = join(home, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  writeFileSync(join(profileDir, 'pnpm-workspace.yaml'), [
+    'allowBuilds:',
+    '    esbuild: set this to true or false',
+    '    sharp: true',
+    '',
+    'overrides:',
+    '  foo: link:../foo',
+    '',
+  ].join('\n'))
+  const changed = await normalizeAllowBuildsPlaceholders(profileDir)
+  assert.deepEqual(changed, ['esbuild'])
+  const text = readFileSync(join(profileDir, 'pnpm-workspace.yaml'), 'utf8')
+  assert.ok(text.includes('    esbuild: false'))
+  assert.ok(text.includes('    sharp: true'), '已是布尔值的行不得改动')
+  assert.ok(text.includes('  foo: link:../foo'))
+  // 幂等：再跑一次不应报告改动。
+  assert.deepEqual(await normalizeAllowBuildsPlaceholders(profileDir), [])
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('prunePluginCache：只删同包名旧版本，被任何 profile 引用的包一律保留', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const cacheDir = join(home, 'cache', 'plugins')
+  const profilesRoot = join(home, 'profiles')
+  mkdirSync(cacheDir, { recursive: true })
+  mkdirSync(join(profilesRoot, 'web'), { recursive: true })
+  const keep = join(cacheDir, 'dsh-devforge-0.50.1.tgz')
+  const stale = join(cacheDir, 'dsh-devforge-0.50.0.tgz')
+  const referenced = join(cacheDir, 'dsh-devforge-0.49.6.tgz')
+  const foreign = join(cacheDir, 'someone-else-1.0.0.tgz')
+  for (const file of [keep, stale, referenced, foreign]) writeFileSync(file, 'x')
+  // 老 profile 仍引用 0.49.6：删了就会重演悬空依赖事故。
+  writeFileSync(join(profilesRoot, 'web', 'package.json'), JSON.stringify({ dependencies: { 'dsh-devforge': 'file:' + referenced } }))
+
+  const removed = await prunePluginCache(keep, { cacheDir, profilesRoot, packageName: 'dsh-devforge' })
+  assert.deepEqual(removed, ['dsh-devforge-0.50.0.tgz'])
+  assert.equal(existsSync(keep), true)
+  assert.equal(existsSync(referenced), true, '仍被 profile 引用的包绝不能删')
+  assert.equal(existsSync(foreign), true, '其他包的缓存不受影响')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('decodeExitCode / summarizePluginAddFailure：还原无符号退出码并透出 pnpm 真实原因', () => {
+  const info = decodeExitCode(4294963238)
+  assert.equal(info.signed, -4058)
+  assert.ok(info.meaning.includes('ENOENT'))
+  assert.equal(decodeExitCode(1).signed, 1)
+  assert.equal(decodeExitCode(null).signed, null)
+
+  const text = summarizePluginAddFailure({
+    command: 'node cli.js plugin --profile desktop add C:\\x.tgz',
+    exitCode: 4294963238,
+    stdout: '',
+    stderr: ' ERR_PNPM_IGNORED_BUILDS  Ignored build scripts: esbuild\n ENOENT: no such file or directory, open C:\\Temp\\dsh-devforge-0.49.3.tgz',
+  })
+  assert.ok(text.includes('4294963238'), '保留原始退出码便于对照日志')
+  assert.ok(text.includes('-4058'), '还原成有符号退出码')
+  assert.ok(text.includes('ENOENT'), '透出 pnpm 真实原因')
+  assert.ok(text.includes('ERR_PNPM_IGNORED_BUILDS'))
+  assert.ok(text.includes('对策：'), '已知故障要给出可执行对策')
+  // 完全没有输出时也要给出可诊断指引，而不是空白。
+  assert.ok(summarizePluginAddFailure({ exitCode: 1 }).includes('手动执行'))
 })
 
 test('buildGatedDownloadUrl：清单的 /downloads/ 地址映射到 /dl/ 带票通道（本次 404 回归的修法）', () => {
@@ -483,6 +779,7 @@ test('PluginUpdateService.apply：无官网登录态 → 直接给个人中心�
     resolveLatestFn: async () => siteLatest('0.13.1'),
     download: async () => { downloadCalled += 1; return '/tmp/x.tgz' },
     runAdd: async () => 'done',
+    ...profileStub,
   })
   await assert.rejects(svc.apply('dsh-devforge'), /官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试/)
   assert.equal(downloadCalled, 0, '无登录态时直连必然 404，不应再发下载请求')
@@ -497,6 +794,7 @@ test('PluginUpdateService.apply：下载 401 → 个人中心登录引导（会�
     fetchTicket: async () => 'ticket-1',
     download: async () => { throw new Error('下载失败 HTTP 401') },
     runAdd: async () => 'done',
+    ...profileStub,
   })
   await assert.rejects(svc.apply('dsh-devforge'), /官网下载需要登录：请到 天工造梦 → 个人中心 登录官网账号后重试/)
 })
@@ -510,6 +808,7 @@ test('PluginUpdateService.apply：下载 403 → 同样给出登录引导', asyn
     fetchTicket: async () => 'ticket-1',
     download: async () => { throw new Error('下载失败 HTTP 403') },
     runAdd: async () => 'done',
+    ...profileStub,
   })
   await assert.rejects(svc.apply('dsh-devforge'), /个人中心/)
 })
@@ -526,6 +825,7 @@ test('PluginUpdateService.apply：无面板登录态时回退 site 账号登录�
     fetchTicket: async (_apiUrl, sessionToken) => { seenTokenArg = sessionToken; return 'ticket-2' },
     download: async (url) => { seenUrl = url; return '/tmp/x.tgz' },
     runAdd: async () => 'done',
+    ...profileStub,
   })
   const result = await svc.apply('dsh-devforge')
   assert.equal(result.ok, true)
@@ -542,6 +842,7 @@ test('PluginUpdateService.apply：登录失败错误原样抛出（不静默降�
     loginSite: async () => { throw new Error('官网账号或密码错误') },
     download: async () => { throw new Error('不应走到下载') },
     runAdd: async () => 'done',
+    ...profileStub,
   })
   await assert.rejects(svc.apply('dsh-devforge'), /官网账号或密码错误/)
 })

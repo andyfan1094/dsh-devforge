@@ -308,7 +308,7 @@ export const Config = z.object({
   }).description('远程访问网关：员工浏览器输密码即可访问本机 DSH Web（密码连错 5 次锁 1 分钟）'),
   pluginUpdate: z.object({
     enabled: z.boolean().default(true).description('插件更新检查与一键升级开关'),
-    profile: z.string().default('web').description('执行 dsh plugin add 的目标 profile 名'),
+    profile: z.string().default('').description('执行 dsh plugin add 的目标 profile 名；留空 = 自动识别当前运行实例真正加载的 profile（推荐）'),
     sources: z.array(z.object({
       packageName: z.string().description('npm 包名'),
       indexUrl: z.string().default('').description('官网版本清单地址（downloads/index.json，含 sha256），留空则走 GitHub 兜底'),
@@ -326,6 +326,7 @@ const DEVFORGE_GUIDANCE = [
   '- devforge_standards 工具：列出/读取内置开发规范（写代码前先查对应规范）。',
   '- devforge_jobs 工具：一键按规范创建服务生成子代理（action=create，需 templateId+targetDir）。',
   '- devforge_restart 工具：仅在用户明确要求时，安全重启本机 DSH Web Host。',
+  '- 插件一键升级（面板「插件更新」页）：目标 profile 自动识别当前运行实例真正加载的那一个（设置里 pluginUpdate.profile 留空即为自动，0.50.1 起不再固定写 web）；升级包下载到 ~/.dsh/cache/plugins 持久目录，失败时面板直接给出 pnpm 真实原因与对策。',
   '- 用户说"一键生成服务/按规范建服务"时即指本插件；生成任务进度见 Web 面板（devforge 侧边栏入口）。',
   '- zhipu_web_reader / zhipu_zread_read_file / zhipu_zread_repo_structure：智谱 GLM Coding Plan 官方 MCP 工具（网页读取/开源仓库解读；联网搜索类已按辉哥 2026-10-07 要求下架，联网检索一律用天工造梦联网搜索 modagentai_web_search），消耗套餐每月 MCP 额度；Coding Plan 页支持多把 Key（主 Key + 附加槽位），官方调用遇 Key 失效/限流/额度耗尽自动切换。',
   '- minimax_understand_image / minimax_image_generation / minimax_text_to_speech / minimax_video_generation：MiniMax Coding Plan 官方工具（图像理解/图像生成/语音合成/视频生成，图片支持本机路径与 http(s) URL；联网搜索类已按辉哥 2026-09-26 要求下架，搜索一律用天工造梦联网搜索），消耗 MiniMax 套餐额度。',
@@ -509,7 +510,8 @@ export function apply(ctx: Context, config?: Config): void {
       },
       pluginUpdate: {
         enabled: value.pluginUpdate?.enabled ?? true,
-        profile: value.pluginUpdate?.profile ?? 'web',
+        // 留空 = 自动探测（0.50.1 修「桌面加载 desktop，升级却写 web」）；填写则强制使用该值。
+        profile: value.pluginUpdate?.profile ?? '',
         sources: value.pluginUpdate?.sources?.length ? value.pluginUpdate.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
       },
       memory: { enabled: value.memory?.enabled ?? true },
@@ -665,7 +667,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       const value = resolve().pluginUpdate
       return {
         enabled: value?.enabled ?? true,
-        profile: value?.profile ?? 'web',
+        // 留空 = 自动探测（由 PluginUpdateService 统一解析，check 与 apply 同源）。
+        profile: value?.profile ?? '',
         sources: value?.sources?.length ? value.sources : PLUGIN_UPDATE_DEFAULT_SOURCES,
         site: pluginUpdateSiteRead(),
       }

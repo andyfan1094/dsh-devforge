@@ -25,7 +25,7 @@ import type { RagDocument } from '../rag/protocol.ts'
 import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectProbeResult, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
-import type { PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from '../plugin-update.ts'
+import type { ActiveProfile, PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from '../plugin-update.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -350,8 +350,8 @@ export class DevforgeApi {
     return data.result
   }
 
-  /** 插件更新：检查全部登记源（对比 GitHub Latest Release）。 */
-  async checkPluginUpdates(): Promise<{ enabled: boolean; items: UpdateCheckItem[] }> {
+  /** 插件更新：检查全部登记源（官网清单），并附带本次升级的目标 profile。 */
+  async checkPluginUpdates(): Promise<{ enabled: boolean; items: UpdateCheckItem[]; target?: ActiveProfile }> {
     return await readJson(await fetch(DEVFORGE_API.pluginUpdateCheck))
   }
 

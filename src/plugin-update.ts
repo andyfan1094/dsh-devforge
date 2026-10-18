@@ -21,10 +21,11 @@
 
 import { execFile, type ExecFileOptionsWithBufferEncoding } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { upstreamRequestHeaders, upstreamResponseText } from './upstream-fetch.ts'
 import { createPackageReader, type PackageReader } from './plugin-brief.ts'
 
@@ -257,6 +258,16 @@ export interface PluginUpdateApplyResult {
   output: string
   /** 恒为 true：升级后必须重启 Host 才生效。 */
   needRestart: boolean
+  /** 实际写入的 profile 名（0.50.1 起与运行实例一致，不再是固定 web）。 */
+  profile: string
+  /** 该 profile 的目录绝对路径。 */
+  profileDir: string
+  /** profile 解析依据（config/env/argv/package/default）。 */
+  profileVia: ActiveProfile['via']
+  /** 下载包落盘路径（持久缓存目录，绝不是系统临时目录）。 */
+  tgzPath: string
+  /** 升级前做的现场修复说明（悬空依赖、allowBuilds 占位等），无修复时为空数组。 */
+  notices: string[]
 }
 
 /** 严格 semver（x.y.z）校验。 */
@@ -443,13 +454,247 @@ export async function resolveLatest(source: UpdateSource): Promise<LatestInfo> {
   throw new Error('更新源未登记官网清单地址（GitHub 兜底渠道已移除）')
 }
 
+// ---------------------------------------------------------------------------
+// 本机落点：DSH 主目录、插件包持久缓存、当前实例真实 profile
+// ---------------------------------------------------------------------------
+
+/** 识别不到宿主 profile 时的历史默认值（0.50.1 起只在兜底分支使用）。 */
+export const DEFAULT_PROFILE = 'web'
+
+/**
+ * 解析本机 DSH 主目录（通常是 `~/.dsh`）。
+ *
+ * 优先 `DSH_HOME`（隔离 HOME 的暂存实例、自定义安装都会显式给出），否则 `os.homedir()/.dsh`。
+ * 不用 `process.cwd()`：宿主可以从任意目录启动，cwd 与真实安装位置无关。
+ */
+export function resolveDshHome(env: NodeJS.ProcessEnv = process.env): string {
+  const fromEnv = (env.DSH_HOME ?? '').trim()
+  if (fromEnv !== '') return fromEnv
+  return join(homedir(), '.dsh')
+}
+
+/**
+ * 插件包持久缓存目录（一键升级的 tgz 落点）。
+ *
+ * 0.50.1 修复（0.49.3 事故根因）：旧实现把下载包写进 `os.tmpdir()`，再把这个绝对路径交给
+ * `dsh plugin add`；pnpm 会把 `file:<临时目录>/dsh-devforge-<ver>.tgz` 原样固化进 profile 的
+ * package.json。`%TEMP%` 一旦被系统或清理工具扫掉，这条依赖就成了悬空引用，此后每次
+ * `pnpm add` 都要先物化这个不存在的旧包，直接 `ENOENT`(-4058) —— 表现为「第一次能装、
+ * 之后永远升不动」。tgz 必须落在不会被系统清理的持久目录，升级成功后再清理旧版本。
+ */
+export function resolvePluginCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(resolveDshHome(env), 'cache', 'plugins')
+}
+
+/** profile 名合法字符：同时挡住路径穿越与 cmd 变量展开字符。 */
+const PROFILE_NAME_RE = /^[A-Za-z0-9._-]+$/
+
+/** 从任意路径里认出 `.../profiles/<name>` 形态（桌面宿主 argv[2] 就是 profile 目录绝对路径）。 */
+const PROFILE_DIR_ARG_RE = /[\\/]profiles[\\/]([A-Za-z0-9._-]+)[\\/]?$/
+
+/** 当前实例真实 profile 的解析结果。 */
+export interface ActiveProfile {
+  /** profile 名（`<DSH_HOME>/profiles/<name>` 的目录名）。 */
+  name: string
+  /** profile 目录绝对路径。 */
+  dir: string
+  /** 命中依据。 */
+  via: 'config' | 'env' | 'argv' | 'package' | 'default'
+  /** 面板展示用的中文依据说明。 */
+  note: string
+}
+
+/** `resolveActiveProfile` 的可注入入参（测试用；生产全部走默认值）。 */
+export interface ResolveActiveProfileOptions {
+  /** 配置里的显式 profile（空串 = 自动探测）。 */
+  configured?: string
+  env?: NodeJS.ProcessEnv
+  argv?: readonly string[]
+  /** 本机 DSH 主目录；缺省按 env 推导。 */
+  dshHome?: string
+  /** 本插件模块 URL（默认 import.meta.url，用于「profile 依赖指向本代码」反查）。 */
+  moduleUrl?: string
+}
+
+/** 从候选字符串解析 profile 名：支持纯名字、`.../profiles/<name>` 目录、`file:` 前缀；无法识别返回空串。 */
+function parseProfileName(candidate: string): string {
+  const raw = candidate.trim()
+  if (raw === '') return ''
+  const dirMatch = PROFILE_DIR_ARG_RE.exec(raw)
+  if (dirMatch?.[1] !== undefined) return dirMatch[1]
+  if (PROFILE_NAME_RE.test(raw)) return raw
+  return ''
+}
+
+/**
+ * 从命令行参数里抽 profile。
+ *
+ * 支持三种宿主形态：`--profile <name>`、`--profile=<name>`，以及桌面版实测的
+ * `process.argv[2] = .../profiles/desktop` 目录参数（没有 --profile 前缀）。
+ * 裸单词不作数：argv 里到处是 node.exe、cli.js 这类词，只有目录形态才认。
+ */
+function profileFromArgv(argv: readonly string[]): string {
+  for (let index = 0; index < argv.length; index += 1) {
+    const item = argv[index] ?? ''
+    if (item === '--profile' || item === '-p') {
+      const next = parseProfileName(argv[index + 1] ?? '')
+      if (next !== '') return next
+      continue
+    }
+    const inline = /^--profile=(.+)$/.exec(item)
+    if (inline?.[1] !== undefined) {
+      const name = parseProfileName(inline[1])
+      if (name !== '') return name
+    }
+  }
+  for (const item of argv) {
+    if (!PROFILE_DIR_ARG_RE.test(item)) continue
+    const name = parseProfileName(item)
+    if (name !== '') return name
+  }
+  return ''
+}
+
+/** realpath 兜底：路径不存在或解析失败时返回原值（只做字符串级归一）。 */
+function realpathOr(target: string): string {
+  try {
+    return realpathSync(target)
+  } catch {
+    return target
+  }
+}
+
+/** 路径等价判断（Windows 大小写不敏感；统一分隔符后比较）。 */
+function samePath(left: string, right: string): boolean {
+  const normalize = (value: string): string => {
+    const unified = realpathOr(value).replace(/\\/g, '/').replace(/\/+$/, '')
+    return process.platform === 'win32' ? unified.toLowerCase() : unified
+  }
+  return normalize(left) === normalize(right)
+}
+
+/** 本插件包根目录：`file:` URL → 目录，`lib`/`src`/`dist` 再上一层。 */
+function packageRootOf(moduleUrl: string): string {
+  let dir = ''
+  try {
+    dir = moduleUrl.startsWith('file:') ? dirname(fileURLToPath(moduleUrl)) : dirname(moduleUrl)
+  } catch {
+    return ''
+  }
+  if (dir === '' || dir === '.') return ''
+  const leaf = basename(dir)
+  const root = leaf === 'lib' || leaf === 'src' || leaf === 'dist' ? dirname(dir) : dir
+  return realpathOr(root)
+}
+
+/** `file:` / `link:` 规格 → 本地路径（非本地规格返回空串）。 */
+function resolveSpecPath(spec: string): string {
+  const match = /^(?:file|link):(.+)$/i.exec(spec.trim())
+  if (match?.[1] === undefined) return ''
+  let raw = match[1].trim()
+  // `file:///C:/x` 与 `file:C:/x` 统一成 `C:/x`；POSIX 绝对路径和 UNC 前导斜杠保留。
+  if (/^\/+[A-Za-z]:/.test(raw)) raw = raw.replace(/^\/+/, '')
+  return raw
+}
+
+/** 读取 package.json 的 dependencies（读不到返回空对象，绝不抛出）。 */
+function readDependencies(packageJsonPath: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { dependencies?: unknown }
+    const deps = parsed.dependencies
+    if (deps === null || typeof deps !== 'object') return {}
+    const result: Record<string, string> = {}
+    for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+      if (typeof spec === 'string') result[name] = spec
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 反查「哪个 profile 装了指向当前代码的插件」。
+ *
+ * 场景：桌面版把插件装成 `link:D:/.../dsh-devforge`，`<profile>/package.json` 的 dependencies
+ * 直接写着这份源码目录。把它和当前运行模块的目录比对，比猜环境变量更贴近事实——
+ * check 读到的已装包与 apply 要写的 profile 由此成为同一来源。
+ */
+function profileFromInstalledDependency(profilesRoot: string, moduleUrl: string): string {
+  const selfDir = packageRootOf(moduleUrl)
+  if (selfDir === '') return ''
+  let names: string[]
+  try {
+    names = readdirSync(profilesRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return ''
+  }
+  for (const name of names) {
+    if (!PROFILE_NAME_RE.test(name)) continue
+    const deps = readDependencies(join(profilesRoot, name, 'package.json'))
+    for (const spec of Object.values(deps)) {
+      if (!/^(?:file|link):/i.test(spec.trim())) continue
+      const target = resolveSpecPath(spec)
+      if (target === '') continue
+      if (samePath(target, selfDir)) return name
+    }
+  }
+  return ''
+}
+
+/**
+ * 定位当前运行实例真正加载的 profile（0.50.1 修复「升级升进 web、桌面却加载 desktop」）。
+ *
+ * 优先级：
+ *   1. 配置显式值（`pluginUpdate.profile` 非空 = 用户指定，最高优先，保持向后兼容）；
+ *   2. `DSH_PROFILE` / `DSH_PROFILE_DIR`（官方文档：profile 启动的宿主每层子进程都会带）；
+ *   3. 宿主命令行 `--profile <name>` 或 `.../profiles/<name>` 参数（桌面版 argv[2] 即目录）；
+ *   4. profile 依赖反查（哪个 profile 的 dependencies 指向当前运行代码，那才是生效处）；
+ *   5. 兜底 `web` 并在 note 里写明回退，避免静默把包写进另一个 profile。
+ *
+ * 一致性要求：check 展示的目标 profile 与 apply 实际写入的 profile 必须来自本函数。
+ */
+export function resolveActiveProfile(options: ResolveActiveProfileOptions = {}): ActiveProfile {
+  const env = options.env ?? process.env
+  const home = (options.dshHome ?? '').trim() !== '' ? (options.dshHome ?? '').trim() : resolveDshHome(env)
+  const profilesRoot = join(home, 'profiles')
+  const build = (name: string, via: ActiveProfile['via'], note: string): ActiveProfile => ({
+    name,
+    dir: join(profilesRoot, name),
+    via,
+    note,
+  })
+
+  const configured = parseProfileName(options.configured ?? '')
+  if (configured !== '') return build(configured, 'config', '设置中显式指定')
+
+  const fromEnv = parseProfileName(env.DSH_PROFILE ?? '') || parseProfileName(env.DSH_PROFILE_DIR ?? '')
+  if (fromEnv !== '') return build(fromEnv, 'env', '宿主环境变量 DSH_PROFILE')
+
+  const fromArgv = profileFromArgv(options.argv ?? process.argv)
+  if (fromArgv !== '') return build(fromArgv, 'argv', '宿主启动命令行的 profile 参数')
+
+  const fromPackage = profileFromInstalledDependency(profilesRoot, options.moduleUrl ?? import.meta.url)
+  if (fromPackage !== '') return build(fromPackage, 'package', '该 profile 的依赖指向当前运行的插件代码')
+
+  return build(DEFAULT_PROFILE, 'default', '未识别到宿主 profile，已回退历史默认值')
+}
+
 /** sha256 十六进制摘要（完整性校验用）。 */
 export function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex')
 }
 
-/** 下载 tgz 到临时目录；提供期望 sha256 时强制完整性校验；headers 透传（官网登录墙带 Cookie）。 */
-export async function downloadTgz(url: string, packageName: string, version: string, options?: { timeoutMs?: number; maxBytes?: number; expectedSha256?: string; headers?: Record<string, string> }): Promise<string> {
+/**
+ * 下载 tgz 到持久缓存目录；提供期望 sha256 时强制完整性校验；headers 透传（官网登录墙带 Cookie）。
+ *
+ * 0.50.1：落点默认是 `~/.dsh/cache/plugins`（可用 `targetDir` 覆盖，测试注入临时目录）。
+ * 绝不写 `os.tmpdir()`：那个路径会被 `dsh plugin add` 固化进 profile 的 package.json，
+ * 临时目录被清理后就成了悬空依赖（见 `resolvePluginCacheDir` 注释）。
+ */
+export async function downloadTgz(url: string, packageName: string, version: string, options?: { timeoutMs?: number; maxBytes?: number; expectedSha256?: string; headers?: Record<string, string>; targetDir?: string }): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? 60000
   const maxBytes = options?.maxBytes ?? 25 * 1024 * 1024
   if (!url.startsWith('https://')) throw new Error('非 https 下载地址，拒绝下载')
@@ -463,9 +708,202 @@ export async function downloadTgz(url: string, packageName: string, version: str
     const actual = sha256Hex(buffer)
     if (actual.toLowerCase() !== expected.toLowerCase()) throw new Error('sha256 校验失败：期望 ' + expected.slice(0, 12) + '…，实际 ' + actual.slice(0, 12) + '…')
   }
-  const target = join(tmpdir(), packageName + '-' + version + '.tgz')
+  const targetDir = (options?.targetDir ?? '').trim() !== '' ? (options?.targetDir ?? '').trim() : resolvePluginCacheDir()
+  await mkdir(targetDir, { recursive: true })
+  const target = join(targetDir, packageName + '-' + version + '.tgz')
   await writeFile(target, buffer)
   return target
+}
+
+/**
+ * 清理插件缓存里的旧版本 tgz（只删没有被任何 profile 引用的文件）。
+ *
+ * 为什么必须查引用：profile 的 package.json 用 `file:<tgz 绝对路径>` 记住安装来源，
+ * 删掉仍被引用的 tgz 就等于重演 0.49.3 的悬空依赖事故。因此始终保留本次下载的包
+ * （keepPath），以及任何 profile 里出现过的路径；只有同包名的历史版本包才允许删除。
+ *
+ * @param keepPath 本次升级实际使用的包路径。
+ * @param options.cacheDir 缓存目录（缺省 `~/.dsh/cache/plugins`）。
+ * @param options.profilesRoot profile 根目录（缺省 `<DSH_HOME>/profiles`）。
+ * @param options.packageName 包名（缺省 dsh-devforge）。
+ * @returns 实际删除的文件名清单（失败静默，不阻断升级）。
+ */
+export async function prunePluginCache(keepPath: string, options?: { cacheDir?: string; profilesRoot?: string; packageName?: string }): Promise<string[]> {
+  const cacheDir = (options?.cacheDir ?? '').trim() !== '' ? (options?.cacheDir ?? '').trim() : resolvePluginCacheDir()
+  const profilesRoot = (options?.profilesRoot ?? '').trim() !== '' ? (options?.profilesRoot ?? '').trim() : join(resolveDshHome(), 'profiles')
+  const packageName = (options?.packageName ?? '').trim() !== '' ? (options?.packageName ?? '').trim() : 'dsh-devforge'
+  const keep = realpathOr(keepPath)
+
+  // 先收集所有 profile 仍在引用的本地路径；任一 profile 引用到的 tgz 一律不许删。
+  const referenced = new Set<string>()
+  try {
+    const names = readdirSync(profilesRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    for (const name of names) {
+      if (!PROFILE_NAME_RE.test(name)) continue
+      const deps = readDependencies(join(profilesRoot, name, 'package.json'))
+      for (const spec of Object.values(deps)) {
+        const target = resolveSpecPath(spec)
+        if (target !== '') referenced.add(realpathOr(target))
+      }
+    }
+  } catch {
+    // profile 目录读不到时保守处理：不删任何文件（宁可不清理，也不能制造悬空依赖）。
+    return []
+  }
+
+  let entries: string[]
+  try {
+    entries = await readdir(cacheDir)
+  } catch {
+    return []
+  }
+  const pattern = new RegExp('^' + packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?\\.tgz$')
+  const removed: string[] = []
+  for (const entry of entries) {
+    if (!pattern.test(entry)) continue
+    const full = join(cacheDir, entry)
+    const resolved = realpathOr(full)
+    if (resolved === keep) continue
+    if (referenced.has(resolved)) continue
+    try {
+      await unlink(full)
+      removed.push(entry)
+    } catch {
+      // 单个文件删除失败不影响升级；下轮再清。
+    }
+  }
+  return removed
+}
+
+/**
+ * 修复 profile 里指向「已被清理的临时文件」的悬空 `file:` 依赖。
+ *
+ * 0.49.3 把包路径写进了 `%TEMP%`，临时目录被清理后 profile 的 package.json 就指向不存在的文件，
+ * `pnpm add` 每次都要先物化它 → ENOENT 死循环。升级前必须把这种坏状态清掉，否则修复对
+ * 已踩坑的机器无效。策略（宁缺毋滥，只在确证路径不存在时动手）：
+ *   - 目标是本次要升级的包 → 直接移除该依赖条目（紧随其后的 `plugin add` 会写入新路径）；
+ *   - 目标是别的包 → 缓存目录里有该包的 tgz 就把依赖改指过去，没有才移除并如实记录。
+ *
+ * @returns 中文说明清单（面板要回显「升级前修了什么」）。
+ */
+export async function repairDanglingTempDependencies(profileDir: string, packageName: string, options?: { cacheDir?: string; tempDir?: string }): Promise<string[]> {
+  const packageJsonPath = join(profileDir, 'package.json')
+  let raw: string
+  try {
+    raw = await readFile(packageJsonPath, 'utf8')
+  } catch {
+    return []
+  }
+  let parsed: { dependencies?: Record<string, unknown> } & Record<string, unknown>
+  try {
+    parsed = JSON.parse(raw) as { dependencies?: Record<string, unknown> } & Record<string, unknown>
+  } catch {
+    return []
+  }
+  const deps = parsed.dependencies
+  if (deps === null || typeof deps !== 'object') return []
+
+  const cacheDir = (options?.cacheDir ?? '').trim() !== '' ? (options?.cacheDir ?? '').trim() : resolvePluginCacheDir()
+  const tempRoot = realpathOr((options?.tempDir ?? '').trim() !== '' ? (options?.tempDir ?? '').trim() : tmpdir())
+  const notices: string[] = []
+  let changed = false
+
+  for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+    if (typeof spec !== 'string') continue
+    if (!/^(?:file|link):/i.test(spec.trim())) continue
+    const target = resolveSpecPath(spec)
+    if (target === '' || existsSync(target)) continue
+    // 只处理「明确指向系统临时目录」的悬空项；其他缺失路径可能是用户尚未构建的本地工程，
+    // 贸然抹掉会破坏人家的开发态安装（0.50.1 保守边界）。
+    const normalized = target.replace(/\\/g, '/').toLowerCase()
+    const underTemp = normalized.startsWith(tempRoot.replace(/\\/g, '/').toLowerCase()) || /\/temp\//.test(normalized) || normalized.includes('/tmp/')
+    if (!underTemp) continue
+
+    const replacement = name === packageName ? '' : await newestCachedTgz(cacheDir, name)
+    if (replacement !== '') {
+      deps[name] = 'file:' + replacement
+      notices.push('依赖 ' + name + ' 原指向已清理的临时包，已改指 ' + replacement)
+    } else {
+      delete deps[name]
+      notices.push('已移除悬空依赖 ' + name + '（指向不存在的临时包 ' + target + '）')
+    }
+    changed = true
+  }
+
+  if (!changed) return notices
+  await writeFile(packageJsonPath, JSON.stringify(parsed, null, 2) + '\n')
+  return notices
+}
+
+/** 在缓存目录里找该包的最新 tgz（找不到返回空串）。 */
+async function newestCachedTgz(cacheDir: string, packageName: string): Promise<string> {
+  let entries: string[]
+  try {
+    entries = await readdir(cacheDir)
+  } catch {
+    return ''
+  }
+  const pattern = new RegExp('^' + packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)\\.tgz$')
+  let best = ''
+  let bestVersion = ''
+  for (const entry of entries) {
+    const matched = pattern.exec(entry)
+    if (matched?.[1] === undefined) continue
+    if (best === '' || compareSemver(matched[1], bestVersion) > 0) {
+      best = join(cacheDir, entry)
+      bestVersion = matched[1]
+    }
+  }
+  return best
+}
+
+/**
+ * 规整 `pnpm-workspace.yaml` 里的 `allowBuilds` 占位串。
+ *
+ * pnpm 11 生成模板时会给未知的原生包写入 `set this to true or false` 占位值；取值不是布尔，
+ * 安装会以 `ERR_PNPM_IGNORED_BUILDS` 硬失败（exit 1）。这里统一替换成 `false`（跳过构建脚本，
+ * 与 pnpm 默认拒绝执行构建的安全态度一致），并返回被改动的包名供面板回显。
+ * 只做文本级替换：保留缩进与其余配置，不引入 YAML 依赖。
+ */
+export async function normalizeAllowBuildsPlaceholders(profileDir: string): Promise<string[]> {
+  const workspacePath = join(profileDir, 'pnpm-workspace.yaml')
+  let raw: string
+  try {
+    raw = await readFile(workspacePath, 'utf8')
+  } catch {
+    return []
+  }
+  const placeholder = /^(\s+)([^\s:#][^\s:#]*):\s*['"]?set this to true or false['"]?\s*$/
+  const changed: string[] = []
+  const lines = raw.split(/\r?\n/)
+  const next = lines.map((line) => {
+    const matched = placeholder.exec(line)
+    if (matched?.[1] === undefined || matched[2] === undefined) return line
+    changed.push(matched[2])
+    return matched[1] + matched[2] + ': false'
+  })
+  if (changed.length === 0) return changed
+  await writeFile(workspacePath, next.join('\n'))
+  return changed
+}
+
+/**
+ * 升级前的现场准备：清悬空依赖 + 补按 allowBuilds 占位串。
+ *
+ * 抽成独立函数是给 `PluginUpdateService` 注入用的：真实环境要改文件，单测里换成假实现即可
+ * 断言「升级前确实做了现场修复」而不碰磁盘。
+ */
+export async function prepareProfileForUpdate(profile: ActiveProfile, packageName: string, cacheDir: string): Promise<string[]> {
+  const notices: string[] = []
+  const dangling = await repairDanglingTempDependencies(profile.dir, packageName, { cacheDir })
+  notices.push(...dangling)
+  const buildPlaceholders = await normalizeAllowBuildsPlaceholders(profile.dir)
+  if (buildPlaceholders.length > 0) {
+    notices.push('已把 pnpm-workspace.yaml 中 ' + buildPlaceholders.join('、') + ' 的构建开关占位值改为 false')
+  }
+  return notices
 }
 
 /**
@@ -615,6 +1053,102 @@ export function decodeProcessOutput(input: Buffer | string | undefined): string 
   }
 }
 
+/** Windows 常见 errno 释义（升级失败时直接告诉用户「文件不存在」而不是一串数字）。 */
+const WINDOWS_ERRNO_MEANING: Record<number, string> = {
+  [-4048]: 'EPERM 权限不足',
+  [-4052]: 'ENXIO 设备或地址不存在',
+  [-4058]: 'ENOENT 文件或目录不存在',
+  [-4075]: 'EEXIST 目标已存在',
+  [-4083]: 'EBADF 文件句柄无效',
+  [-4090]: 'ENOMEM 内存不足',
+  [-4092]: 'EACCES 拒绝访问',
+}
+
+/** 退出码在进程外被当成无符号 32 位整数时的还原结果。 */
+export interface ExitCodeInfo {
+  /** 原始退出码（可能已被无符号化，如 4294963238）。 */
+  raw: number | null
+  /** 还原后的有符号退出码（如 -4058），无法还原时为 null。 */
+  signed: number | null
+  /** 中文释义（含 errno 名称）。 */
+  meaning: string
+}
+
+/**
+ * 还原并解释子进程退出码。
+ *
+ * Windows 上 `ENOENT` 是 `-4058`，一旦被按无符号 32 位整数报出来就变成 `4294963238`，
+ * 用户和面板都看不懂。这里统一还原成有符号值并给出中文释义，错误信息里两个数字都保留，
+ * 便于对照日志。非负退出码按「命令失败」解释（1 通常就是命令自己报错）。
+ */
+export function decodeExitCode(raw: number | null | undefined): ExitCodeInfo {
+  if (raw === null || raw === undefined || Number.isNaN(raw)) {
+    return { raw: null, signed: null, meaning: '未知退出码' }
+  }
+  const signed = raw > 2147483647 ? raw - 4294967296 : raw
+  if (signed < 0) {
+    const known = WINDOWS_ERRNO_MEANING[signed]
+    return { raw, signed, meaning: known ?? '系统错误（未收录的 errno）' }
+  }
+  if (signed === 0) return { raw, signed, meaning: '命令正常退出' }
+  return { raw, signed, meaning: '命令失败' }
+}
+
+/** 从 pnpm/命令输出里挑出最值得看的几行（错误码、关键报错、最后几行兜底）。 */
+function pickKeyLines(output: string, limit = 6): string[] {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  if (lines.length === 0) return []
+  const keyPattern = /ERR_PNPM_[A-Z_]+|ENOENT|EACCES|EPERM|EBUSY|ENOTEMPTY|Error:|error |错误|失败|not found|cannot find|Cannot find|No such file|不存在/i
+  const picked = lines.filter((line) => keyPattern.test(line))
+  // 关键行不足时补最后几行：pnpm 的根因常紧跟在报错标题下面，而不是带着 ERR_ 前缀。
+  if (picked.length === 0) return lines.slice(-limit)
+  return picked.slice(-limit)
+}
+
+/**
+ * 把一次失败的 `dsh plugin add` 汇总成可读错误（面板直接展示这段文本）。
+ *
+ * 0.50.1 修复「失败只剩裸退出码」：旧实现只取 stderr 末 400 字符，且未捕获 stdout，
+ * pnpm 的真实原因（ENOENT 悬空依赖、ERR_PNPM_IGNORED_BUILDS 构建脚本未决）经常整段丢失，
+ * 用户只能看到一个 `4294963238`。这里同时给：命令、退出码原值与还原值、关键输出行、
+ * 以及对已知错误码的对策提示。
+ */
+export function summarizePluginAddFailure(input: { command?: string; exitCode?: number | null; errnoCode?: string; stdout?: string; stderr?: string }): string {
+  const info = decodeExitCode(input.exitCode ?? null)
+  const stdout = (input.stdout ?? '').trim()
+  const stderr = (input.stderr ?? '').trim()
+  const merged = [stderr, stdout].filter((text) => text !== '').join('\n')
+  const lines: string[] = []
+
+  const codeText = info.raw === null ? '' : info.raw === info.signed ? '退出码 ' + String(info.raw) : '退出码 ' + String(info.raw) + '（即 ' + String(info.signed) + '）'
+  const errnoText = (input.errnoCode ?? '').trim() !== '' ? (input.errnoCode ?? '').trim() : info.meaning
+  lines.push('dsh plugin add 失败' + (codeText !== '' ? '：' + codeText + ' · ' + errnoText : '：' + errnoText))
+  if ((input.command ?? '').trim() !== '') lines.push('命令：' + (input.command ?? '').trim())
+
+  const keyLines = pickKeyLines(merged)
+  if (keyLines.length > 0) {
+    lines.push('关键输出：')
+    for (const line of keyLines) lines.push('  ' + line.slice(0, 300))
+  } else {
+    lines.push('没有捕获到命令输出，请在终端手动执行同一命令查看原因')
+  }
+
+  // 已知故障给出可执行对策，而不是让用户自己猜。
+  if (/ERR_PNPM_IGNORED_BUILDS/.test(merged)) {
+    lines.push('对策：pnpm 要求先决定这些依赖是否允许执行构建脚本。打开该 profile 的 pnpm-workspace.yaml，把 allowBuilds 下对应包改成 true 或 false（不能保留 set this to true or false 占位串）后重试。')
+  }
+  if (/ERR_PNPM_UNEXPECTED_STORE/.test(merged)) {
+    lines.push('对策：当前 pnpm store 与上次安装不一致（常见于隔离 HOME 的暂存实例）。请在真实用户环境下执行升级。')
+  }
+  if (info.signed === -4058 || /ENOENT/.test(merged)) {
+    lines.push('对策：多为 profile 的 package.json 指向了已被清理的本地 tgz 或目录。0.50.1 起升级前会自动清理这类悬空依赖；若仍失败，请检查上面列出的路径是否存在。')
+  }
+  return lines.join('\n').slice(0, 4000)
+}
+
 /** 执行 dsh plugin add（默认实现；测试可注入）。 */
 export function runPluginAdd(profile: string, tgzPath: string, timeoutMs = 180000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -637,11 +1171,15 @@ export function runPluginAdd(profile: string, tgzPath: string, timeoutMs = 18000
       const output = decodeProcessOutput(stdout)
       const errorText = decodeProcessOutput(stderr)
       if (error) {
-        const detail = (errorText || output || error.message).slice(-400)
-        reject(new Error('dsh plugin add 失败：' + detail))
+        // execFile 的 error.code：进程非 0 退出时是退出码数字，spawn 失败时是 'ENOENT' 这类字符串。
+        const rawCode = (error as { code?: number | string }).code
+        const exitCode = typeof rawCode === 'number' ? rawCode : null
+        const errnoCode = typeof rawCode === 'string' ? rawCode : ''
+        const commandLine = [command.file, ...command.args].join(' ')
+        reject(new Error(summarizePluginAddFailure({ command: commandLine, exitCode, errnoCode, stdout: output, stderr: errorText })))
         return
       }
-      resolve((output + errorText).slice(-400))
+      resolve((output + errorText).slice(-1200))
     })
   })
 }
@@ -660,6 +1198,14 @@ export interface PluginUpdateServiceDeps {
   sessionToken?: () => Promise<string>
   /** 换下载票（0.41.11 起下载走 /dl/ 鉴权通道；测试可注入，默认零网络）。 */
   fetchTicket?: typeof fetchDownloadTicket
+  /** profile 探测（0.50.1；测试注入固定值，避免依赖宿主环境）。 */
+  resolveProfile?: (configured: string) => ActiveProfile
+  /** 升级前现场修复（清悬空依赖 + 补 allowBuilds 占位；测试注入空实现）。 */
+  prepareProfile?: (profile: ActiveProfile, packageName: string, cacheDir: string) => Promise<string[]>
+  /** 升级成功后清理旧包（测试注入空实现）。 */
+  pruneCache?: typeof prunePluginCache
+  /** tgz 持久缓存目录（0.50.1；测试注入临时目录，避免写真实 ~/.dsh/cache）。 */
+  resolveCacheDir?: () => string
 }
 
 /** 单插件检查（纯编排，便于单测）。 */
@@ -700,21 +1246,34 @@ export class PluginUpdateService {
     }
   }
 
-  /** 检查全部登记插件：并发拉取，单源失败不影响其他源。 */
-  async check(): Promise<{ enabled: boolean; items: UpdateCheckItem[] }> {
+  /** 目标 profile（check 与 apply 同源，面板据此显示「升级会写进哪个 profile」）。 */
+  private targetProfile(config: PluginUpdateConfig): ActiveProfile {
+    if (this.deps.resolveProfile !== undefined) return this.deps.resolveProfile(config.profile)
+    return resolveActiveProfile({ configured: config.profile })
+  }
+
+  /**
+   * 检查全部登记插件：并发拉取，单源失败不影响其他源。
+   *
+   * 0.50.1：一并返回目标 profile，让面板能提前显示「升级会写入哪个 profile」——
+   * 旧版这里不返回、面板也不显示，用户完全看不出包被写进了 web 而不是桌面加载的 desktop。
+   */
+  async check(): Promise<{ enabled: boolean; items: UpdateCheckItem[]; target: ActiveProfile }> {
     const config = this.resolveConfig()
-    if (!config.enabled) return { enabled: false, items: [] }
+    const target = this.targetProfile(config)
+    if (!config.enabled) return { enabled: false, items: [], target }
     const resolveLatestFn = this.deps.resolveLatestFn ?? resolveLatest
     const items = await Promise.all(config.sources.map(async (source): Promise<UpdateCheckItem> => {
       const info = this.deps.readInstalled(source.packageName)
       const installed = info?.version ?? ''
       return await checkOne(source, installed, resolveLatestFn)
     }))
-    return { enabled: true, items }
+    return { enabled: true, items, target }
   }
 
   /**
-   * 一键升级：白名单校验 → 官网清单解析最新 → 下载（清单 sha256 强制校验）→ dsh plugin add。
+   * 一键升级：目标 profile 探测 → 现场修复 → 官网清单解析最新 → 下载到持久缓存
+   * → dsh plugin add → 清理旧包。
    * 下载鉴权（0.40.1 辉哥定稿「插件已登录这页就该是登录的」）：优先复用面板官网登录态
    * （session token，Bearer），无登录态时回退 site 手动账号登录换 sid。
    */
@@ -724,6 +1283,17 @@ export class PluginUpdateService {
     // 白名单：只允许升级登记表里的包，防止该接口被用来装任意 npm 包。
     const source = config.sources.find((item) => item.packageName === packageName)
     if (!source) throw new Error('包不在更新源登记表内，拒绝升级：' + packageName)
+
+    // 目标 profile 与 check 同一套探测（0.50.1 修「升进 web、桌面加载 desktop」）。
+    const target = this.targetProfile(config)
+    const cacheDir = (this.deps.resolveCacheDir ?? resolvePluginCacheDir)()
+    // 现场修复先行：老用户的 profile 可能仍挂着指向 %TEMP% 的悬空依赖，不清掉 pnpm 必然失败。
+    const prepare = this.deps.prepareProfile ?? prepareProfileForUpdate
+    const notices = await prepare(target, source.packageName, cacheDir).catch((error: unknown) => {
+      // 现场修复失败不阻断升级：把原因记进 notices，让真正的 add 结果说话。
+      return ['升级前现场检查失败（已跳过）：' + (error instanceof Error ? error.message : String(error))]
+    })
+
     const resolveLatestFn = this.deps.resolveLatestFn ?? resolveLatest
     const latest = await resolveLatestFn(source)
     const download = this.deps.download ?? downloadTgz
@@ -748,7 +1318,8 @@ export class PluginUpdateService {
     }
     let tgzPath: string
     try {
-      tgzPath = await download(tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256 })
+      // 落点固定为持久缓存目录（0.50.1 修根因）：绝不写系统临时目录。
+      tgzPath = await download(tgzUrl, source.packageName, latest.version, { expectedSha256: latest.sha256, targetDir: cacheDir })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // 登录墙拦截而非故障：转译成个人中心登录引导（0.40.1 辉哥定稿：页面不再提供手动账号入口）。
@@ -758,8 +1329,25 @@ export class PluginUpdateService {
       throw error
     }
     const runAdd = this.deps.runAdd ?? runPluginAdd
-    const output = await runAdd(config.profile, tgzPath)
-    return { ok: true, packageName: source.packageName, version: latest.version, via: latest.via, output, needRestart: true }
+    const output = await runAdd(target.name, tgzPath)
+
+    // 升级成功后再清理旧包：只删没被任何 profile 引用的历史版本（引用检查在 prunePluginCache 内）。
+    const prune = this.deps.pruneCache ?? prunePluginCache
+    await prune(tgzPath, { cacheDir, profilesRoot: dirname(target.dir), packageName: source.packageName }).catch(() => [])
+
+    return {
+      ok: true,
+      packageName: source.packageName,
+      version: latest.version,
+      via: latest.via,
+      output,
+      needRestart: true,
+      profile: target.name,
+      profileDir: target.dir,
+      profileVia: target.via,
+      tgzPath,
+      notices,
+    }
   }
 }
 

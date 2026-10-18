@@ -61,7 +61,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
     setUpdateState((prev) => ({ ...prev, loading: true, error: '' }))
     try {
       const result = await api.checkPluginUpdates()
-      setUpdateState({ loading: false, enabled: result.enabled, items: result.items, error: '' })
+      setUpdateState({ loading: false, enabled: result.enabled, items: result.items, target: result.target, error: '' })
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason)
       setUpdateState((prev) => ({ ...prev, loading: false, error: message }))
