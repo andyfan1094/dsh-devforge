@@ -106,27 +106,86 @@ function Receive-SnipHotkeyHits {
     return $hits
 }
 
+<#
+.SYNOPSIS
+    泵掉线程消息队列里的非热键消息（热键消息留给 Receive-SnipHotkeyHits 统计）。
+.DESCRIPTION
+    替代 Application::DoEvents。DoEvents 会把 WM_HOTKEY 一并取走并丢弃，导致热键永久失效；
+    这里显式只取 WM_HOTKEY 以外的消息并 Dispatch 给窗口过程，热键消息一律留在队列里。
+#>
+function Flush-SnipMessageQueue {
+    $message = [WinSnipNative+MSG]::new()
+    # 取"除热键以外的所有消息"：分两段查询，避开 0x0312 这个区间。
+    for ($round = 0; $round -lt 64; $round++) {
+        $got = $false
+        # 段一：0 .. WM_HOTKEY-1
+        if ([WinSnipNative]::PeekMessage([ref]$message, [IntPtr]::Zero, 0, [uint32]($script:SnipWmHotkey - 1), $script:SnipPmRemove)) {
+            $got = $true
+        }
+        # 段二：WM_HOTKEY+1 .. 0xFFFF
+        elseif ([WinSnipNative]::PeekMessage([ref]$message, [IntPtr]::Zero, [uint32]($script:SnipWmHotkey + 1), [uint32]0xFFFF, $script:SnipPmRemove)) {
+            $got = $true
+        }
+        if (-not $got) { break }
+        try {
+            [void][WinSnipNative]::TranslateMessage([ref]$message)
+            [void][WinSnipNative]::DispatchMessage([ref]$message)
+        } catch { }
+    }
+}
+
 $registered = $false
 try {
     $registered = [WinSnipNative]::RegisterHotKey([IntPtr]::Zero, $hotkeyId, [uint32]$Modifiers, [uint32]$VirtualKey)
 } catch {
     $registered = $false
 }
-if (-not $registered) {
-    $global:SnipStats.Error = '热键注册失败（可能已被其它软件占用）：' + $HotkeyLabel
+if ($registered) {
+    Write-SnipLog ('已注册全局热键：' + $HotkeyLabel)
+}
+
+# 主力通道：低级键盘钩子。
+# 只要机器上别的程序（游戏客户端、录屏、远控）装了键盘钩子，RegisterHotKey 就会
+# "注册成功但收不到按键"——那些钩子把按键提前消费了。钩子链上后装的先执行，
+# 所以我们装的这个能先拿到按键，作为主通道；RegisterHotKey 保留为兜底。
+$hookInstalled = $false
+try {
+    [WinSnipHook]::Configure([uint32]$Modifiers, [uint32]$VirtualKey)
+    $hookInstalled = [WinSnipHook]::Install()
+} catch {
+    $hookInstalled = $false
+}
+if ($hookInstalled) {
+    Write-SnipLog ('已安装键盘钩子：' + $HotkeyLabel)
+} elseif (-not $registered) {
+    $global:SnipStats.Error = '热键不可用（热键与键盘钩子都失败）：' + $HotkeyLabel
     Write-SnipLog $global:SnipStats.Error
 } else {
-    Write-SnipLog ('已注册全局热键：' + $HotkeyLabel)
+    Write-SnipLog '键盘钩子安装失败，仅依赖系统热键（可能被其它软件拦截）。'
 }
 Update-SnipHeartbeat
 
 $lastBeat = Get-Date
 try {
     while ($true) {
-        try { [System.Windows.Forms.Application]::DoEvents() } catch { }
+        # 只用 PeekMessage 自己泵消息，绝不调用 Application::DoEvents。
+        # 硬教训（2026-10-18）：DoEvents 会把线程消息队列里的消息全部取出，
+        # 而 WM_HOTKEY 没有对应窗口过程 → 被它静默丢弃，
+        # 表现为「热键注册成功、进程也在跑，但按了永远没反应」。
+        # 键盘钩子的回调也依赖本线程泵消息，所以这里必须持续排空队列。
+        try { Flush-SnipMessageQueue } catch { }
 
         $hits = Receive-SnipHotkeyHits
-        if ($hits -gt 0) { Invoke-SnipCapture }
+        $hookHit = $false
+        if ($hookInstalled) {
+            try { $hookHit = [WinSnipHook]::ConsumeHit() } catch { $hookHit = $false }
+        }
+        if ($hits -gt 0 -or $hookHit) {
+            Write-SnipLog ('收到热键：' + $HotkeyLabel)
+            Invoke-SnipCapture
+            # 截图期间钩子可能又累计了命中，丢弃掉，避免关掉编辑器立刻又弹一次。
+            if ($hookInstalled) { try { [void][WinSnipHook]::ConsumeHit() } catch { } }
+        }
 
         Invoke-SnipCommands
 
@@ -135,9 +194,10 @@ try {
             $lastBeat = Get-Date
         }
 
-        Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 30
     }
 } finally {
+    if ($hookInstalled) { try { [WinSnipHook]::Uninstall() } catch { } }
     if ($registered) { try { [void][WinSnipNative]::UnregisterHotKey([IntPtr]::Zero, $hotkeyId) } catch { } }
     Write-SnipLog '截图助手已退出。'
     try { Remove-Item (Join-Path $global:SnipStats.BaseDir 'status.json') -Force -ErrorAction SilentlyContinue } catch { }

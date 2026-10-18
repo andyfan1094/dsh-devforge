@@ -31,7 +31,109 @@ public static class WinSnipNative {
     [DllImport("user32.dll")]
     public static extern bool PeekMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
     [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessage(ref MSG lpMsg);
+    [DllImport("user32.dll")]
     public static extern bool SetProcessDPIAware();
+}
+'@
+}
+
+# 低级键盘钩子：别的程序装了键盘钩子时，RegisterHotKey 会"注册成功但收不到按键"。
+# 实测（2026-10-18）：开着英雄联盟客户端 / wegame / RustDesk 时，Alt+A 注册返回成功，
+# 但按键永远到不了热键，被那些程序的键盘钩子提前消费掉了。
+# 后安装的 WH_KEYBOARD_LL 在钩子链上排前面，能先拿到按键，因此作为主通道。
+if (-not ('WinSnipHook' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class WinSnipHook {
+    public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr GetModuleHandle(string lpModuleName);
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KBDLLHOOKSTRUCT {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public const int WH_KEYBOARD_LL = 13;
+    public const int WM_KEYDOWN = 0x0100;
+    public const int WM_SYSKEYDOWN = 0x0104;
+
+    static IntPtr hook = IntPtr.Zero;
+    static LowLevelKeyboardProc proc;
+    static uint mods = 0;
+    static uint vk = 0;
+    static volatile bool hit = false;
+    static volatile int lastError = 0;
+
+    public static void Configure(uint modifiers, uint virtualKey) { mods = modifiers; vk = virtualKey; }
+    public static int LastError() { return lastError; }
+
+    // 取走一次命中标记：只触发一次截图，避免长按连发。
+    public static bool ConsumeHit() {
+        if (hit) { hit = false; return true; }
+        return false;
+    }
+
+    public static bool Install() {
+        if (hook != IntPtr.Zero) return true;
+        proc = new LowLevelKeyboardProc(Callback);
+        hook = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
+        if (hook == IntPtr.Zero) { lastError = Marshal.GetLastWin32Error(); return false; }
+        return true;
+    }
+
+    public static void Uninstall() {
+        if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        proc = null;
+    }
+
+    static bool Down(int vkCode) { return (GetAsyncKeyState(vkCode) & 0x8000) != 0; }
+
+    // 修饰键必须精确匹配：配 Alt+A 时，Ctrl+Alt+A 不会误触发。
+    static bool ModifiersMatch() {
+        bool alt = Down(0x12);
+        bool ctrl = Down(0x11);
+        bool shift = Down(0x10);
+        bool win = Down(0x5B) || Down(0x5C);
+        if (((mods & 1) != 0) != alt) return false;
+        if (((mods & 2) != 0) != ctrl) return false;
+        if (((mods & 4) != 0) != shift) return false;
+        if (((mods & 8) != 0) != win) return false;
+        return true;
+    }
+
+    static IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0) {
+            int msg = wParam.ToInt32();
+            if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+                KBDLLHOOKSTRUCT data = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                if (data.vkCode == vk && ModifiersMatch()) {
+                    hit = true;
+                    // 返回 1 = 已处理：按键不再传给后面的人和系统，避免同时触发别的程序。
+                    return (IntPtr)1;
+                }
+            }
+        }
+        return CallNextHookEx(hook, nCode, wParam, lParam);
+    }
 }
 '@
 }
