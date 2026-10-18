@@ -34,6 +34,19 @@ export function IconBrowser({ size }: IconProps): JSX.Element {
   )
 }
 
+/** 截图：取景框 + 裁剪角标（与工具条里的图标同一套语言）。 */
+export function IconSnip({ size }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} aria-hidden="true">
+      <path d="M7 3H4a1 1 0 0 0-1 1v3" />
+      <path d="M17 3h3a1 1 0 0 1 1 1v3" />
+      <path d="M7 21H4a1 1 0 0 1-1-1v-3" />
+      <path d="M17 21h3a1 1 0 0 0 1-1v-3" />
+      <path d="M3 12h18" />
+    </svg>
+  )
+}
+
 /** Coding Plan：柱状图。 */
 export function IconChart({ size }: IconProps): JSX.Element {
   return (

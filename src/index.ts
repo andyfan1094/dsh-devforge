@@ -79,6 +79,7 @@ import { makeRagRoutes } from './rag/routes.ts'
 import { ragSearchTool } from './rag/tools.ts'
 import { MirrorSyncScheduler, normalizeMirrorSyncSettings } from './rag/mirror-sync.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
+import { activateWinSnip, type WinSnipActivation } from './win-snip/activate.ts'
 import type { BrowserStatus } from './browser/protocol.ts'
 import { makeBrowserRoutes, makeBrowserSettingsRoutes } from './browser/routes.ts'
 import type { BrowserRoutesService } from './browser/service.ts'
@@ -1046,6 +1047,24 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ]
     return runProjectProbe(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine }, allHosts)
   }
+  // 截图小工具（Windows）：快捷键由原生助手用 RegisterHotKey 独占注册，与 Web 层无关；
+  // 这里只负责装载能力与路由。是否真正常驻由 store.db 的 win-snip.settings.enabled 决定
+  // （默认关，用户面板开启后才拉起），避免装完就抢走 Alt+A。
+  const winSnipActivation: WinSnipActivation | undefined = (() => {
+    try {
+      return activateWinSnip(ctx, {
+        // 插件总开关关闭时不再提权启动原生进程；助手自身仍按开关决定是否常驻。
+        enabled: resolve().enabled !== false,
+        minimaxApiKeyEnv: resolve().minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
+        openAi: { baseURL: resolve().openai?.baseURL ?? '', apiKeyEnv: resolve().openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY' },
+      })
+    } catch (error) {
+      // 截图能力失败（例如非 Windows 或原生脚本缺失）不能拖垮插件其余部分。
+      ctx.logger.warn('[dsh-devforge] 截图小工具激活失败（已跳过）：%s', error instanceof Error ? error.message : String(error))
+      return undefined
+    }
+  })()
+
   const routes = [
     ...makeDouyinLiveRoutes(douyinLive),
     ...makeRoutes(engine, standards, restartManager, () => ({
@@ -1113,6 +1132,8 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ...makeCredentialsRoutes(),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
+    // 截图小工具（Windows）：面板读状态、改配置、启停助手、手动截图。
+    ...(winSnipActivation?.routes ?? []),
     // 本地浏览器开关（2026-09-28）：面板直接开关基础/发布类工具；保存即落 store.db 的
     // browser.settings 域并触发 sync()，工具注册立即跟随，无需重启 DSH。
     // sync 在下方定义、此处只引用：与既有 requestGatewaySync = sync 同构，回调仅在用户点开关时执行，届时已初始化。
@@ -1535,6 +1556,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   ctx.effect(() => () => {
     // 停机/卸载：清掉启动自动补齐仍在等待的重试定时器，避免拖住 Host 退出。
     autoEnsureTimerScope?.cancelAll()
+    // 截图助手是常驻原生进程且独占全局热键，必须随插件卸载一起收掉，
+    // 否则卸载后 Alt+A 仍被占着、用户只能去任务管理器结束进程。
+    try { winSnipActivation?.dispose() } catch { /* 卸载失败不阻塞 Host 退出 */ }
   }, 'dsh-devforge: lifecycle')
 
   // 导出围栏工具供测试（非公开 API）

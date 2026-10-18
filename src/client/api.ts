@@ -7,6 +7,7 @@ import { DEVFORGE_API, type AgentPreset250kSetupResult, type AgentPreset250kStat
 import type { TokenUsageReport } from '../usage/types.ts'
 import { DOUYIN_LIVE_API, type DouyinLiveSnapshot } from '../douyin-live/protocol.ts'
 import { BROWSER_API, type BrowserSettingsPatch, type BrowserSettingsView, type BrowserStatus } from '../browser/protocol.ts'
+import { WIN_SNIP_API, type WinSnipSettings, type WinSnipSettingsPatch, type WinSnipStatus } from '../win-snip/protocol.ts'
 import { GITHUB_API, type AccountSummary, type GitAction, type GitHubSettings, type GitResult, type RepoSummary } from '../github/protocol.ts'
 import { CNB_API, type AccountSummary as CnbAccountSummary, type CnbSettings, type GitAction as CnbGitAction, type GitResult as CnbGitResult, type RepoSummary as CnbRepoSummary } from '../cnb/protocol.ts'
 import { FEISHU_API_BASE, type FeishuConfigPatch, type FeishuModelOptions, type FeishuPanelConfig, type FeishuStatus } from '../feishu/protocol.ts'
@@ -397,6 +398,43 @@ export class DevforgeApi {
   async getBrowserStatus(): Promise<BrowserStatus> {
     const data = await readJson<{ status: BrowserStatus }>(await fetch(BROWSER_API.status))
     return data.status
+  }
+
+  /** 截图小工具状态：是否支持、开关、后台进程与累计次数。 */
+  async getWinSnipStatus(): Promise<WinSnipStatus> {
+    const data = await readJson<{ status: WinSnipStatus }>(await fetch(WIN_SNIP_API.status))
+    return data.status
+  }
+
+  /** 截图小工具配置：热键、保存目录、模型通道与翻译方向。 */
+  async getWinSnipSettings(): Promise<WinSnipSettings> {
+    const data = await readJson<{ settings: WinSnipSettings }>(await fetch(WIN_SNIP_API.settings))
+    return data.settings
+  }
+
+  /** 保存配置：Host 落库后按需重启原生助手（热键/目录/开关改动即时生效）。 */
+  async putWinSnipSettings(patch: WinSnipSettingsPatch): Promise<WinSnipSettings> {
+    const data = await readJson<{ settings: WinSnipSettings }>(await fetch(WIN_SNIP_API.settings, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }))
+    return data.settings
+  }
+
+  /** 启动后台助手：等价于打开开关后再拉起，避免开关与进程状态脱节。 */
+  async winSnipStart(): Promise<void> {
+    await readJson(await fetch(WIN_SNIP_API.start, { method: 'POST' }))
+  }
+
+  /** 停止后台助手：同时把开关置为关闭，避免下次启动又被拉起。 */
+  async winSnipStop(): Promise<void> {
+    await readJson(await fetch(WIN_SNIP_API.stop, { method: 'POST' }))
+  }
+
+  /** 让后台立即开始一次截图（等价于按下热键）。 */
+  async winSnipCapture(): Promise<void> {
+    await readJson(await fetch(WIN_SNIP_API.capture, { method: 'POST' }))
   }
 
   /** 面板导航：打开 http(s) 地址并返回页面快照。 */

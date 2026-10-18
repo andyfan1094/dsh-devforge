@@ -6,12 +6,13 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
 import type { SkinRuntimeApi } from '../theme/skin-runtime.ts'
 import { BrowserTab } from './BrowserTab.tsx'
+import { WinSnipTab } from './WinSnipTab.tsx'
 import { RemoteAccessTab } from './RemoteAccessTab.tsx'
 import { PluginUpdateTab, type UpdateCheckState } from './PluginUpdateTab.tsx'
 import { FeishuTab } from './FeishuTab.tsx'
 import { SkinTab } from './SkinTab.tsx'
 import { ProfileTab } from './ProfileTab.tsx'
-import { IconBrowser, IconChart, IconProject, IconFeishu, IconTiangong, IconUpdate, IconSkin, IconProfile, IconMcp } from './icons.tsx'
+import { IconBrowser, IconSnip, IconChart, IconProject, IconFeishu, IconTiangong, IconUpdate, IconSkin, IconProfile, IconMcp } from './icons.tsx'
 import { CodingPlanTab } from './CodingPlanTab.tsx'
 import { MemoryHubTab } from './MemoryHubTab.tsx'
 import { DevHubTab } from './DevHubTab.tsx'
@@ -32,7 +33,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型（'workflow' 保留用于软下线恢复；'memory' 并入 'rag'、'standards/projects/repos/remote' 并入 'dev'，均为 0.40.x 合并页签）。 */
-type Tab = 'profile' | 'browser' | 'codeplan' | 'rag' | 'dev' | 'workflow' | 'mcp' | 'dbadmin' | 'feishu' | 'pluginupdate' | 'skin' | 'gateway'
+type Tab = 'profile' | 'browser' | 'snip' | 'codeplan' | 'rag' | 'dev' | 'workflow' | 'mcp' | 'dbadmin' | 'feishu' | 'pluginupdate' | 'skin' | 'gateway'
 
 /** 主面板组件。 */
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
@@ -140,6 +141,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         <button type="button" role="tab" aria-selected={tab === 'dbadmin'} data-active={tab === 'dbadmin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="数据管理：库表数据全透明可查；密钥只显掩码、复制直达剪贴板" onClick={() => { setTab('dbadmin') }}><IconChart />数据管理</button>
         <button type="button" role="tab" aria-selected={tab === 'dev'} data-active={tab === 'dev' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="开发：开发规范 + 项目 + 代码仓库 + 服务器管理（0.40.x 合并页签）" onClick={() => { setTab('dev') }}><IconProject />开发</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} data-active={tab === 'browser' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('browser') }}><IconBrowser />浏览器</button>
+        <button type="button" role="tab" aria-selected={tab === 'snip'} data-active={tab === 'snip' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="截图小工具：全局热键截图、框选标注、模型识别与翻译、钉图悬浮" onClick={() => { setTab('snip') }}><IconSnip />截图</button>
         <button type="button" role="tab" aria-selected={tab === 'gateway'} data-active={tab === 'gateway' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="远程访问网关：员工浏览器凭密码访问本机 DSH Web（0.41.0）" onClick={() => { setTab('gateway') }}><IconProject />远程访问</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
@@ -155,6 +157,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {tab === 'profile' && <ProfileTab api={api} onNavigate={navigateFromProfile} />}
 
         {tab === 'browser' && <BrowserTab api={api} />}
+      {tab === 'snip' && <WinSnipTab api={api} />}
         {tab === 'gateway' && <RemoteAccessTab api={api} />}
 
         {tab === 'codeplan' && <CodingPlanTab api={api} />}
