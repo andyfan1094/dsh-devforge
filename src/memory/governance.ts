@@ -483,6 +483,11 @@ export class MemoryGovernanceService {
   /** 审计裁剪节流计数（进程内；累计满 AUDIT_TRIM_EVERY 次写入触发一次实扫）。 */
   private auditWrites = 0
 
+  /** 对外审计入口（记忆管家等外部服务复用同一套审计域与裁剪口径）。 */
+  recordAudit(action: string, ids: string[], reason: string): void {
+    try { this.audit(action, ids, reason) } catch { /* 审计失败绝不影响业务主链路 */ }
+  }
+
   private audit(action: string, ids: string[], reason: string): void {
     const id = randomUUID()
     this.rag.putDomainDoc(MEMORY_AUDIT_DOMAIN, id, { id, action, ids, reason: reason.slice(0, 500), createdAt: Date.now() })
