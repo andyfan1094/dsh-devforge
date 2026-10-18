@@ -278,7 +278,9 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
               return { ok: true, action, committed: true, entry: written }
             }
             // 全自动路径：更新类写入也直接激活，同 memoryKey 旧事实自动取代。
-            const auto = options.governance.activateAuto({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence] })
+            // excludeEntryIds 传被更新的条目自身：否则改写成与原文相近的措辞时，去重比对会
+            // 把条目自己认成重复并拒绝更新（0.51.0 修）。
+            const auto = options.governance.activateAuto({ content: requestedContent, category: args.category ?? current.category, tags: args.tags ?? current.tags, importance: args.importance ?? current.importance, scope: current.scope, memoryKey: current.memoryKey, source: 'agent-update-proposal', sourceId: args.sourceId, evidence: verified.evidence === undefined ? [] : [verified.evidence], excludeEntryIds: [current.id] })
             if (auto.entry !== undefined && args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
             return auto.entry !== undefined
               ? { ok: true, action, committed: auto.candidate.state !== 'deduped', ...(auto.candidate.state === 'deduped' ? { pendingReason: 'duplicate', message: '更新后内容与现有记忆重复，未落盘（已有 id=' + auto.entry.id + '）' } : {}), entry: auto.entry }

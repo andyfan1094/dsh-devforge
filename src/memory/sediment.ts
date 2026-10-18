@@ -110,7 +110,48 @@ export function normalizeMemoryText(text: string): string {
   return text.replace(/\s+/gu, ' ').trim()
 }
 
+/**
+ * 证据引文长度上限（0.51.0）。
+ *
+ * 原为 500 字，等于把工具结果原文整段永久存进 memory.meta。生产实测：evidence 字段占
+ * memory.meta 15.23 MB 里的 13.04 MB（86%），长引文 13584 个实例去重后只有 2591 种唯一文本，
+ * 同一段被重复存了 121 次。证据的用途是「回读核对来源」，200 字足够定位，不需要全文。
+ */
+const EVIDENCE_QUOTE_LIMIT = 200
+
+/** 临时进度/未交付状态不入记忆：这类内容下一轮就失效，留下只会污染召回。 */
 const TRANSIENT_STATE_PATTERN = /(未提交|尚未提交|暂未提交|未推送|暂未推送|尚未推送|待验收|稍后继续|下次继续|回头再)/u
+
+/**
+ * 任务过程播报过滤器（0.51.0）。
+ *
+ * 生产实测：4871 条活跃记忆里约四分之一的低价值条目属于两类——
+ * ① 带任务编号与行号的完成宣告（“P2 hero 四件套已并入 renderInstallCmds 数组（L133-134）”）
+ * ② 一次性验收数字（“679/679 测试通过”“38.8 秒耗时 9 项 passed”）
+ * 这类内容对以后的决策没有任何指导意义，却会被召回注入上下文。光靠提示词约束不可靠，
+ * 这里做机械兜底；提示词侧同步加了禁令（见 runBatch 的 system 文案）。
+ */
+const PROCESS_BROADCAST_PATTERNS: readonly RegExp[] = [
+  // 任务编号 + 完成动作 + 代码行号：典型开发过程播报
+  /\bP[0-4]\b[^。；\n]{0,40}(已修复|已改为|已完成|已并入|已派单|已上线|已落地)/u,
+  // 任务编号与行号同时出现（覆盖「已从…改为…」这类不含固定动词的句式）
+  /\bP[0-4]\b[^。；\n]{0,100}\bL\d+/u,
+  // 完成动作 + 具体行号区间（L133-134 / L271-278）
+  /(已修复|已改为|已并入|已新增|已从)[^。；\n]{0,60}\bL\d+\s*[-–~]\s*\d+/u,
+  // N/N 测试通过、全部通过等一次性验收数字
+  /\b\d{2,}\s*\/\s*\d{2,}\s*(测试|单测|用例)?\s*(全部)?(通过|green|passed)/iu,
+  // 单次耗时的性能播报
+  /(耗时|用时)\s*\d+(\.\d+)?\s*(秒|s|毫秒|ms)[^。；\n]{0,20}(通过|完成|稳定)/u,
+]
+
+/**
+ * 判断一条候选是否属于低价值内容（临时状态 / 任务过程播报 / 一次性验收数字）。
+ * 抽成导出函数便于单测直接锁定拦截规则，也避免 runBatch 里堆两处判断。
+ */
+export function isLowValueMemory(content: string): boolean {
+  if (TRANSIENT_STATE_PATTERN.test(content)) return true
+  return PROCESS_BROADCAST_PATTERNS.some((pattern) => pattern.test(content))
+}
 
 /** 只有宿主明确报告的中断/失败才算未完成轮次；缺省（unknown）按正常完成处理。
  * 真实宿主的 turn/end 事件往往不带 reason.kind，白名单会让自动沉淀整体失效。 */
@@ -164,14 +205,14 @@ function turnDetails(events: readonly unknown[], sessionId: string, scope: Memor
       if (event.type === 'user/message') {
         const source = data?.source as { kind?: unknown } | undefined
         if (source?.kind !== 'user') continue
-        const quote = normalizeMemoryText(contentText(data)).slice(0, 500)
+        const quote = normalizeMemoryText(contentText(data)).slice(0, EVIDENCE_QUOTE_LIMIT)
         const messageId = typeof data?.id === 'string' ? data.id : ''
         if (quote !== '' && messageId !== '') evidence.push({ kind: 'user', quote, sessionId, messageId, ...(typeof event.seq === 'number' ? { eventSeq: event.seq } : {}), digest: createHash('sha256').update(quote).digest('hex'), createdAt: Date.now() })
       }
       if (event.type === 'tool/result') {
         const message = data?.message as { source?: { callId?: unknown } } | undefined
         const callId = typeof message?.source?.callId === 'string' ? message.source.callId : ''
-        const quote = normalizeMemoryText(contentText(data)).slice(0, 500)
+        const quote = normalizeMemoryText(contentText(data)).slice(0, EVIDENCE_QUOTE_LIMIT)
         const failed = data?.error !== undefined
         if (failed) toolFailures += 1
         else toolSuccesses += 1
@@ -179,7 +220,26 @@ function turnDetails(events: readonly unknown[], sessionId: string, scope: Memor
       }
     }
   }
-  return { ...window, completed: isCompletedReason(reason), endReason: reason, scope, evidence: evidence.slice(0, 8), toolNames: [...new Set(toolNames.values())].slice(0, 50), toolSuccesses, toolFailures }
+  // 同一轮的工具输出常被重复读出（同一文件读两次、同一查询跑两遍），按 digest 去重后再截断，
+  // 避免把重复文本当作多条「独立证据」写进记忆。
+  return { ...window, completed: isCompletedReason(reason), endReason: reason, scope, evidence: dedupeEvidence(evidence).slice(0, 8), toolNames: [...new Set(toolNames.values())].slice(0, 50), toolSuccesses, toolFailures }
+}
+
+/**
+ * 按 digest（缺省退回 quote 文本）去重证据数组，保留首次出现的位置。
+ * 0.51.0：证据此前从不跨条去重，同一段工具输出被复制到多条记忆，最大重复 121 次。
+ */
+export function dedupeEvidence(items: readonly MemoryEvidence[]): MemoryEvidence[] {
+  const seen = new Set<string>()
+  const out: MemoryEvidence[] = []
+  for (const item of items) {
+    const quote = typeof item.quote === 'string' ? item.quote : ''
+    const key = typeof item.digest === 'string' && item.digest !== '' ? item.digest : createHash('sha256').update(quote).digest('hex')
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+  }
+  return out
 }
 
 /** 会话记忆沉淀服务。 */
@@ -366,6 +426,10 @@ export class MemorySedimentService {
     const system = [
       '你是记忆提炼员和任务复盘员。提炼结果会自动生效为长期记忆，必须只写对话中真实出现的内容。',
       '从对话中识别长期偏好、稳定决策、环境事实、经工具验证的结果和可复用踩坑经验；跳过寒暄、问题本身、临时进度、待验收/未提交/未推送状态、凭据和原始代码。',
+      '禁止写任务过程播报：不要记录「P1/P2/P3 已修复」「已改为」「已并入」「已上线」这类完成宣告，也不要带代码行号（L133-134）；这类内容任务结束后就失去意义。',
+      '禁止写一次性验收数字：不要记录「679/679 测试通过」「耗时 38.8 秒」「某次包体 42401 字节」这类只对当时有效的数字。',
+      '禁止写会立刻过期的状态快照：不要记录「当前均为最新版本」「当前配置为空」「版本 0.41.3 已生效」这类时点状态；要写就写可长期成立的机制或约定。',
+      '只写对以后再遇到同类问题仍有指导意义的内容：规则、机制、根因、教训、参数用法。宁少勿滥。',
       '每条候选必须有 category、confidence、reason；可变配置或状态必须给稳定 memoryKey，便于发现新旧冲突后自动取代。事实性内容尽量给出证据说明；无证据的推断 confidence 应降低。',
       '同时输出 task 复盘：目标、结果摘要、success/partial/failure/unknown、可复用 lessons、实际使用的 injected memory id。没有证据时 outcome=unknown。',
       '最多 5 条候选，每条一句独立中文陈述。只输出 JSON。',
@@ -384,14 +448,16 @@ export class MemorySedimentService {
     } catch { throw new Error('提炼输出无法解析为 JSON') }
 
     const scope = eligible[eligible.length - 1]?.scope ?? { kind: 'workspace' }
-    const evidence = eligible.flatMap((item) => item.evidence).slice(-8)
+    // 跨窗口合并后再去重：同一批多轮里重复出现的工具输出只保留一份。
+    const evidence = dedupeEvidence(eligible.flatMap((item) => item.evidence)).slice(-8)
     const candidateIds: string[] = []
     const keys = this.existingKeysOf()
     const kbId = this.getKbId()
     let stored = 0
     for (const candidate of candidates.slice(0, 5)) {
       const content = normalizeMemoryText(candidate.content)
-      if (TRANSIENT_STATE_PATTERN.test(content)) continue
+      // 临时状态 + 任务过程播报/一次性验收数字：机械兜底拦截，不依赖模型遵守提示词。
+      if (isLowValueMemory(content)) continue
       const importance = candidate.importance === 'critical' || candidate.importance === 'low' ? candidate.importance : 'normal'
       const contentDigest = createHash('sha256').update(content).digest('hex')
       try {

@@ -93,17 +93,29 @@ function cleanScope(value: unknown): MemoryScopeContext {
   return { kind: scope.kind, ...(id === undefined ? {} : { id }), ...(label === undefined ? {} : { label }) }
 }
 
-function cleanEvidence(value: unknown): MemoryEvidence[] {
-  if (!Array.isArray(value)) return []
+/**
+ * 证据引文长度上限（0.51.0），与 sediment.ts 的同名常量口径一致。
+ * 证据只用于回读核对来源，不需要保存工具结果全文；生产实测该字段曾占 13 MB。
+ */
+const EVIDENCE_QUOTE_LIMIT = 200
+
+function cleanEvidence(value: unknown): MemoryEvidence[] {  if (!Array.isArray(value)) return []
   const out: MemoryEvidence[] = []
+  // 0.51.0：按 digest/quote 去重。此前同一段工具输出能以多条「独立证据」的身份重复入库，
+  // 生产实测单段文本最多重复 121 次、证据域 13 MB 里只有 2591 种唯一文本。
+  const seen = new Set<string>()
   for (const raw of value.slice(0, 8)) {
     if (raw === null || typeof raw !== 'object') continue
     const item = raw as Partial<MemoryEvidence>
     if (!['user', 'tool', 'assistant', 'manual', 'migration'].includes(String(item.kind))) continue
     if (typeof item.quote !== 'string' || item.quote.trim() === '') continue
+    const quote = item.quote.trim().slice(0, EVIDENCE_QUOTE_LIMIT)
+    const key = typeof item.digest === 'string' && item.digest !== '' ? item.digest : quote
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push({
       kind: item.kind as MemoryEvidence['kind'],
-      quote: item.quote.trim().slice(0, 500),
+      quote,
       ...(typeof item.sourceId === 'string' && item.sourceId !== '' ? { sourceId: item.sourceId.slice(0, 300) } : {}),
       ...(typeof item.sessionId === 'string' && item.sessionId !== '' ? { sessionId: item.sessionId.slice(0, 200) } : {}),
       ...(typeof item.turn === 'number' && Number.isSafeInteger(item.turn) && item.turn >= 0 ? { turn: item.turn } : {}),
