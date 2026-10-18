@@ -11,8 +11,8 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { settingsNamespace } from '../settings-compat.ts'
 import { deepEqualJson } from '../provider-settings.ts'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
-import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
-import { buildTiangongModels, parseTiangongCatalog, parseTiangongCatalogImages, tiangongCatalogOutdated, tiangongDeclarationOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_REASONING_EFFORTS, type TiangongCatalogEntry } from './provider-declaration.ts'
+import { MODAGENTAI_ENDPOINT_ID, MODAGENTAI_GW_ANTHROPIC_BASE, MODAGENTAI_GW_KEY_REF, MODAGENTAI_SESSION_REF, MODAGENTAI_SITE, type ModagentaiLoginResult, type ModagentaiPackages, type ModagentaiProfile, type ModagentaiSearchResult, type ModagentaiStatus } from './protocol.ts'
+import { buildTiangongModels, parseTiangongCatalog, parseTiangongCatalogImages, tiangongCatalogOutdated, tiangongDeclarationOutdated, TIANGONG_CONTEXT_WINDOW, TIANGONG_DEEPSEEK_EFFORTS, TIANGONG_DEEPSEEK_MODEL_ID, TIANGONG_KIMI_EFFORTS, TIANGONG_KIMI_MODEL_ID, TIANGONG_PROTOCOL, TIANGONG_REASONING_EFFORTS, type TiangongCatalogEntry } from './provider-declaration.ts'
 import type { OpenAiGatewayService } from '../openai/service.ts'
 
 /** llm-pi-ai 宿主段命名空间（DSH 模型路由体系）。 */
@@ -53,19 +53,23 @@ const TIANGONG_BUILTIN_MODELS: Record<string, unknown>[] = [{
 }]
 
 /**
- * 天工造梦原生 provider 声明模板（models 由 buildTiangongProvider 注入；
- * openai-completions 协议走 /chat/completions）。
+ * 天工造梦原生 provider 声明模板（models 由 buildTiangongProvider 注入）。
+ * 2026-10-18 起改为 Anthropic Messages 协议（官网 /api/gw/v1/messages）：
+ * 与 OpenAI 端点相比，anthropic 适配器支持 adaptive thinking 与更长的流空闲超时，
+ * 长推理任务更稳；官网 OpenAI 端点保留作回退，两条协议共用同一套白名单与计费。
  * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-10 定稿 200K）；
  * 插件升级或官网调整模型后，由 migrateLegacyGateway 的启动自愈自动改写声明。
  */
 const TIANGONG_PROVIDER_SHELL: Record<string, unknown> = {
   apiKeyEnv: MODAGENTAI_GW_KEY_REF,
   displayName: '天工造梦',
-  api: 'openai-completions',
-  baseURL: MODAGENTAI_GW_BASE,
+  api: TIANGONG_PROTOCOL,
+  baseURL: MODAGENTAI_GW_ANTHROPIC_BASE,
   defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
   defaultMaxTokens: 32768,
   defaultInput: ['text', 'image'],
+  // Anthropic 通道首字节可能较慢，空闲超时比 OpenAI 端点放宽，避免长推理被误判超时后循环重试
+  streamIdleTimeoutMs: 600_000,
   retryPolicy: {
     mode: 'normal',
     maxRetries: 5,
