@@ -46,10 +46,16 @@ $script:LastCaptureAt = [DateTime]::MinValue
 Enable-SnipCrashGuard
 
 # 单实例约束：宿主重启会留下孤儿助手，两个助手会同时响应同一个热键（弹两个遮罩）。
-# 这里把自己之外的同类进程结束掉；按脚本名精确匹配，且排除当前进程。
+# 匹配规则必须严格：只认 `-File <...>win-snip-assistant.ps1` 形式的命令行。
+# 硬教训（2026-10-18）：早先用 -like '*win-snip-assistant.ps1*' 会把"命令行里
+# 恰好提到该文件名的 shell"一起杀掉，连排查用的终端都被自己打死。
 try {
     $siblings = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -like '*win-snip-assistant.ps1*' }
+        Where-Object {
+            $_.ProcessId -ne $PID -and
+            $_.CommandLine -and
+            $_.CommandLine -match '-File\s+\S*win-snip-assistant\.ps1'
+        }
     foreach ($sibling in $siblings) {
         try {
             Stop-Process -Id $sibling.ProcessId -Force -ErrorAction Stop
