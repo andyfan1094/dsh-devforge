@@ -231,8 +231,13 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
         try {
           const body = await readJsonBody(req)
           const verdicts = new Set(['useful', 'irrelevant', 'incorrect', 'outdated'])
-          if (body === null || typeof body.recallId !== 'string' || typeof body.entryId !== 'string' || !verdicts.has(String(body.verdict))) { writeJson(res, 400, { ok: false, error: 'recallId、entryId 与 verdict 无效' }); return }
-          writeJson(res, 200, { ok: true, feedback: governance.submitFeedback(body as never) })
+          if (body === null || typeof body.entryId !== 'string' || !verdicts.has(String(body.verdict))) { writeJson(res, 400, { ok: false, error: 'entryId 与 verdict 无效' }); return }
+          // 0.50.2：recallId 从必填改为可选。它只是内部召回轨迹 id，模型侧拿不到，
+          // 要求必填会把反馈回路永远锁死在「只有面板能点」的状态（实测 6044 条计数全为 0）。
+          const feedback = typeof body.recallId === 'string' && body.recallId !== ''
+            ? governance.submitFeedback(body as never)
+            : governance.submitDirectFeedback({ entryId: body.entryId, verdict: body.verdict as never, ...(typeof body.note === 'string' ? { note: body.note } : {}) })
+          writeJson(res, 200, { ok: true, feedback })
         } catch (error) { writeJson(res, 400, { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }) }
       },
     },
