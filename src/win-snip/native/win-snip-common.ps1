@@ -1,4 +1,4 @@
-﻿# win-snip-common.ps1 —— 截图小工具公共层
+# win-snip-common.ps1 —— 截图小工具公共层
 #
 # 约定：本文件与其它 win-snip-*.ps1 一律以 UTF-8 with BOM 保存。
 # 无 BOM 时 Windows PowerShell 5.1 会按 ANSI 解码中文注释，脚本会静默出错。
@@ -430,13 +430,48 @@ function Set-SnipClipboardImage {
 }
 <#
 .SYNOPSIS
+    判断一个字体是否真的"中文恰好是半角的 2 倍宽"。
+.DESCRIPTION
+    layout.ts 是按"全角=2、半角=1"这个假设补空格的，字体比例不对，列就会错位。
+    光看字体名不可靠：不同 Windows 版本、不同语言版本装的字体集合完全不同
+    （本机是英文版，连微软雅黑都没有，只有 MS Gothic；中文版 Windows 通常有
+    NSimSun 新宋体而没有 MS Gothic）。所以这里直接量字宽做判断。
+    允许 1.85~2.15 的偏差，覆盖 GDI 取整误差。
+#>
+function Test-SnipMonoFont {
+    param([Parameter(Mandatory = $true)][System.Drawing.Font]$Font)
+
+    $flags = [System.Windows.Forms.TextFormatFlags]::NoPadding
+    $measure = {
+        param([string]$Chars, [int]$Repeat)
+        $text = $Chars * $Repeat
+        $size = New-Object System.Drawing.Size(9000, 200)
+        return [double][System.Windows.Forms.TextRenderer]::MeasureText($text, $Font, $size, $flags).Width / $Repeat
+    }
+
+    # 全角、半角各量 20 个字符取平均，单字测量有取整误差，会误判。
+    $full = & $measure '名' 20
+    $half = & $measure 'M' 20
+    if ($half -le 0) { return $false }
+
+    # 半角必须彼此等宽（M 与数字 8 等宽），否则是比例字体。
+    $digit = & $measure '8' 20
+    if ([Math]::Abs($half - $digit) -gt 0.3) { return $false }
+
+    $ratio = $full / $half
+    return ($ratio -ge 1.85 -and $ratio -le 2.15)
+}
+
+<#
+.SYNOPSIS
     取一个用于"按原排版看文字"的等宽字体。
 .DESCRIPTION
     识别结果要还原截图的排版（缩进、表格列对齐），比例字体会让空格宽度不等，
     排版必然错乱，所以结果窗必须用等宽字体。
-    本机实测（2026-10-18）没有 NSimSun / SimSun，中文等宽只有 MS Gothic 可用：
-    它的中文与半角字符都是定宽，中英混排能对齐；纯西文用 Cascadia Mono / Consolas。
-    字体取不到时回落到系统默认，不能因为字体问题让结果窗打不开。
+    候选里既有 MS Gothic（英文版 Windows 自带），也有 NSimSun 新宋体 /
+    SimSun 宋体（中文版 Windows 常见），逐个用 Test-SnipMonoFont 实测，
+    只有真满足"全角=2 半角"才采用，避免换台机器列就错位。
+    所有候选都不合格时，退回系统 UI 字体：排版可能不完美，但窗口一定能打开。
 .PARAMETER Text
     用来判断是否需要中文字形的正文。
 .PARAMETER Size
@@ -448,16 +483,29 @@ function New-SnipMonoFont {
         [single]$Size = 10
     )
     $hasCjk = $Text -match '[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]'
-    $candidates = if ($hasCjk) { @('MS Gothic', 'NSimSun', 'SimSun', 'Cascadia Mono', 'Consolas') } else { @('Cascadia Mono', 'Consolas', 'Courier New') }
+    $candidates = if ($hasCjk) {
+        @('MS Gothic', 'NSimSun', 'SimSun', 'SimHei', 'Cascadia Mono', 'Consolas')
+    } else {
+        @('Cascadia Mono', 'Consolas', 'Courier New')
+    }
     foreach ($name in $candidates) {
         try {
             $font = New-Object System.Drawing.Font($name, $Size)
             # GDI+ 找不到字体不抛异常，而是静默换成别的字体；用名字比对确认真的拿到了。
-            if ($font.Name -eq $name) { return $font }
+            if ($font.Name -ne $name) { $font.Dispose(); continue }
+            # 纯西文场景不要求全角比例；有中文时必须实测通过，否则换下一个候选。
+            if (-not $hasCjk -or (Test-SnipMonoFont -Font $font)) { return $font }
             $font.Dispose()
         } catch { }
     }
-    return New-Object System.Drawing.Font('Microsoft YaHei UI', $Size)
+    foreach ($fallback in @('Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI')) {
+        try {
+            $font = New-Object System.Drawing.Font($fallback, $Size)
+            if ($font.Name -eq $fallback) { return $font }
+            $font.Dispose()
+        } catch { }
+    }
+    return New-Object System.Drawing.Font([System.Drawing.FontFamily]::GenericMonospace, $Size)
 }
 
 <#
