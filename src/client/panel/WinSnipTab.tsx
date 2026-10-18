@@ -11,12 +11,6 @@ import type { DevforgeApi } from '../api.ts'
 import type { WinSnipSettings, WinSnipStatus } from '../../win-snip/protocol.ts'
 import css from './panel.module.css'
 
-/** 视觉通道的展示文案：值直接对应 Host 侧枚举。 */
-const PROVIDERS: ReadonlyArray<{ value: WinSnipSettings['visionProvider']; label: string }> = [
-  { value: 'auto', label: '自动（MiniMax 优先，其次中转站）' },
-  { value: 'minimax', label: '只用 MiniMax 订阅' },
-  { value: 'openai', label: '只用 OpenAI 中转站' },
-]
 
 /** 翻译方向：识别文字后要译成什么语言。 */
 const TARGETS: ReadonlyArray<{ value: WinSnipSettings['translateTarget']; label: string }> = [
@@ -30,7 +24,6 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [settings, setSettings] = useState<WinSnipSettings | null>(null)
   const [hotkeyDraft, setHotkeyDraft] = useState('')
   const [saveDirDraft, setSaveDirDraft] = useState('')
-  const [modelDraft, setModelDraft] = useState('')
   const [busy, setBusy] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -44,7 +37,6 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       setSettings(nextSettings)
       setHotkeyDraft(nextSettings.hotkey)
       setSaveDirDraft(nextSettings.saveDir)
-      setModelDraft(nextSettings.visionModel)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
   }
   useEffect(() => { void refresh() }, [])
@@ -146,35 +138,9 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
         <span className={css['sectionHint']}>留空即用默认目录（图片\DSH截图）</span>
       </div>
 
+      {/* 识别与翻译不需要单独配置：直接走 DSH 当前使用的模型。 */}
       <div className={css['formRow']}>
-        <label className={css['fieldLabel']}>
-          识别通道
-          <select
-            value={settings?.visionProvider ?? 'auto'}
-            disabled={busy !== '' || settings === null}
-            onChange={(event) => { save({ visionProvider: event.target.value as WinSnipSettings['visionProvider'] }) }}
-          >
-            {PROVIDERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-          </select>
-        </label>
-        <label className={css['fieldLabel']}>
-          视觉模型名（走中转站时必填）
-          <input
-            type="text"
-            value={modelDraft}
-            disabled={busy !== ''}
-            placeholder="例如 gpt-4o-mini"
-            onChange={(event) => { setModelDraft(event.target.value) }}
-          />
-        </label>
-        <button
-          type="button"
-          className={css['ghostButton']}
-          disabled={busy !== '' || modelDraft === settings?.visionModel}
-          onClick={() => { save({ visionModel: modelDraft.trim() }) }}
-        >
-          应用模型
-        </button>
+        <span className={css['sectionHint']}>识别与翻译直接使用 DSH 当前模型，无需单独配置 Key 或模型名。</span>
       </div>
 
       <div className={css['formRow']}>

@@ -63,10 +63,6 @@ export function makeWinSnipRoutes(deps: WinSnipRoutesDeps): WebRoute[] {
           }
         }
         const next = mergeWinSnipSettings(current, patch)
-        if (next.visionProvider === 'openai' && next.visionModel === '') {
-          writeJson(res, 400, { ok: false, error: '选择中转站通道时必须填写视觉模型名，例如 gpt-4o-mini。' })
-          return
-        }
         deps.saveSettings(next)
         writeJson(res, 200, { ok: true, settings: next, status: deps.status() })
       },

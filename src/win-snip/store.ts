@@ -12,7 +12,6 @@ import {
   type WinSnipSettings,
   type WinSnipSettingsPatch,
   type WinSnipTranslateTarget,
-  type WinSnipVisionProvider,
 } from './protocol.ts'
 
 /** 设置域键名。 */
@@ -24,13 +23,9 @@ export const DEFAULT_WIN_SNIP_SETTINGS: WinSnipSettings = {
   hotkey: 'Alt+A',
   saveDir: '',
   copyOnFinish: true,
-  visionProvider: 'auto',
-  visionModel: '',
   translateTarget: 'auto',
 }
 
-/** 允许的视觉通道取值。 */
-const PROVIDERS: readonly WinSnipVisionProvider[] = ['auto', 'minimax', 'openai']
 
 /** 允许的翻译目标取值。 */
 const TARGETS: readonly WinSnipTranslateTarget[] = ['auto', 'zh', 'en']
@@ -64,10 +59,6 @@ export function readWinSnipSettings(): WinSnipSettings {
     hotkey,
     saveDir: typeof stored.saveDir === 'string' ? stored.saveDir : DEFAULT_WIN_SNIP_SETTINGS.saveDir,
     copyOnFinish: stored.copyOnFinish !== false,
-    visionProvider: PROVIDERS.includes(stored.visionProvider as WinSnipVisionProvider)
-      ? stored.visionProvider as WinSnipVisionProvider
-      : DEFAULT_WIN_SNIP_SETTINGS.visionProvider,
-    visionModel: typeof stored.visionModel === 'string' ? stored.visionModel.trim() : '',
     translateTarget: TARGETS.includes(stored.translateTarget as WinSnipTranslateTarget)
       ? stored.translateTarget as WinSnipTranslateTarget
       : DEFAULT_WIN_SNIP_SETTINGS.translateTarget,
@@ -97,10 +88,7 @@ export function mergeWinSnipSettings(current: WinSnipSettings, patch: WinSnipSet
   }
   if (typeof patch.saveDir === 'string') next.saveDir = patch.saveDir.trim().slice(0, 512)
   if (typeof patch.copyOnFinish === 'boolean') next.copyOnFinish = patch.copyOnFinish
-  if (typeof patch.visionProvider === 'string' && PROVIDERS.includes(patch.visionProvider as WinSnipVisionProvider)) {
-    next.visionProvider = patch.visionProvider as WinSnipVisionProvider
-  }
-  if (typeof patch.visionModel === 'string') next.visionModel = patch.visionModel.trim().slice(0, 120)
+
   if (typeof patch.translateTarget === 'string' && TARGETS.includes(patch.translateTarget as WinSnipTranslateTarget)) {
     next.translateTarget = patch.translateTarget as WinSnipTranslateTarget
   }

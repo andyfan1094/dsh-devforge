@@ -255,9 +255,12 @@ export class WinSnipAssistant {
     try {
       const imagePath = this.assertInsideRequests(paths, request.imagePath)
       if (request.kind !== 'ocr' && request.kind !== 'translate') throw new Error('未知的处理类型。')
+      // 直接走 DSH 的模型服务：把图片字节登记为附件后交给当前默认模型，
+      // 用户不需要为识别/翻译单独配置任何 Key。
+      const imageBytes = readFileSync(imagePath)
       const result = await this.deps.vision.run({
         kind: request.kind,
-        imagePath,
+        imageBytes,
         ...(request.targetLang !== undefined ? { targetLang: request.targetLang } : {}),
       })
       const response: WinSnipVisionResponse = {

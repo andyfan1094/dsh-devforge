@@ -1091,8 +1091,6 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       return activateWinSnip(ctx, {
         // 插件总开关关闭时不再提权启动原生进程；助手自身仍按开关决定是否常驻。
         enabled: resolve().enabled !== false,
-        minimaxApiKeyEnv: resolve().minimax?.apiKeyEnv ?? 'MINIMAX_CN_API_KEY',
-        openAi: { baseURL: resolve().openai?.baseURL ?? '', apiKeyEnv: resolve().openai?.apiKeyEnv ?? 'OPENAI_GATEWAY_API_KEY' },
       })
     } catch (error) {
       // 截图能力失败（例如非 Windows 或原生脚本缺失）不能拖垮插件其余部分。

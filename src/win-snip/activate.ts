@@ -16,10 +16,6 @@ import type { WinSnipSettings } from './protocol.ts'
 export interface WinSnipActivationConfig {
   /** 是否启用截图小工具能力。 */
   enabled: boolean
-  /** MiniMax 订阅 Key 的受管引用名。 */
-  minimaxApiKeyEnv: string
-  /** OpenAI 中转站地址与 Key 引用名（用于走中转站做识别/翻译）。 */
-  openAi: { baseURL: string; apiKeyEnv: string }
 }
 
 /** 一次激活的产物。 */
@@ -40,11 +36,8 @@ export function activateWinSnip(ctx: Context, config: WinSnipActivationConfig): 
   const log = (message: string, ...args: unknown[]): void => {
     try { ctx.logger.info(message, ...args) } catch { /* 日志失败不影响能力 */ }
   }
-  const vision = new WinSnipVision(ctx, {
-    settings: () => readWinSnipSettings(),
-    minimaxApiKeyEnv: () => config.minimaxApiKeyEnv,
-    openAi: () => config.openAi,
-  })
+  // 识别/翻译直接走 DSH 自己的模型服务（当前默认模型），用户无需额外配置。
+  const vision = new WinSnipVision(ctx)
   const assistant = new WinSnipAssistant({
     settings: () => readWinSnipSettings(),
     vision,

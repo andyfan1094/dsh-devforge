@@ -1,15 +1,16 @@
 /**
- * 截图识别与翻译的模型通道。
+ * 截图识别与翻译的模型通道 —— 直接走 DSH 自己的模型服务。
  *
- * 为什么集中在这里：模型 Key 只能在宿主进程里解析（受管凭据），
- * 原生助手只负责把图片放进队列、把结果展示给用户，永远接触不到 Key。
+ * 为什么这么设计（2026-10-18 辉哥明确要求）：
+ * 面板里已经配好的模型（天工造梦 / MiniMax / 智谱 / 方舟 / 中转站…）本来就够用，
+ * 再让用户单独填一套"视觉模型 Key + 地址"是重复配置。这里改为：
+ * 1) 用 `ctx.attachments.saveImage` 把截图登记为 DSH 附件；
+ * 2) 用 `ctx.llm.stream` 走当前默认模型（provider/model 取自 agentDefaultModel）；
+ * 3) 收集 text-delta 拼成结果。
+ * 好处：跟随面板里已配置的模型与凭据，用户零额外配置，也不需要插件自己解析 Key。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { MiniMaxApiClient, safeApiError } from '../minimax/api-client.ts'
-import { toImageDataUrl } from '../minimax/image-input.ts'
-import { normalizeOpenAiBaseURL } from '../openai/api-client.ts'
-import type { WinSnipSettings, WinSnipTranslateTarget } from './protocol.ts'
+import type { WinSnipTranslateTarget } from './protocol.ts'
 
 /** 识别/翻译的处理结果。 */
 export interface WinSnipVisionResult {
@@ -19,18 +20,14 @@ export interface WinSnipVisionResult {
   translation?: string
 }
 
-/** 视觉通道依赖：全部为读配置的取值函数，便于热更新与测试。 */
-export interface WinSnipVisionDeps {
-  /** 读取当前配置。 */
-  settings: () => WinSnipSettings
-  /** MiniMax 订阅 Key 的受管引用名。 */
-  minimaxApiKeyEnv: () => string
-  /** OpenAI 中转站地址与 Key 引用名。 */
-  openAi: () => { baseURL: string; apiKeyEnv: string }
+/** 模型选择（provider + model），跟随 DSH 当前默认模型。 */
+export interface WinSnipModelTarget {
+  provider: string
+  model: string
 }
 
 /** 单次模型调用超时（毫秒）。 */
-const TIMEOUT_MS = 60000
+const TIMEOUT_MS = 120000
 
 /** 目标语言的提示词描述。 */
 function describeTarget(target: WinSnipTranslateTarget): string {
@@ -70,121 +67,113 @@ export function parseTranslateOutput(raw: string): WinSnipVisionResult {
   return { text: '', translation: body }
 }
 
+/** 附件服务最小形状（只用到登记图片）。 */
+interface AttachmentsLike {
+  saveImage: (input: { data: Uint8Array; mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; name?: string }) => Promise<unknown>
+}
+
+/** 模型服务最小形状（只用到流式调用）。 */
+interface LlmLike {
+  stream: (options: {
+    provider: string
+    model: string
+    messages: Array<{ role: 'user'; content: Array<Record<string, unknown>> }>
+    temperature?: number
+    signal?: AbortSignal
+  }) => AsyncIterable<{ type: string; text?: string; reason?: { kind?: string; failure?: { message?: string } } }>
+}
+
+/** 默认模型服务最小形状。 */
+interface AgentDefaultModelLike {
+  currentSelection: () => unknown
+}
+
+/** 从任意形状的"当前模型选择"里读 provider 与 model。 */
+export function readModelTarget(selection: unknown): WinSnipModelTarget | undefined {
+  if (selection === null || typeof selection !== 'object') return undefined
+  const record = selection as Record<string, unknown>
+  const provider = record['provider']
+  const model = record['model']
+  if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+    return { provider, model }
+  }
+  return undefined
+}
+
 /**
- * 截图识别/翻译服务。
- *
- * 通道选择：配置指定就用指定通道；`auto` 时优先 MiniMax（Coding Plan 自带视觉能力），
- * 不可用再退回 OpenAI 中转站。两条都不可用时给出可操作的中文提示。
+ * 截图识别/翻译：直接走 DSH 的模型服务，不额外要求任何 Key 配置。
  */
 export class WinSnipVision {
   private readonly ctx: Context
-  private readonly deps: WinSnipVisionDeps
 
-  constructor(ctx: Context, deps: WinSnipVisionDeps) {
+  constructor(ctx: Context) {
     this.ctx = ctx
-    this.deps = deps
   }
 
-  /** 解析某个受管凭据的明文；缺失时返回 undefined。 */
-  private async resolveKey(envName: string): Promise<string | undefined> {
-    const name = envName.trim()
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return undefined
-    try {
-      const resolved = await this.ctx.credentials.resolve(credentialRef(name))
-      const value = resolved?.value.trim()
-      return value === undefined || value === '' ? undefined : value
-    } catch {
-      return undefined
+  /** 解析当前应使用的 provider/model：默认模型优先，其次取第一个可用 provider 的首个模型。 */
+  private async pickTarget(): Promise<{ target: WinSnipModelTarget; llm: LlmLike }> {
+    const llm = this.ctx.get('llm') as LlmLike | undefined
+    if (llm?.stream === undefined) throw new Error('DSH 模型服务不可用，无法做识别与翻译。')
+
+    const selector = this.ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
+    const configured = readModelTarget(selector?.currentSelection())
+    if (configured !== undefined) return { target: configured, llm }
+
+    // 兜底：当前会话没有显式默认模型时，用第一个已注册 provider 的首个模型。
+    const registry = this.ctx.get('llm') as unknown as {
+      listProviders?: () => Array<{ id: string }>
+      listModels?: (provider: string) => Promise<Array<{ id: string }>>
     }
+    for (const provider of registry.listProviders?.() ?? []) {
+      const models = await registry.listModels?.(provider.id).catch(() => []) ?? []
+      const first = models[0]
+      if (first !== undefined) return { target: { provider: provider.id, model: first.id }, llm }
+    }
+    throw new Error('还没有可用的模型：请先在设置里配置一个模型提供方。')
   }
 
   /**
    * 执行一次识别或翻译。
    *
-   * @param request 处理类型、图片路径与目标语言。
+   * @param request 处理类型、图片字节与目标语言。
    * @throws Error 中文错误信息（已脱敏），由调用方写回响应文件。
    */
-  async run(request: { kind: 'ocr' | 'translate'; imagePath: string; targetLang?: WinSnipTranslateTarget }): Promise<WinSnipVisionResult> {
-    const settings = this.deps.settings()
-    const provider = await this.pickProvider(settings)
-    const dataUrl = await toImageDataUrl(request.imagePath)
-    const prompt = request.kind === 'ocr' ? OCR_PROMPT : translatePrompt(request.targetLang ?? settings.translateTarget)
-    const raw = provider === 'minimax'
-      ? await this.callMiniMax(settings, prompt, dataUrl)
-      : await this.callOpenAi(settings, prompt, dataUrl)
-    return request.kind === 'ocr' ? { text: raw.trim() } : parseTranslateOutput(raw)
-  }
+  async run(request: { kind: 'ocr' | 'translate'; imageBytes: Uint8Array; targetLang?: WinSnipTranslateTarget }): Promise<WinSnipVisionResult> {
+    const attachments = this.ctx.get('attachments') as AttachmentsLike | undefined
+    if (attachments?.saveImage === undefined) throw new Error('DSH 附件服务不可用，无法把截图交给模型。')
+    const { target, llm } = await this.pickTarget()
 
-  /** 选定实际通道：显式配置优先，auto 时按可用凭据回退。 */
-  private async pickProvider(settings: WinSnipSettings): Promise<'minimax' | 'openai'> {
-    const configured = settings.visionProvider
-    if (configured === 'minimax') {
-      if (await this.resolveKey(this.deps.minimaxApiKeyEnv()) === undefined) {
-        throw new Error('尚未配置 MiniMax 订阅 Key，无法用 MiniMax 做识别与翻译。')
-      }
-      return 'minimax'
-    }
-    if (configured === 'openai') {
-      const openAi = this.deps.openAi()
-      if (openAi.baseURL.trim() === '') throw new Error('尚未配置 OpenAI 中转站地址，无法用中转站做识别与翻译。')
-      if (settings.visionModel.trim() === '') throw new Error('走中转站需要先在面板填写视觉模型名（如 gpt-4o-mini）。')
-      if (await this.resolveKey(openAi.apiKeyEnv) === undefined) throw new Error('尚未配置 OpenAI 中转站 API Key。')
-      return 'openai'
-    }
-    // auto：先看 MiniMax，再看中转站；两者都没有时给出明确提示。
-    if (await this.resolveKey(this.deps.minimaxApiKeyEnv()) !== undefined) return 'minimax'
-    const openAi = this.deps.openAi()
-    if (openAi.baseURL.trim() !== '' && settings.visionModel.trim() !== '' && await this.resolveKey(openAi.apiKeyEnv) !== undefined) {
-      return 'openai'
-    }
-    throw new Error('没有可用的模型通道：请先配置 MiniMax 订阅 Key，或配置 OpenAI 中转站地址 + 视觉模型名 + Key。')
-  }
+    const ref = await attachments.saveImage({ data: request.imageBytes, mediaType: 'image/png', name: 'win-snip.png' })
+    const prompt = request.kind === 'ocr' ? OCR_PROMPT : translatePrompt(request.targetLang ?? 'auto')
 
-  /** MiniMax 官方视觉接口。 */
-  private async callMiniMax(settings: WinSnipSettings, prompt: string, dataUrl: string): Promise<string> {
-    const apiKey = await this.resolveKey(this.deps.minimaxApiKeyEnv())
-    if (apiKey === undefined) throw new Error('尚未配置 MiniMax 订阅 Key。')
-    void settings
-    const client = new MiniMaxApiClient(async () => apiKey, TIMEOUT_MS)
+    const controller = new AbortController()
+    const timer = setTimeout(() => { controller.abort() }, TIMEOUT_MS)
+    let raw = ''
     try {
-      return await client.understandImage(prompt, dataUrl)
-    } catch (error) {
-      throw new Error(safeApiError(error))
-    }
-  }
-
-  /** OpenAI 兼容中转站的对话接口（图片以 image_url 传入）。 */
-  private async callOpenAi(settings: WinSnipSettings, prompt: string, dataUrl: string): Promise<string> {
-    const config = this.deps.openAi()
-    const baseURL = normalizeOpenAiBaseURL(config.baseURL.trim())
-    if (baseURL === '') throw new Error('尚未配置 OpenAI 中转站地址。')
-    const apiKey = await this.resolveKey(config.apiKeyEnv)
-    if (apiKey === undefined) throw new Error('尚未配置 OpenAI 中转站 API Key。')
-    const model = settings.visionModel.trim()
-    if (model === '') throw new Error('走中转站需要先在面板填写视觉模型名。')
-    let response: Response
-    try {
-      response = await fetch(baseURL + '/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + apiKey },
-        body: JSON.stringify({
-          model,
-          temperature: 0,
-          messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] }],
-        }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+      const stream = llm.stream({
+        provider: target.provider,
+        model: target.model,
+        temperature: 0,
+        signal: controller.signal,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image', attachment: ref },
+          ],
+        }],
       })
-    } catch (error) {
-      throw new Error('调用中转站失败：' + (error instanceof Error ? error.message : String(error)))
+      for await (const chunk of stream) {
+        if (chunk.type === 'text-delta' && typeof chunk.text === 'string') raw += chunk.text
+        if (chunk.type === 'finish') {
+          const failure = chunk.reason?.failure
+          if (failure !== undefined) throw new Error('模型调用失败：' + (failure.message ?? '未知原因'))
+        }
+      }
+    } finally {
+      clearTimeout(timer)
     }
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '')
-      throw new Error('中转站返回 HTTP ' + response.status + (detail === '' ? '' : '：' + detail.slice(0, 200)))
-    }
-    const payload = await response.json().catch(() => undefined) as { choices?: Array<{ message?: { content?: unknown } }> } | undefined
-    const content = payload?.choices?.[0]?.message?.content
-    const text = typeof content === 'string' ? content : ''
-    if (text.trim() === '') throw new Error('中转站返回空内容。')
-    return text
+    if (raw.trim() === '') throw new Error('模型没有返回任何内容。')
+    return request.kind === 'ocr' ? { text: raw.trim() } : parseTranslateOutput(raw)
   }
 }

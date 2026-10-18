@@ -42,6 +42,21 @@ $copyToClipboard = ($CopyOnFinish -ne '0')
 $hotkeyId = 1
 $script:LastCaptureAt = [DateTime]::MinValue
 
+# 先装异常兜底：之后任何回调出问题都只记日志，不再弹 .NET 崩溃框并结束进程。
+Enable-SnipCrashGuard
+
+# 单实例约束：宿主重启会留下孤儿助手，两个助手会同时响应同一个热键（弹两个遮罩）。
+# 这里把自己之外的同类进程结束掉；按脚本名精确匹配，且排除当前进程。
+try {
+    $siblings = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -like '*win-snip-assistant.ps1*' }
+    foreach ($sibling in $siblings) {
+        try {
+            Stop-Process -Id $sibling.ProcessId -Force -ErrorAction Stop
+        } catch { }
+    }
+} catch { }
+
 <#
 .SYNOPSIS
     执行一次完整截图流程：抓屏 → 遮罩编辑 → 释放资源。

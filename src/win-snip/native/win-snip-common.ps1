@@ -182,6 +182,33 @@ function Write-SnipLog {
 
 <#
 .SYNOPSIS
+    安装进程级异常兜底，避免一个回调出错就直接弹崩溃框终止整个助手。
+.DESCRIPTION
+    硬教训（2026-10-18）：钉图窗口的鼠标回调里给状态对象赋属性时取不到对象，
+    WinForms 把该异常当成未处理异常，弹出 .NET 崩溃对话框并结束进程，
+    连带整个桌面端都不稳。装上 ThreadException 兜底后，同类错误只记日志、不再致命。
+#>
+function Enable-SnipCrashGuard {
+    if ($script:SnipCrashGuardInstalled) { return }
+    $script:SnipCrashGuardInstalled = $true
+    try {
+        [System.Windows.Forms.Application]::add_ThreadException({
+                param($sender, $e)
+                $detail = if ($null -ne $e -and $null -ne $e.Exception) { $e.Exception.Message } else { '未知界面异常' }
+                Write-SnipLog ('界面回调异常（已拦截，助手继续运行）：' + $detail)
+            })
+    } catch { }
+    try {
+        [AppDomain]::CurrentDomain.add_UnhandledException({
+                param($sender, $e)
+                $detail = if ($null -ne $e -and $null -ne $e.ExceptionObject) { [string]$e.ExceptionObject } else { '未知异常' }
+                Write-SnipLog ('未处理异常（已拦截）：' + $detail)
+            })
+    } catch { }
+}
+
+<#
+.SYNOPSIS
     写心跳文件（宿主用它判断助手存活与读取截图次数）。
 #>
 function Update-SnipHeartbeat {

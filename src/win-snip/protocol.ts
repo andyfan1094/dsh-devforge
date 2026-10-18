@@ -14,8 +14,6 @@ export const WIN_SNIP_API = {
   capture: '/api/dsh-devforge/win-snip/capture',
 } as const
 
-/** 视觉模型通道：auto 表示按可用凭据在 minimax / openai 之间自动选择。 */
-export type WinSnipVisionProvider = 'auto' | 'minimax' | 'openai'
 
 /** 翻译目标语言：auto 由模型自行判断中英互译方向。 */
 export type WinSnipTranslateTarget = 'auto' | 'zh' | 'en'
@@ -30,10 +28,7 @@ export interface WinSnipSettings {
   saveDir: string
   /** 框选完成即复制到剪贴板。 */
   copyOnFinish: boolean
-  /** 识别与翻译使用的模型通道。 */
-  visionProvider: WinSnipVisionProvider
-  /** 走中转站（openai）时必须指定的视觉模型名。 */
-  visionModel: string
+
   /** 翻译目标语言。 */
   translateTarget: WinSnipTranslateTarget
 }
