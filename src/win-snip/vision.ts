@@ -72,12 +72,28 @@ interface AttachmentsLike {
   saveImage: (input: { data: Uint8Array; mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; name?: string }) => Promise<unknown>
 }
 
-/** 模型服务最小形状（只用到流式调用）。 */
-interface LlmLike {
+/** 模型条目最小形状（只关心 id 与是否支持图片输入）。 */
+interface LlmModelInfoLike {
+  id: string
+  name?: string
+  /** 缺省表示能力未知；只要显式包含 image 才当作能看图。 */
+  inputModalities?: readonly string[]
+}
+
+/** 模型服务最小形状（流式调用 + 模型清单）。 */
+interface LlmServiceLike {
+  listProviders?: () => Array<{ id: string }>
+  listModels?: (provider: string) => Promise<readonly LlmModelInfoLike[]>
   stream: (options: {
     provider: string
     model: string
-    messages: Array<{ role: 'user'; content: Array<Record<string, unknown>> }>
+    /** DSH 的 Message 必须带 id/role/content/source 四件套。 */
+    messages: Array<{
+      id: string
+      role: 'user'
+      content: Array<Record<string, unknown>>
+      source: { kind: 'user' }
+    }>
     temperature?: number
     signal?: AbortSignal
   }) => AsyncIterable<{ type: string; text?: string; reason?: { kind?: string; failure?: { message?: string } } }>
@@ -110,25 +126,45 @@ export class WinSnipVision {
     this.ctx = ctx
   }
 
-  /** 解析当前应使用的 provider/model：默认模型优先，其次取第一个可用 provider 的首个模型。 */
-  private async pickTarget(): Promise<{ target: WinSnipModelTarget; llm: LlmLike }> {
-    const llm = this.ctx.get('llm') as LlmLike | undefined
+  /**
+   * 挑选要用的模型。
+   *
+   * 顺序：面板当前默认模型（且支持图片输入）→ 任一支持图片输入的模型 →
+   * 任一有模型的 provider（交给模型自己报错，错误信息会显示在结果窗里）。
+   * 关键是按 inputModalities 判断，不能只看"provider 有模型"，
+   * 否则会把纯文本模型塞进图片请求，用户只会看到一句看不懂的失败。
+   */
+  private async pickTarget(): Promise<{ target: WinSnipModelTarget; llm: LlmServiceLike }> {
+    const llm = this.ctx.get('llm') as LlmServiceLike | undefined
     if (llm?.stream === undefined) throw new Error('DSH 模型服务不可用，无法做识别与翻译。')
 
     const selector = this.ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
     const configured = readModelTarget(selector?.currentSelection())
-    if (configured !== undefined) return { target: configured, llm }
 
-    // 兜底：当前会话没有显式默认模型时，用第一个已注册 provider 的首个模型。
-    const registry = this.ctx.get('llm') as unknown as {
-      listProviders?: () => Array<{ id: string }>
-      listModels?: (provider: string) => Promise<Array<{ id: string }>>
+    const providers = llm.listProviders?.() ?? []
+    const supportsImage = (info: { inputModalities?: readonly string[] }): boolean =>
+      info.inputModalities?.includes('image') === true
+
+    const modelInfo = async (provider: string): Promise<readonly LlmModelInfoLike[]> => {
+      try { return await llm.listModels?.(provider) ?? [] } catch { return [] }
     }
-    for (const provider of registry.listProviders?.() ?? []) {
-      const models = await registry.listModels?.(provider.id).catch(() => []) ?? []
-      const first = models[0]
-      if (first !== undefined) return { target: { provider: provider.id, model: first.id }, llm }
+
+    // 1) 默认模型能看图就优先用它 —— 与用户在面板里选的模型一致，最不容易意外。
+    if (configured !== undefined) {
+      const models = await modelInfo(configured.provider)
+      const hit = models.find((item) => item.id === configured.model)
+      if (hit === undefined || supportsImage(hit)) return { target: configured, llm }
     }
+
+    // 2) 默认模型看不了图：换同provider内第一个能看图的模型，再换其它 provider。
+    let fallback: WinSnipModelTarget | undefined
+    for (const provider of providers) {
+      for (const item of await modelInfo(provider.id)) {
+        if (supportsImage(item)) return { target: { provider: provider.id, model: item.id }, llm }
+        fallback ??= { provider: provider.id, model: item.id }
+      }
+    }
+    if (fallback !== undefined) return { target: fallback, llm }
     throw new Error('还没有可用的模型：请先在设置里配置一个模型提供方。')
   }
 
@@ -156,7 +192,10 @@ export class WinSnipVision {
         temperature: 0,
         signal: controller.signal,
         messages: [{
+          // DSH 的 Message 是四件套（id/role/content/source），少一个都会被适配器拒掉。
+          id: 'win-snip-' + request.kind + '-' + Date.now().toString(36),
           role: 'user',
+          source: { kind: 'user' },
           content: [
             { type: 'text', text: prompt },
             { type: 'image', attachment: ref },
@@ -166,8 +205,11 @@ export class WinSnipVision {
       for await (const chunk of stream) {
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string') raw += chunk.text
         if (chunk.type === 'finish') {
-          const failure = chunk.reason?.failure
-          if (failure !== undefined) throw new Error('模型调用失败：' + (failure.message ?? '未知原因'))
+          // FinishReason 是判别联合：只有 aborted / error 两种带 failure。
+          const reason = chunk.reason as { kind?: string; failure?: { message?: string } } | undefined
+          if (reason?.kind === 'error' || reason?.kind === 'aborted') {
+            throw new Error('模型调用失败：' + (reason.failure?.message ?? reason.kind))
+          }
         }
       }
     } finally {
