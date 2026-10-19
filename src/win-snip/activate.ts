@@ -65,6 +65,8 @@ export function activateWinSnip(ctx: Context, config: WinSnipActivationConfig): 
       assistant.stop()
     },
     capture: () => assistant.requestCapture(),
+    // 面板「打开剪贴板」与热键里选「剪贴板」走同一条命令通道，行为不会分叉。
+    openClipboard: () => assistant.requestOpenClipboard(),
   })
   if (config.enabled && readWinSnipSettings().enabled) {
     log('[dsh-devforge] win-snip: 按配置启动常驻助手（保存目录 %s）', resolveSaveDir(readWinSnipSettings()))

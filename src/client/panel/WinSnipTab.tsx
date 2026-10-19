@@ -7,12 +7,16 @@
  * 这两件事会脱节（原生进程崩溃、热键被占用），所以必须分开显示。
  *
  * 版面约定（2026-10-19 重排，只动视觉与文案，不动任何接口与状态流转）：
- * 三张 `.formGrid` 分组卡片——助手状态 / 截图行为 / 识别与翻译。
+ * 四张 `.formGrid` 分组卡片——助手状态 / 截图行为 / 识别与翻译 / 剪贴板历史。
  * 重组前这一页是 8 行扁平 `.formRow`：字段、说明、按钮同一个重量地平铺下来，
  * 组内间距等于组间间距（都是 --dv-gap），用户看不出"这是几件事"，
  * 而"进程在不在跑"这条最该先看到的事实被埋在页尾的说明文字里。
  * 现在：标题行右侧直接挂状态徽章；分组边界由卡片给出；每个字段的说明降到
  * 字段下方的三级文字（原来与控件同行，抢标签的视线）。
+ *
+ * 剪贴板历史卡（2026-10-19 新增）：开关、保留天数与"存在哪/多少条/最后一条何时"
+ * 放在同一张卡里——只读信息是用户判断"功能是否真的在工作"的唯一依据，
+ * 拆到别处就又回到"勾了没反应"的困惑里。
  */
 import { useEffect, useState } from 'react'
 import type { DevforgeApi } from '../api.ts'
@@ -32,8 +36,41 @@ const TARGETS: ReadonlyArray<{ value: WinSnipSettings['translateTarget']; label:
 const BUSY_TEXT: Readonly<Record<string, string>> = {
   save: '保存中…',
   capture: '截图中…',
+  clipboard: '打开中…',
   start: '启动后台中…',
   stop: '停止后台中…',
+}
+
+/** 保留天数的允许区间：与宿主侧 WIN_SNIP_CLIPBOARD_DAYS 保持一致。 */
+const DAYS_MIN = 1
+const DAYS_MAX = 90
+const DAYS_FALLBACK = 15
+
+/**
+ * 保留天数前端夹取。
+ *
+ * 输入框允许用户中途敲出空值或越界值（否则删数字都会被打断），
+ * 所以在这里统一收敛：非法输入回落 15 天，越界夹到 1/90。
+ */
+function clampDays(value: string): number {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed)) return DAYS_FALLBACK
+  return Math.min(DAYS_MAX, Math.max(DAYS_MIN, parsed))
+}
+
+/** 最近记录时间转成可读文案；空值或脏值一律「暂无记录」，不把 Invalid Date 摆给用户。 */
+function formatRecordedAt(iso: string | undefined): string {
+  if (iso === undefined || iso === '') return '暂无记录'
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return '暂无记录'
+  // 精确到分钟即可：秒对"最近一次记录"没有信息量，只会把这一行撑长。
+  return at.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 }
 
 export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
@@ -42,6 +79,8 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
   const [models, setModels] = useState<ReadonlyArray<{ id: string; name: string; provider: string }>>([])
   const [hotkeyDraft, setHotkeyDraft] = useState('')
   const [saveDirDraft, setSaveDirDraft] = useState('')
+  // 保留天数用草稿 + 「应用天数」：数字框每敲一位就存会把 15 改成 1 再改 15，中间态会真落库。
+  const [daysDraft, setDaysDraft] = useState(String(DAYS_FALLBACK))
   const [busy, setBusy] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -66,6 +105,7 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       } catch { setModels([]) }
       setHotkeyDraft(nextSettings.hotkey)
       setSaveDirDraft(nextSettings.saveDir)
+      setDaysDraft(String(nextSettings.clipboardDays))
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) }
   }
   useEffect(() => { void refresh() }, [])
@@ -106,6 +146,16 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
           onClick={() => { void run('capture', async () => { await api.winSnipCapture() }) }}
         >
           立即截图
+        </button>
+        {/* 剪贴板入口与截图同排但退成次级：主按钮永远指向"当下最常用的那件事"，
+            而它只有在助手真的在跑时才有意义（命令要靠原生助手消费）。 */}
+        <button
+          type="button"
+          className={css['ghostButton']}
+          disabled={busy !== '' || !supported || !running}
+          onClick={() => { void run('clipboard', async () => { await api.winSnipClipboard() }) }}
+        >
+          打开剪贴板
         </button>
       </div>
 
@@ -148,7 +198,7 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
         </div>
         <p className={css['subtleText']}>
           {running
-            ? `后台进程运行中（PID ${status?.pid ?? '-'}）· 热键 ${status?.hotkey ?? ''} · 累计截图 ${status?.captures ?? 0} 次`
+            ? `后台进程运行中（PID ${status?.pid ?? '-'}）· 热键 ${status?.hotkey ?? ''} · 累计截图 ${status?.captures ?? 0} 次 · 剪贴板历史 ${status?.clipboardItems ?? 0} 条 · 保留最近 ${status?.clipboardDays ?? DAYS_FALLBACK} 天`
             : '后台进程未运行，按热键不会有反应；点右侧「启动后台」开始。'}
         </p>
         <div className={css['field']}>
@@ -170,7 +220,24 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       <div className={css['formGrid']} data-layout="stacked" data-dsh-part="win-snip-capture">
         <h3 className={css['sectionTitle']}>截图行为</h3>
         {/* 同一分区不混用两种保存语义；这里两种都要有，就把语义写在分区说明里。 */}
-        <p className={css['subtleText']}>热键与目录改完点「应用」生效（会重启后台进程）；下面勾选项勾选即存。</p>
+        <p className={css['subtleText']}>
+          热键与目录改完点「应用」生效（会重启后台进程）；下面勾选项勾选即存。
+          「先弹功能选择框」关掉后，热键直接进入截图，剪贴板历史只能从页面按钮打开。
+        </p>
+
+        {/* 热键行为的第一个决定：按下去先弹选择框，还是直接进截图。
+            放在热键字段之前，因为它是"热键按下之后发生什么"的上位选择。 */}
+        <div className={css['fieldActions']}>
+          <label className={css['checkLabel']}>
+            <input
+              type="checkbox"
+              checked={settings?.hotkeyMenu === true}
+              disabled={busy !== '' || settings === null}
+              onChange={(event) => { save({ hotkeyMenu: event.target.checked }) }}
+            />
+            按热键先弹出功能选择框（截图 / 剪贴板）
+          </label>
+        </div>
 
         <div className={css['field']} data-width="short">
           <label className={css['fieldLabel']} htmlFor="win-snip-hotkey">全局热键</label>
@@ -273,11 +340,70 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
         </div>
       </div>
 
+      {/* 卡片四 · 剪贴板历史：开关、保留天数与"存在哪/多少条/最后一条何时"同卡。
+          只读信息是用户判断"功能到底有没有在工作"的唯一依据，单独拆卡就又变成
+          "勾了却没反应、也无从核对"的困惑。 */}
+      <div className={css['formGrid']} data-layout="stacked" data-dsh-part="win-snip-clipboard">
+        <h3 className={css['sectionTitle']}>剪贴板历史</h3>
+        <p className={css['subtleText']}>
+          复制过的文字与图片记在本机，超过保留天数的自动清理；不联网、不上传。
+          按热键选「剪贴板」查看，或用页头的「打开剪贴板」。
+        </p>
+
+        <div className={css['fieldActions']}>
+          <label className={css['checkLabel']}>
+            <input
+              type="checkbox"
+              checked={settings?.clipboardEnabled === true}
+              disabled={busy !== '' || settings === null}
+              onChange={(event) => { save({ clipboardEnabled: event.target.checked }) }}
+            />
+            记录复制内容到本机历史
+          </label>
+        </div>
+
+        <div className={css['field']} data-width="short">
+          <label className={css['fieldLabel']} htmlFor="win-snip-clipboard-days">保留天数</label>
+          <span className={css['inlineAction']}>
+            <input
+              id="win-snip-clipboard-days"
+              type="number"
+              min={DAYS_MIN}
+              max={DAYS_MAX}
+              value={daysDraft}
+              disabled={busy !== ''}
+              onChange={(event) => { setDaysDraft(event.target.value) }}
+            />
+            <button
+              type="button"
+              className={css['ghostButton']}
+              disabled={busy !== '' || settings === null || (daysDraft.trim() !== '' && clampDays(daysDraft) === settings?.clipboardDays)}
+              onClick={() => {
+                // 前端先夹取再提交，宿主侧还会再夹一次：两边都夹是冗余，但能防手工改库/旧客户端。
+                const days = clampDays(daysDraft)
+                setDaysDraft(String(days))
+                save({ clipboardDays: days })
+              }}
+            >
+              应用天数
+            </button>
+          </span>
+          <span className={css['mutedText']}>范围 1–90 天，改完点「应用天数」生效（不用重启后台）。</span>
+        </div>
+
+        {/* 只读信息：宿主 status 里一定给数字，lastClipboardAt 可能缺省，统一走空值兜底文案。 */}
+        <p className={css['subtleText']}>
+          存储目录：{status?.clipboardDir ?? '-'} · 当前 {status?.clipboardItems ?? 0} 条 ·
+          最近一次记录 {formatRecordedAt(status?.lastClipboardAt)}
+        </p>
+      </div>
+
       {/* 用法：读一次就够的引导，放页尾，不占用设置分组。
           "改动何时生效"已分别下沉到各分区的说明里（就地比集中在页尾更近）。 */}
       <p className={css['subtleText']}>
-        用法：按 {settings?.hotkey ?? 'Alt+A'} 起手 → 拖动框选 → 松开进入标注 →
-        工具条上可画矩形/箭头/文字/马赛克，或点「识别」「翻译」走模型视觉 →「钉图」把结果钉在屏幕最上层（Esc 关闭）。
+        用法：按 {settings?.hotkey ?? 'Alt+A'} → 选择「截图」或「剪贴板」→
+        截图走框选与标注（矩形/箭头/文字/马赛克，或「识别」「翻译」走模型视觉、「钉图」钉在最上层）；
+        剪贴板历史可搜索，回车复制回剪贴板，Delete 删除。
       </p>
     </section>
   )

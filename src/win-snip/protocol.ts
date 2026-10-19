@@ -12,7 +12,12 @@ export const WIN_SNIP_API = {
   start: '/api/dsh-devforge/win-snip/start',
   stop: '/api/dsh-devforge/win-snip/stop',
   capture: '/api/dsh-devforge/win-snip/capture',
+  /** 让面板直接唤起原生侧「剪贴板历史」窗口（等价于热键里选「剪贴板」）。 */
+  clipboard: '/api/dsh-devforge/win-snip/clipboard',
 } as const
+
+/** 剪贴板历史保留天数的允许区间（含边界）。 */
+export const WIN_SNIP_CLIPBOARD_DAYS = { min: 1, max: 90 } as const
 
 
 /** 翻译目标语言：auto 由模型自行判断中英互译方向。 */
@@ -38,6 +43,18 @@ export interface WinSnipSettings {
    * 重度推理模型要 10~35 秒，所以不该撞上哪个算哪个）。
    */
   ocrModel: string
+
+  /**
+   * 按热键后先弹「功能选择框」（截图 / 剪贴板），而不是直接进遮罩截图。
+   *
+   * 默认开：多了一个剪贴板入口之后，热键直达截图会让「剪贴板」没有可发现的入口；
+   * 习惯直达的用户可以在面板里关掉，回到原行为。
+   */
+  hotkeyMenu: boolean
+  /** 后台记录剪贴板历史（只存本机，按天数自动清理）。 */
+  clipboardEnabled: boolean
+  /** 剪贴板历史保留天数，取值 1–90，越界在合并补丁时夹取到边界。 */
+  clipboardDays: number
 }
 
 /** 面板保存用的增量补丁：字段缺省表示保持原值。 */
@@ -63,6 +80,14 @@ export interface WinSnipStatus {
   captures: number
   /** 保存目录（绝对路径）。 */
   saveDir: string
+  /** 当前已记录的剪贴板条数（助手未运行或未开启时为 0）。 */
+  clipboardItems: number
+  /** 最近一次记录到剪贴板内容的时间（ISO 字符串，从未记录时缺省）。 */
+  lastClipboardAt?: string
+  /** 生效的保留天数（来自配置，供面板显示"保留最近 N 天"）。 */
+  clipboardDays: number
+  /** 剪贴板历史的存储目录（绝对路径，只在本机）。 */
+  clipboardDir: string
   /** 需要用户知道的异常（如热键被占用、脚本缺失、非 Windows 平台）。 */
   message?: string
 }
@@ -79,6 +104,12 @@ export interface WinSnipHeartbeat {
   lastCaptureAt?: string
   /** 累计截图次数。 */
   captures: number
+  /** 已记录的剪贴板条数（老版本助手不写该字段）。 */
+  clipboardItems?: number
+  /** 最近一次记录剪贴板内容的时间（ISO 字符串）。 */
+  lastClipboardAt?: string
+  /** 助手当前生效的保留天数（用于解释为什么历史条数变少）。 */
+  clipboardDays?: number
   /** 最近一次异常（如热键注册失败）。 */
   error?: string
 }

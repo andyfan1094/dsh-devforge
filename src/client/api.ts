@@ -439,6 +439,11 @@ export class DevforgeApi {
     await readJson(await fetch(WIN_SNIP_API.capture, { method: 'POST' }))
   }
 
+  /** 打开剪贴板历史窗口（等价于按热键后在功能选择框里选「剪贴板」）。 */
+  async winSnipClipboard(): Promise<void> {
+    await readJson(await fetch(WIN_SNIP_API.clipboard, { method: 'POST' }))
+  }
+
   /** 面板导航：打开 http(s) 地址并返回页面快照。 */
   async browserNavigate(url: string): Promise<{ ok: boolean; snapshot: string }> {
     return await readJson(await fetch(BROWSER_API.navigate, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) }))

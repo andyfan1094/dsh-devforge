@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { getDb, getSettings, putSettings } from '../store/db.ts'
 import {
   parseHotkey,
+  WIN_SNIP_CLIPBOARD_DAYS,
   type WinSnipSettings,
   type WinSnipSettingsPatch,
   type WinSnipTranslateTarget,
@@ -25,6 +26,30 @@ export const DEFAULT_WIN_SNIP_SETTINGS: WinSnipSettings = {
   copyOnFinish: true,
   translateTarget: 'auto',
   ocrModel: '',
+  // 热键先弹功能选择框：默认开，保留"直达截图"作为可选项。
+  hotkeyMenu: true,
+  // 剪贴板历史默认记录：用户既然装了截图工具，复制内容能回溯是低风险的高价值能力。
+  clipboardEnabled: true,
+  clipboardDays: 15,
+}
+
+/**
+ * 把任意输入收敛成合法的保留天数（1–90 的整数）。
+ *
+ * 为什么夹取而不是报错：面板数字框、手工改库、老版本迁移都可能给出越界值，
+ * 这种情况下"就近取边界"比让整个设置页保存失败更符合用户预期；
+ * 非有限数（NaN / Infinity / 字符串）没有可用的"就近"，回落调用方给的原值
+ * （不传时用默认值）。
+ *
+ * @param value 待收敛的值。
+ * @param fallback 无法收敛时使用的原值/默认值。
+ */
+export function clampClipboardDays(value: unknown, fallback: number = DEFAULT_WIN_SNIP_SETTINGS.clipboardDays): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  const rounded = Math.trunc(value)
+  if (rounded < WIN_SNIP_CLIPBOARD_DAYS.min) return WIN_SNIP_CLIPBOARD_DAYS.min
+  if (rounded > WIN_SNIP_CLIPBOARD_DAYS.max) return WIN_SNIP_CLIPBOARD_DAYS.max
+  return rounded
 }
 
 
@@ -65,6 +90,11 @@ export function readWinSnipSettings(): WinSnipSettings {
       : DEFAULT_WIN_SNIP_SETTINGS.translateTarget,
     // 模型 id 不做白名单校验：模型目录会变，存个字符串，用时找不到会明确报错。
     ocrModel: typeof stored.ocrModel === 'string' ? stored.ocrModel.trim().slice(0, 120) : DEFAULT_WIN_SNIP_SETTINGS.ocrModel,
+    // 老库没有这三个字段：一律取默认（新功能默认开），不能当成"用户关了"。
+    hotkeyMenu: stored.hotkeyMenu !== false,
+    clipboardEnabled: stored.clipboardEnabled !== false,
+    // 天数允许夹取：历史版本/手工改库给出的 0 或 999 都收敛到 1–90。
+    clipboardDays: clampClipboardDays(stored.clipboardDays, DEFAULT_WIN_SNIP_SETTINGS.clipboardDays),
   }
 }
 
@@ -95,6 +125,13 @@ export function mergeWinSnipSettings(current: WinSnipSettings, patch: WinSnipSet
   if (typeof patch.ocrModel === 'string') next.ocrModel = patch.ocrModel.trim().slice(0, 120)
   if (typeof patch.translateTarget === 'string' && TARGETS.includes(patch.translateTarget as WinSnipTranslateTarget)) {
     next.translateTarget = patch.translateTarget as WinSnipTranslateTarget
+  }
+  // 新开关与前两个布尔字段同语义：只接受真正的布尔值，脏值忽略并保留原值。
+  if (typeof patch.hotkeyMenu === 'boolean') next.hotkeyMenu = patch.hotkeyMenu
+  if (typeof patch.clipboardEnabled === 'boolean') next.clipboardEnabled = patch.clipboardEnabled
+  if (patch.clipboardDays !== undefined) {
+    // 越界夹取到 1–90（0→1、999→90）；非数字保持原值，别把 NaN 落库。
+    next.clipboardDays = clampClipboardDays(patch.clipboardDays, current.clipboardDays)
   }
   return next
 }

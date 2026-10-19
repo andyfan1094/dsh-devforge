@@ -1,15 +1,15 @@
 # Windows 截图小工具（win-snip）
 
-> 状态：0.52.0 引入。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
+> 状态：0.52.0 引入；0.63.0 增加「热键先弹功能选择框」与「剪贴板历史（默认保留 15 天）」。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
 
 ## 一、它是什么
 
 插件内置的一套**原生截图工具**，行为对齐 Snipaste：
 
-1. 任意应用下按 `Alt+A`（可改）→ 全屏半透明遮罩，鼠标框选区域；
+0. 按热键（默认 `Alt+A`，可改）先弹出**功能选择框**：`1` 截图 / `2` 剪贴板，也可用方向键 + Enter；
 2. 松开鼠标就在原地进入编辑：矩形 / 椭圆 / 箭头 / 画笔 / 文字 / 马赛克 / 序号，支持撤销重做；
 3. 工具栏一键做**模型识别（OCR）**、**模型翻译**、**钉图（置顶悬浮）**、复制、保存；
-4. 钉住的图是**独立置顶窗口**，任何应用之上可见，可拖动、滚轮缩放、Esc 关闭，支持多张。
+4. 钉住的图是**独立置顶窗口**，任何应用之上可见，可拖动、滚轮缩放、Esc 关闭，支持多张；
 
 ## 二、为什么是原生而不是网页
 
@@ -51,10 +51,10 @@ Alt+A（RegisterHotKey，助手进程常驻）
 ```
 ~/.dsh/devforge/win-snip/
 ├── status.json          助手心跳（pid / 热键 / 截图次数 / 最近一次时间）
-├── commands/            宿主 → 助手（capture = 立即截一张）
+├── commands/            宿主 → 助手（capture = 截一张，menu = 功能选择框，clipboard = 剪贴板历史）
 ├── requests/            助手 → 宿主（ocr / translate + 图片）
 ├── responses/           宿主 → 助手（识别与译文）
-└── logs/assistant.log   助手运行日志（不含凭据）
+├── clipboard/           剪贴板历史（days/ 按天 JSONL + images/ 图片，默认保留 15 天）
 ```
 
 ## 四、HTTP 接口（仅本机 GUI）
@@ -65,7 +65,7 @@ Alt+A（RegisterHotKey，助手进程常驻）
 | GET/PUT | `/api/dsh-devforge/win-snip/settings` | 读取/保存配置（开关、热键、保存目录、模型通道、翻译语言） |
 | POST | `/api/dsh-devforge/win-snip/start` | 启动常驻助手 |
 | POST | `/api/dsh-devforge/win-snip/stop` | 停止常驻助手（含子窗口） |
-| POST | `/api/dsh-devforge/win-snip/capture` | 立即触发一次截图（等价按热键） |
+| POST | `/api/dsh-devforge/win-snip/capture` | 立即触发一次截图（等价选择框里选「截图」） |
 
 ## 五、配置项
 
@@ -104,13 +104,20 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - `native/win-snip-float.ps1` — 置顶浮窗（拖动/缩放/Esc）
 - `native/win-snip-result.ps1` — 识别/翻译结果窗
 - `native/win-snip-ui.ps1` — 工具条控件（`SnipToolButton` 自绘矢量图标按钮 + `SnipToolbarPanel` 容器）
+- `native/win-snip-launcher.ps1` + `native/win-snip-choice.cs` — 热键功能选择框（两张卡片 + 键盘操作）
+- `native/win-snip-clipboard-store.ps1` — 剪贴板历史存储（按天 JSONL、图片落盘、去重、过期清理）
+- `native/win-snip-clipboard-watch.ps1` — 剪贴板采集（序列号轮询、文本/图片/文件、hash 去重）
+- `native/win-snip-clipboard-read.cs` — 纯 Win32 剪贴板读写（文本 / 文件 / CF_DIB 图片）
+- `native/win-snip-clipboard-panel.ps1` — 剪贴板历史窗口（搜索 / 预览 / 复制 / 删除 / 清空）
 
 客户端（React）：
 
 - `src/client/panel/WinSnipTab.tsx` — 面板「截图」页签：开关、热键、保存目录、模型通道、翻译方向、后台状态与启停
-- `src/client/api.ts` — `getWinSnipStatus` / `getWinSnipSettings` / `putWinSnipSettings` / `winSnipStart` / `winSnipStop` / `winSnipCapture`
+- `src/client/api.ts` — `getWinSnipStatus` / `getWinSnipSettings` / `putWinSnipSettings` / `winSnipStart` / `winSnipStop` / `winSnipCapture` / `winSnipClipboard`
 
 构建：`scripts/postbuild.mjs` 把 `src/win-snip/native` 复制到 `lib/native` 并**强制 UTF-8 BOM**，随包发布。
+
+自测：`scripts/win-snip-clipboard-selftest.ps1` 在隔离目录里验证存储层与真实剪贴板采集（`-IncludeClipboard`），不需要宿主、不碰生产数据。
 
 > BOM 不是可选项：Windows PowerShell 5.1 会按 GBK 解码无 BOM 的 UTF-8 脚本，中文字符串直接变成语法错误（`表达式或语句中包含意外的标记`）。因此打包链路必须重新补 BOM，不能依赖源文件保存格式。
 
@@ -121,6 +128,9 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - 高 DPI 下执行的是 Per-Monitor V2 感知，坐标按物理像素处理。
 - 识别/翻译走模型视觉，需要至少一条可用的模型通道（MiniMax 订阅 Key 或 OpenAI 中转站）。
 - 助手进程随插件生命周期结束而结束；插件被卸载时不会留下常驻进程。
+- 助手停止时宿主会删掉 `status.json`，面板上的剪贴板条数显示 0，但磁盘历史仍在；
+  助手重新启动或打开剪贴板窗口后会回到真实条数。
+- 剪贴板历史只在本机：不上传、不联网；复制动作走系统剪贴板，与普通复制等价。
 
 ## 八、验收步骤
 
@@ -142,6 +152,9 @@ Alt+A（RegisterHotKey，助手进程常驻）
 4. 点「识别」拿到文字，点「翻译」拿到译文，均可复制；
 5. 点「钉图」，确认浮窗置顶、可拖动、滚轮缩放、Esc 关闭；
 6. 点「保存」落到配置目录，点「复制」在别处能粘贴出图。
+7. 按 `Alt+A` 先出现「随手工具」选择框（截图 / 剪贴板），按 `2` 打开剪贴板历史、Esc 关闭；
+8. 随便复制一段文字，确认它出现在剪贴板列表最前；搜索关键词能过滤；选中按 Enter 能复制回剪贴板；
+   Delete 删除单条，「清空历史」有二次确认。
 
 ## 九、识别结果怎么做到"按截图排版"
 
@@ -198,3 +211,37 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - **`.ps1` 必须是 UTF-8 带 BOM**：PowerShell 5.1 把无 BOM 当 GBK 解，直接报
   "表达式或语句中包含意外的标记"；队列与状态 JSON 反之必须无 BOM。
   `edit`/`write` 会丢 BOM，需用 `[System.IO.File]::WriteAllText` 显式补回。
+
+## 十一、功能选择框与剪贴板历史
+
+**功能选择框**（`win-snip-launcher.ps1` + `win-snip-choice.cs`）：
+
+- 热键触发后 150ms 才 arm 失焦自动关闭，避免刚显示就被判定失焦闪退；
+- 数字键 1/2、↑↓ 切换、Enter 确认、Esc 取消，点卡片也可以；
+- 返回 `'capture'` / `'clipboard'` / `$null`，`$null` 表示取消（不执行任何动作）；
+- 位置跟随光标，贴边时自动翻到左上，保证整个框都在工作区内。
+
+**剪贴板历史**（`win-snip-clipboard-*.ps1/.cs`）：
+
+- 采集：主循环每 30ms 比对 `GetClipboardSequenceNumber()`，变了才读；纯 Win32
+  （`OpenClipboard` / `GetClipboardData` / `GlobalLock`），不用 .NET `Clipboard` 类
+  （后者会抛"剪贴板被占用"，也拿不到 CF_HDROP 的原始路径）；
+- 优先级：文件 > 图片 > 文本；图片存 `clipboard/images/<id>.png`，JSONL 只存相对文件名；
+- 去重：内容 SHA1，同一内容重复复制不会重复记录；
+- 保留：按日期文件 + 引用集合清理。超过 `clipboardDays`（默认 15）的日期文件删除，
+  不再被任何保留记录引用的图片一并删除（跨天复制的图不会被误删）；
+- 上限：单条文本 200k 字符、文件列表 200 项、图片 16MB；
+- 隐私：只写本机 `~/.dsh/devforge/win-snip/clipboard/`，不联网、不上传；
+- 面板：搜索（内容 / 来源应用）、预览（文本 / 图片 / 文件）、Enter 或双击复制回剪贴板、
+  Delete 删除、Ctrl+F 聚焦搜索、F5 刷新、Esc 关闭；「清空历史」在底部并有二次确认。
+- **`[string]` 参数会把 `$null` 变成空串**：选择框的 `$choose` 原来写成
+  `param([string]$Choice)`，Esc 取消传 `$null` 被转成 `''`，调用方拿到的不是 `null`。
+  参数要么不声明类型，要么显式判空还原 `$null`。
+- **PowerShell 返回单元素集合会被展开成标量**：剪贴板历史只有 1 条时 `$items[0]`
+  取不到（读回 0 条）；`HashSet` 直接 `return` 会被展开成定长数组，`Remove` 抛
+  `Collection was of a fixed size`。统一用 `@(...)` 包住集合，返回 HashSet 用 `return ,$set`。
+- **`edit` / `write` 写回会丢 UTF-8 BOM**：改完 `.ps1` 必须复核补 BOM，
+  否则 PowerShell 5.1 按 GBK 解出乱码并报语法错误（本次实测踩到）。
+- **锁屏 / RDP 断开时 `CopyFromScreen` 报"句柄无效"**：UI 验收改用
+  `PrintWindow(hwnd, hdc, 2)` 离屏渲染；键盘交互用 `PostMessage` 发给**焦点控件**
+  （剪贴板面板里是 ListBox，不是顶层窗体）。

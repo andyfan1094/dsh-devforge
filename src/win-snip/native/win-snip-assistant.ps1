@@ -11,7 +11,17 @@ param(
     [Parameter(Mandatory = $true)][string]$HotkeyLabel,
     [Parameter(Mandatory = $true)][string]$BaseDir,
     [string]$SaveDir = '',
-    [string]$CopyOnFinish = '1'
+    [string]$CopyOnFinish = '1',
+    # 热键后先弹功能选择框（1）还是直接截图（0）；由宿主按面板配置传入。
+    [string]$HotkeyMenu = '1',
+    # 是否后台记录剪贴板历史（1/0）。
+    [string]$ClipboardEnabled = '1',
+    # 剪贴板历史保留天数（宿主已夹取到 1–90）。
+    [int]$ClipboardDays = 15,
+    # 单实例清理时用于匹配同类实例的脚本名片段。
+    # 默认值就是正式脚本名；隔离验收时把脚本另存并传别的 tag，两只助手就能共存，
+    # 不会因为"清理孤儿实例"把生产助手一起杀掉。
+    [string]$InstanceTag = 'win-snip-assistant'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -37,10 +47,17 @@ Ensure-SnipDir (Join-Path $BaseDir 'logs')
 . (Join-Path $scriptDir 'win-snip-float.ps1')
 . (Join-Path $scriptDir 'win-snip-result.ps1')
 . (Join-Path $scriptDir 'win-snip-overlay.ps1')
+. (Join-Path $scriptDir 'win-snip-clipboard-store.ps1')
+. (Join-Path $scriptDir 'win-snip-clipboard-watch.ps1')
+. (Join-Path $scriptDir 'win-snip-launcher.ps1')
+. (Join-Path $scriptDir 'win-snip-clipboard-panel.ps1')
 
 $copyToClipboard = ($CopyOnFinish -ne '0')
 $hotkeyId = 1
 $script:LastCaptureAt = [DateTime]::MinValue
+# 热键行为：true = 先弹「截图 / 剪贴板」选择框；false = 保持老行为直接进遮罩。
+$script:SnipMenuMode = ($HotkeyMenu -ne '0')
+$global:SnipStats.ClipboardDays = $ClipboardDays
 
 # 先装异常兜底：之后任何回调出问题都只记日志，不再弹 .NET 崩溃框并结束进程。
 Enable-SnipCrashGuard
@@ -49,12 +66,15 @@ Enable-SnipCrashGuard
 # 匹配规则必须严格：只认 `-File <...>win-snip-assistant.ps1` 形式的命令行。
 # 硬教训（2026-10-18）：早先用 -like '*win-snip-assistant.ps1*' 会把"命令行里
 # 恰好提到该文件名的 shell"一起杀掉，连排查用的终端都被自己打死。
+# 隔离验收用自定义 -InstanceTag 启动的实例不会被正式实例清理（反之亦然）。
+$script:SnipInstanceTag = if ([string]::IsNullOrWhiteSpace($InstanceTag)) { 'win-snip-assistant' } else { $InstanceTag }
 try {
+    $siblingPattern = '-File\s+\S*' + [regex]::Escape($script:SnipInstanceTag) + '\.ps1'
     $siblings = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.ProcessId -ne $PID -and
             $_.CommandLine -and
-            $_.CommandLine -match '-File\s+\S*win-snip-assistant\.ps1'
+            $_.CommandLine -match $siblingPattern
         }
     foreach ($sibling in $siblings) {
         try {
@@ -97,18 +117,79 @@ function Invoke-SnipCapture {
 
 <#
 .SYNOPSIS
+    打开剪贴板历史面板（供选择框与宿主命令调用）。
+#>
+function Invoke-SnipClipboardPanel {
+    $stats = $global:SnipStats
+    if ($stats.State -ne 'idle') { return }
+    $stats.State = 'clipboard'
+    Update-SnipHeartbeat
+    try {
+        Show-SnipClipboardPanel -Days ([int]$stats.ClipboardDays)
+    } catch {
+        $stats.Error = '剪贴板历史面板失败：' + $_.Exception.Message
+        Write-SnipLog $stats.Error
+    } finally {
+        $stats.State = 'idle'
+        Update-SnipHeartbeat
+    }
+}
+
+<#
+.SYNOPSIS
+    热键后的功能选择框：选截图走遮罩，选剪贴板开历史面板。
+#>
+function Invoke-SnipMenu {
+    $stats = $global:SnipStats
+    if ($stats.State -ne 'idle') { return }
+    $stats.State = 'menu'
+    Update-SnipHeartbeat
+    $choice = $null
+    try {
+        $choice = Show-SnipLauncher -Days ([int]$stats.ClipboardDays)
+    } catch {
+        $stats.Error = '功能选择框失败：' + $_.Exception.Message
+        Write-SnipLog $stats.Error
+    } finally {
+        $stats.State = 'idle'
+        Update-SnipHeartbeat
+    }
+    if ($choice -eq 'capture') {
+        # 必须先回到 idle：Invoke-SnipCapture 自己会判断状态，否则会被这里挡掉。
+        Invoke-SnipCapture
+    } elseif ($choice -eq 'clipboard') {
+        Invoke-SnipClipboardPanel
+    }
+}
+
+<#
+.SYNOPSIS
     处理宿主写入的立即截图命令（面板「立即截一张」/ 自检用）。
+.DESCRIPTION
+    命令是"一次性"的：先全部删除再按 action 执行，异常绝不会让同一条命令反复触发。
+    支持的 action：capture（默认）/ menu（弹选择框）/ clipboard（开剪贴板历史）。
 #>
 function Invoke-SnipCommands {
     $dir = Join-Path $global:SnipStats.BaseDir 'commands'
     if (-not (Test-Path $dir)) { return }
     $files = @(Get-ChildItem -Path $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)
     if ($files.Count -eq 0) { return }
+    $actions = New-Object System.Collections.ArrayList
     foreach ($file in $files) {
-        # 先删再执行：命令是"一次性"的，绝不能因为异常反复触发。
+        $action = 'capture'
+        try {
+            $raw = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+            $payload = $raw | ConvertFrom-Json
+            if ($null -ne $payload -and [string]$payload.action -ne '') { $action = [string]$payload.action }
+        } catch { }
         try { Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue } catch { }
+        if (-not $actions.Contains($action)) { [void]$actions.Add($action) }
     }
-    Invoke-SnipCapture
+    foreach ($action in $actions) {
+        if ($action -eq 'menu') { Invoke-SnipMenu }
+        elseif ($action -eq 'clipboard') { Invoke-SnipClipboardPanel }
+        else { Invoke-SnipCapture }
+    }
 }
 
 <#
@@ -186,6 +267,14 @@ if ($hookInstalled) {
 }
 Update-SnipHeartbeat
 
+# 剪贴板采集：主循环之前先起一次，用户"刚复制完就按热键"时历史里已经有这条。
+if ($ClipboardEnabled -ne '0') {
+    try { Initialize-SnipClipboardWatcher -Days $ClipboardDays -Enabled $true }
+    catch { Write-SnipLog ('剪贴板采集初始化失败：' + $_.Exception.Message) }
+} else {
+    Write-SnipLog '剪贴板采集已关闭（历史面板仍可查看既有记录）'
+}
+
 $lastBeat = Get-Date
 try {
     while ($true) {
@@ -203,12 +292,14 @@ try {
         }
         if ($hits -gt 0 -or $hookHit) {
             Write-SnipLog ('收到热键：' + $HotkeyLabel)
-            Invoke-SnipCapture
-            # 截图期间钩子可能又累计了命中，丢弃掉，避免关掉编辑器立刻又弹一次。
+            if ($script:SnipMenuMode) { Invoke-SnipMenu } else { Invoke-SnipCapture }
+            # 选择框/截图期间钩子可能又累计了命中，丢弃掉，避免关掉窗口立刻又弹一次。
             if ($hookInstalled) { try { [void][WinSnipHook]::ConsumeHit() } catch { } }
         }
 
         Invoke-SnipCommands
+
+        try { Update-SnipClipboardWatcher } catch { }
 
         if (((Get-Date) - $lastBeat).TotalSeconds -ge 5) {
             Update-SnipHeartbeat

@@ -10,7 +10,7 @@ import { join, resolve as resolvePath, sep } from 'node:path'
 import type { WinSnipHeartbeat, WinSnipSettings, WinSnipStatus, WinSnipVisionRequest, WinSnipVisionResponse } from './protocol.ts'
 import { isWinSnipSupported, parseHotkey } from './protocol.ts'
 import { ensureWinSnipPaths, resolveNativeScript, winSnipPaths, type WinSnipPaths } from './paths.ts'
-import { resolveSaveDir } from './store.ts'
+import { resolveSaveDir, clampClipboardDays } from './store.ts'
 import type { WinSnipVision } from './vision.ts'
 
 /** 轮询请求队列的间隔（毫秒）。 */
@@ -98,6 +98,11 @@ export class WinSnipAssistant {
       '-BaseDir', paths.root,
       '-SaveDir', resolveSaveDir(settings),
       '-CopyOnFinish', settings.copyOnFinish ? '1' : '0',
+      // 三个新参数与 -CopyOnFinish 同风格（'1'/'0' 字符串），由原生侧切换
+      // 「热键先弹功能选择框」与「剪贴板历史记录/保留天数」。
+      '-HotkeyMenu', settings.hotkeyMenu ? '1' : '0',
+      '-ClipboardEnabled', settings.clipboardEnabled ? '1' : '0',
+      '-ClipboardDays', String(clampClipboardDays(settings.clipboardDays)),
     ]
     try {
       this.child = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore' })
@@ -151,6 +156,34 @@ export class WinSnipAssistant {
     writeFileSync(commandPath, JSON.stringify({ action: 'capture' }), 'utf8')
   }
 
+  /**
+   * 打开剪贴板历史窗口（写入命令文件，由助手消费）。
+   *
+   * 与 requestCapture 同款：面板按钮和热键里选「剪贴板」最终都落到这一条命令，
+   * 保证两条入口不会各自演化出不同的窗口行为。
+   */
+  requestOpenClipboard(): void {
+    if (!this.isRunning()) throw new Error('截图助手未运行，请先在面板启动。')
+    const paths = this.paths()
+    ensureWinSnipPaths(paths)
+    const commandPath = join(paths.commands, 'clipboard-' + String(Date.now()) + '.json')
+    writeFileSync(commandPath, JSON.stringify({ action: 'clipboard' }), 'utf8')
+  }
+
+  /**
+   * 打开功能选择框（截图 / 剪贴板）。
+   *
+   * 面板暂不调用：热键侧由原生直接弹框，这里先留一个统一入口，
+   * 后续要做「面板里预览热键菜单」时不用再改协议。
+   */
+  requestMenu(): void {
+    if (!this.isRunning()) throw new Error('截图助手未运行，请先在面板启动。')
+    const paths = this.paths()
+    ensureWinSnipPaths(paths)
+    const commandPath = join(paths.commands, 'menu-' + String(Date.now()) + '.json')
+    writeFileSync(commandPath, JSON.stringify({ action: 'menu' }), 'utf8')
+  }
+
   /** 进程是否存活（以子进程状态为准）。 */
   isRunning(): boolean {
     return this.child !== undefined && this.child.exitCode === null
@@ -172,6 +205,15 @@ export class WinSnipAssistant {
       ...(heartbeat?.lastCaptureAt !== undefined ? { lastCaptureAt: heartbeat.lastCaptureAt } : {}),
       captures: heartbeat?.captures ?? 0,
       saveDir: resolveSaveDir(settings),
+      // 剪贴板历史：条数与最近记录时间来自心跳（原生侧维护），天数来自配置。
+      // 面板要能解释"为什么历史变少了"，所以天数取"当前生效值"而不是老心跳里的旧值。
+      clipboardItems: typeof heartbeat?.clipboardItems === 'number' ? heartbeat.clipboardItems : 0,
+      ...(typeof heartbeat?.lastClipboardAt === 'string' && heartbeat.lastClipboardAt !== ''
+        ? { lastClipboardAt: heartbeat.lastClipboardAt }
+        : {}),
+      clipboardDays: clampClipboardDays(settings.clipboardDays),
+      // 与原生约定同一目录：<DSH_HOME>/devforge/win-snip/clipboard（只存本机）。
+      clipboardDir: join(winSnipPaths().root, 'clipboard'),
       ...(message === undefined ? {} : { message }),
     }
   }
@@ -195,6 +237,10 @@ export class WinSnipAssistant {
         startedAt: raw.startedAt,
         ...(typeof raw.lastCaptureAt === 'string' ? { lastCaptureAt: raw.lastCaptureAt } : {}),
         captures: typeof raw.captures === 'number' ? raw.captures : 0,
+        // 剪贴板字段是老助手不写的可选字段：类型不对就当作没有，不能让状态接口报错。
+        ...(typeof raw.clipboardItems === 'number' ? { clipboardItems: raw.clipboardItems } : {}),
+        ...(typeof raw.lastClipboardAt === 'string' && raw.lastClipboardAt !== '' ? { lastClipboardAt: raw.lastClipboardAt } : {}),
+        ...(typeof raw.clipboardDays === 'number' ? { clipboardDays: raw.clipboardDays } : {}),
         ...(typeof raw.error === 'string' && raw.error !== '' ? { error: raw.error } : {}),
       }
     } catch {

@@ -1,4 +1,4 @@
-# win-snip-common.ps1 —— 截图小工具公共层
+﻿# win-snip-common.ps1 —— 截图小工具公共层
 #
 # 约定：本文件与其它 win-snip-*.ps1 一律以 UTF-8 with BOM 保存。
 # 无 BOM 时 Windows PowerShell 5.1 会按 ANSI 解码中文注释，脚本会静默出错。
@@ -146,13 +146,17 @@ $script:SnipPmRemove = 0x0001
 # 运行期共享状态：助手主循环与各窗口都写这一份，心跳据此生成。
 if ($null -eq $global:SnipStats) {
     $global:SnipStats = @{
-        BaseDir       = ''
-        Hotkey        = ''
-        StartedAt     = (Get-Date).ToString('o')
-        Captures      = 0
-        LastCaptureAt = $null
-        State         = 'idle'
-        Error         = $null
+        BaseDir         = ''
+        Hotkey          = ''
+        StartedAt       = (Get-Date).ToString('o')
+        Captures        = 0
+        LastCaptureAt   = $null
+        State           = 'idle'
+        Error           = $null
+        # 剪贴板历史：条数与最近记录时间由采集层写入，心跳带给宿主面板。
+        ClipboardItems  = 0
+        LastClipboardAt = $null
+        ClipboardDays   = 15
     }
 }
 
@@ -224,6 +228,10 @@ function Update-SnipHeartbeat {
         }
         if ($null -ne $s.LastCaptureAt) { $payload['lastCaptureAt'] = [string]$s.LastCaptureAt }
         if ($null -ne $s.Error -and ([string]$s.Error) -ne '') { $payload['error'] = [string]$s.Error }
+        # 剪贴板历史汇总：宿主面板据此显示「N 条 · 最近一次」。
+        if ($null -ne $s.ClipboardItems) { $payload['clipboardItems'] = [int]$s.ClipboardItems }
+        if ($null -ne $s.LastClipboardAt) { $payload['lastClipboardAt'] = [string]$s.LastClipboardAt }
+        if ($null -ne $s.ClipboardDays) { $payload['clipboardDays'] = [int]$s.ClipboardDays }
         $json = $payload | ConvertTo-Json -Compress
         $utf8 = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText((Join-Path $s.BaseDir 'status.json'), $json, $utf8)

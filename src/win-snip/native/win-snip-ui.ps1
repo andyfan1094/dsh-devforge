@@ -217,6 +217,18 @@ public class SnipToolButton : Control
                         g.DrawLine(pen, 3.4f, 3.4f, 10.6f, 10.6f);
                         g.DrawLine(pen, 10.6f, 3.4f, 3.4f, 10.6f);
                         break;
+                    case "trash":
+                        // 垃圾桶：盖 + 提手 + 桶身 + 两条竖线。删除剪贴板历史条目用。
+                        g.DrawLine(pen, 3f, 4.4f, 11f, 4.4f);
+                        g.DrawLine(pen, 5.6f, 4.4f, 5.6f, 2.8f);
+                        g.DrawLine(pen, 5.6f, 2.8f, 8.4f, 2.8f);
+                        g.DrawLine(pen, 8.4f, 2.8f, 8.4f, 4.4f);
+                        g.DrawLine(pen, 4.4f, 4.4f, 5f, 11.8f);
+                        g.DrawLine(pen, 9.6f, 4.4f, 9f, 11.8f);
+                        g.DrawLine(pen, 5f, 11.8f, 9f, 11.8f);
+                        g.DrawLine(pen, 6.4f, 6.4f, 6.6f, 10f);
+                        g.DrawLine(pen, 7.6f, 6.4f, 7.4f, 10f);
+                        break;
                     default:
                         g.DrawEllipse(pen, 3f, 3f, 8f, 8f);
                         break;

@@ -27,9 +27,11 @@ export interface WinSnipRoutesDeps {
   stop: () => void
   /** 立即截一张。 */
   capture: () => void
+  /** 打开剪贴板历史窗口（与热键里选「剪贴板」同一条路径）。 */
+  openClipboard: () => void
 }
 
-/** 截图小工具路由：状态、配置、启动、停止与立即截图。 */
+/** 截图小工具路由：状态、配置、启动、停止、立即截图与剪贴板历史。 */
 export function makeWinSnipRoutes(deps: WinSnipRoutesDeps): WebRoute[] {
   const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
     if (!isLoopbackRequest(req)) { writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' }); return false }
@@ -103,6 +105,20 @@ export function makeWinSnipRoutes(deps: WinSnipRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: true })
         } catch (error) {
           writeJson(res, 502, { ok: false, error: error instanceof Error ? error.message : '触发截图失败' })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: WIN_SNIP_API.clipboard,
+      handler: async (req, res) => {
+        // 与截图命令同一条通道：都写命令文件给原生助手，不额外开第二条 IPC。
+        if (!guard(req, res, 'POST')) return
+        try {
+          deps.openClipboard()
+          writeJson(res, 200, { ok: true })
+        } catch (error) {
+          writeJson(res, 502, { ok: false, error: error instanceof Error ? error.message : '打开剪贴板历史失败' })
         }
       },
     },
