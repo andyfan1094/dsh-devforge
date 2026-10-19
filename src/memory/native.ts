@@ -198,7 +198,7 @@ function asMeta(data: unknown, entry: StoredMemoryEntry): MemoryEntryMeta {
     helpfulCount: cleanCounter(value.helpfulCount),
     harmfulCount: cleanCounter(value.harmfulCount),
     ...(typeof value.lastAccessedAt === 'number' && value.lastAccessedAt > 0 ? { lastAccessedAt: value.lastAccessedAt } : {}),
-    ...(value.archivedBy === 'user' || value.archivedBy === 'curator' || value.archivedBy === 'dream' || value.archivedBy === 'system' ? { archivedBy: value.archivedBy } : {}),
+    ...(value.archivedBy === 'user' || value.archivedBy === 'curator' || value.archivedBy === 'dream' || value.archivedBy === 'selfrepair' || value.archivedBy === 'system' ? { archivedBy: value.archivedBy } : {}),
     updatedAt: typeof value.updatedAt === 'number' && value.updatedAt > 0 ? value.updatedAt : entry.updatedAt,
   }
 }
@@ -589,7 +589,7 @@ export class NativeMemoryStore {
    * actor 用来区分「谁归档的」（0.51.0）：面板此前把 archived 一律显示成"人工归档"，
    * 但记忆管家与做梦也会归档，混在一起用户分不清是系统清的还是自己点的。
    */
-  archive(id: string, value: boolean, actor: 'user' | 'curator' | 'dream' | 'system' = 'user'): NativeMemoryEntry {
+  archive(id: string, value: boolean, actor: 'user' | 'curator' | 'dream' | 'selfrepair' | 'system' = 'user'): NativeMemoryEntry {
     const entry = this.get(id)
     const meta = this.getMeta(id)
     if (entry === undefined || meta === undefined) throw new Error('记忆不存在：' + id)

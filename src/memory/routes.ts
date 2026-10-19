@@ -87,6 +87,14 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   curatorMaxEvict: 200,
   curatorMaxMerge: 50,
   curatorIntervalHours: 12,
+  // ---- 轮末自评修复（0.55.0）：每轮结束复查本轮真正注入过的记忆 ----
+  // 辉哥 2026-10-19 决策：全自动（含删除）、每轮都跑。删除一律软归档（工作台可恢复），
+  // 两道爆炸半径闸门：单轮动作上限 + 单轮归档上限。
+  selfRepairEnabled: true,
+  selfRepairProvider: MEMORY_DEFAULT_ROUTE.provider,
+  selfRepairModel: MEMORY_DEFAULT_ROUTE.model,
+  selfRepairMaxActions: 5,
+  selfRepairMaxArchive: 2,
 }
 
 function writeJson(res: import('node:http').ServerResponse, status: number, payload: unknown): void {
@@ -160,6 +168,12 @@ export function normalizeMemorySettings(raw: unknown, current: MemorySettings): 
     curatorMaxEvict: clampNumber(body.curatorMaxEvict, 0, 5000, current.curatorMaxEvict),
     curatorMaxMerge: clampNumber(body.curatorMaxMerge, 0, 500, current.curatorMaxMerge),
     curatorIntervalHours: clampNumber(body.curatorIntervalHours, 1, 168, current.curatorIntervalHours),
+    // 轮末自评修复（0.55.0）：动作数与归档数都夹紧，模型再激进也改不动一大片。
+    selfRepairEnabled: typeof body.selfRepairEnabled === 'boolean' ? body.selfRepairEnabled : current.selfRepairEnabled,
+    selfRepairProvider: cleanRoute(body.selfRepairProvider, current.selfRepairProvider),
+    selfRepairModel: cleanRoute(body.selfRepairModel, current.selfRepairModel),
+    selfRepairMaxActions: clampNumber(body.selfRepairMaxActions, 0, 50, current.selfRepairMaxActions),
+    selfRepairMaxArchive: clampNumber(body.selfRepairMaxArchive, 0, 20, current.selfRepairMaxArchive),
   }
 }
 

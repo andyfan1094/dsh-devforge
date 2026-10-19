@@ -12,11 +12,16 @@
  *   替代前快照」语义，且沉淀窗口据此排除插件消息，阻断旧记忆回流；
  * - 常驻块独立预算（不侵占检索注入预算）；内置条目渲染更新日期，
  *   整条装入预算、绝不截半条。
+ *
+ * 0.55.0：内置/常驻/档案卡三条 native 注入行在类别之后追加「 · #短ID」，
+ * 模型因此能直接引用具体条目去 memory_manage（get/update/feedback/delete）。
+ * 预算与整条装入语义不变——只是每条多约 12 字，装不下就少装一条。
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSearchHit } from '../rag/protocol.ts'
 import type { RagService } from '../rag/service.ts'
+import { SHORT_MEMORY_ID_PREFIX, shortMemoryId } from './protocol.ts'
 import type { MemoryQualification, MemoryRecallTrace, MemoryScopeContext, MemorySearchHit, MemorySettings, NativeMemoryEntry } from './protocol.ts'
 import type { MemoryGovernanceService } from './governance.ts'
 import type { MemoryRecallService } from './recall.ts'
@@ -119,6 +124,17 @@ function qualificationMark(qualification: MemoryQualification, reason: string): 
   return ''
 }
 
+/** 行内可引用的短记忆 ID 后缀（0.55.0）。
+ *
+ * 为什么必须带：模型只能引用「上下文里出现过」的东西。此前注入行只有日期、来源和类别，
+ * 模型想纠正/删除某条记忆时无法指名，只能复述正文去搜索，命中哪条全凭运气。
+ * 加上「 · #xxxxxxxx」后，短 ID 可直接作为 memory_manage 的 id 传回来。
+ * 为什么是 8 位而不是完整 UUID：注入预算是硬约束（常驻 600 / 档案卡 1800 字），
+ * 36 位 UUID 会把正文挤出去；解析侧要求前缀唯一，撞了就报错让调用方补位数。 */
+function shortIdSuffix(entry: NativeMemoryEntry): string {
+  return SHORT_MEMORY_ID_PREFIX + shortMemoryId(entry.id)
+}
+
 /** 渲染内置记忆条目快照（导出供单测校验格式与预算）：
  * - 每条带更新日期：模型可据此判断时效（旧事实不冒充现状）；
  * - 整条装入预算，装不下整条就停止（绝不截半条——半条比缺条更误导）；
@@ -135,7 +151,7 @@ function renderNativeContextDetailed(entries: NativeMemoryEntry[], maxChars: num
   for (const entry of entries) {
     const stamp = entryDateStamp(entry)
     const mark = marks?.get(entry.id) ?? ''
-    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.source + ' · ' + entry.category + '] ' + entry.content + (mark === '' ? '' : '（' + mark + '）')
+    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.source + ' · ' + entry.category + shortIdSuffix(entry) + '] ' + entry.content + (mark === '' ? '' : '（' + mark + '）')
     if (used + line.length + 1 > maxChars) {
       if (includedIds.size === 0) {
         lines.push(line.slice(0, Math.max(0, maxChars - header.length - 1)))
@@ -171,7 +187,7 @@ function renderPinnedContextDetailed(entries: NativeMemoryEntry[], maxChars: num
   const includedIds = new Set<string>()
   let used = header.length
   for (const entry of entries) {
-    const line = '[' + entry.source + ' · ' + entry.category + '] ' + entry.content
+    const line = '[' + entry.source + ' · ' + entry.category + shortIdSuffix(entry) + '] ' + entry.content
     if (used + line.length + 1 > maxChars) {
       if (includedIds.size === 0) {
         lines.push(line.slice(0, Math.max(0, maxChars - header.length - 1)))
@@ -204,7 +220,7 @@ export function renderProjectProfileDetailed(entries: NativeMemoryEntry[], label
   for (const entry of entries) {
     if (entry.pinned === true) continue
     const stamp = entryDateStamp(entry)
-    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.category + '] ' + entry.content
+    const line = '[' + (stamp !== '' ? stamp + ' · ' : '') + entry.category + shortIdSuffix(entry) + '] ' + entry.content
     if (used + line.length + 1 > maxChars) break
     lines.push(line)
     includedIds.add(entry.id)

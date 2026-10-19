@@ -48,6 +48,7 @@ import { ZhipuReranker } from './rag/rerank.ts'
 import { MemoryDreamService } from './memory/dream.ts'
 import { MemoryCuratorService } from './memory/curator.ts'
 import { MemorySedimentService } from './memory/sediment.ts'
+import { MemorySelfRepairService } from './memory/selfrepair.ts'
 import { generateReflectionWithTokenSteps } from './memory/reflect.ts'
 import { MemoryStatsStore } from './memory/stats.ts'
 import { MemoryInjectionService } from './memory/inject.ts'
@@ -931,6 +932,23 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
   }, nativeMemory, memoryStats, { recall: memoryRecall, governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent })
 
+  // ---- 轮末记忆自评修复（0.55.0）：turn/end 复查本轮真正注入过的记忆 ----
+  // 与沉淀的分工：沉淀只新增、从不回头纠错；自评是唯一会给「已经进入上下文并影响过判断」的
+  // 记忆纠错与软删除的路径。辉哥 2026-10-19 决策：全自动（含删除）、每轮都跑。
+  // 安全边界在服务内部（双限额闸门 + 钉选不归档 + 软归档可恢复 + 全程吞异常），这里只负责接线。
+  const selfRepair = new MemorySelfRepairService(nativeMemory, memoryGovernance, (system, user) => {
+    // 自评路由可独立配置；配的服务商在宿主目录里不可用时回退宿主默认并留原因（与沉淀同口径）。
+    const route = memorySettingsRead()
+    const resolved = resolveMemoryRoute({ provider: route.selfRepairProvider, model: route.selfRepairModel })
+    if (resolved.provider === '' || resolved.model === '') throw new Error(MEMORY_ROUTE_NO_DEFAULT)
+    if (resolved.fellBack) ctx.logger.info('[dsh-devforge] 记忆自评路由回退：%s', resolved.reason)
+    // 复用复盘的 token 预算与截断扩容重试：自评输出被截断会整轮作废，这条坑已经在沉淀侧踩过。
+    return generateReflectionText({ system, user, provider: resolved.provider, model: resolved.model })
+  }, () => {
+    const settings = memorySettingsRead()
+    return { ...settings, enabled: settings.enabled && resolve().memory?.enabled !== false }
+  }, { log: (message) => ctx.logger.info(message) })
+
   // ---- 记忆库做梦整理：静默窗口触发的合并/归档，审计落 store.db memory.dreamrun 域 ----
   const dream = new MemoryDreamService({
     native: nativeMemory,
@@ -1576,8 +1594,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   // 会话记忆层：事件监听一次挂载；配置开关在每次事件时动态求值（store.db settings）。
   safeActivate(ctx, '会话记忆层', () => {
     sediment.attach(ctx)
+    // 轮末自评与沉淀共用同一条 turn/end 链路，但各自独立兜底（互不影响对方失败）。
+    selfRepair.attach(ctx)
     const offInject = injection.attach(ctx)
-    ctx.effect(() => () => { sediment.dispose(); offInject() }, 'dsh-devforge: memory')
+    ctx.effect(() => () => { sediment.dispose(); selfRepair.dispose(); offInject() }, 'dsh-devforge: memory')
   })
 
   // 面板保存网关配置 → sync 热重建（sync 已定义，接通面板路由的保存触发）。

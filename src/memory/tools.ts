@@ -11,9 +11,48 @@ import type { MemoryGovernanceService } from './governance.ts'
 import { memoryScopeMatches } from './scope.ts'
 import type { NativeMemoryStore } from './native.ts'
 import type { MemoryCandidate, MemoryEvidence, MemoryQualification, MemoryScopeContext, NativeMemoryCategory, NativeMemoryEntry, RejectedMemory } from './protocol.ts'
+// 短 ID 与注入行、解析侧共用同一实现（protocol.ts），避免两边各截 8 位后语义漂移。
+import { shortMemoryId } from './protocol.ts'
 import { pickNegativeCoverage } from './negatives.ts'
 
 function text(value: string): Array<{ type: 'text'; text: string }> { return [{ type: 'text', text: value }] }
+
+/** id 解析结果：唯一命中给完整 id；否则给已经写好的中文失败原因。 */
+export type MemoryIdResolution = { ok: true; id: string } | { ok: false; message: string }
+
+/**
+ * 把调用方给的 id 解析成唯一的完整记忆 id（0.55.0）。
+ *
+ * 为什么需要：注入到上下文的记忆行只显示 8 位短 ID（注入预算是硬约束，完整 UUID 太贵）。
+ * 如果 get/update/delete/feedback 只认完整 id，那些短 ID 就成了「看得见、用不上」的装饰，
+ * 模型只能靠复述正文去搜索，命中哪条全凭运气。
+ *
+ * 三段式，顺序不可换：
+ * 1. 先按完整 id 精确查——老路径必须原样优先，不能被前缀扫描改变语义；
+ * 2. 再按前缀扫全库——必须包含软归档条目，旧短 ID 至少还能 get 出来看状态；
+ * 3. 0 条沿用原有「不存在」口径；多条绝不猜，报命中条数要求补位数。
+ * 报错只给条数、不给完整 id：错误信息也会进上下文，别把库结构顺手泄漏出去。
+ */
+export function resolveMemoryId(store: NativeMemoryStore, raw: string): MemoryIdResolution {
+  const exact = store.get(raw)
+  if (exact !== undefined) return { ok: true, id: exact.id }
+  const needle = raw.trim()
+  // 空串/空白串没有前缀语义，直接按「不存在」处理，避免 startsWith('') 命中全库。
+  if (needle === '') return { ok: false, message: '当前作用域内记忆不存在：' + raw }
+  let matched: string[]
+  try {
+    // listAll 自带 10000 条上限（当前库 6000+ 量级有两倍余量），且命中进程内快照缓存，
+    // 不必为前缀解析新造一个「按 id 前缀查」的存储接口。
+    matched = store.listAll({ limit: 10_000 }).filter((entry) => entry.id.startsWith(needle)).map((entry) => entry.id)
+  } catch {
+    return { ok: false, message: '当前作用域内记忆不存在：' + raw }
+  }
+  if (matched.length === 0) return { ok: false, message: '当前作用域内记忆不存在：' + raw }
+  if (matched.length > 1) {
+    return { ok: false, message: '短 ID「' + needle + '」匹配到 ' + matched.length + ' 条记忆，无法唯一定位：请补更多位数，或先用 search/list 确认后重试' }
+  }
+  return { ok: true, id: matched[0] as string }
+}
 
 const categories: NativeMemoryCategory[] = ['preference', 'decision', 'fact', 'insight', 'context', 'general']
 const scopeSchema = {
@@ -96,7 +135,9 @@ function render(value: MemoryToolOutput): string {
     const marks = new Map((value.qualifications ?? []).map((item) => [item.id, item.qualification + '：' + item.reason]))
     return value.entries.map((entry, index) => {
       const mark = marks.get(entry.id)
-      return `${index + 1}. [${entry.category}] ${entry.content}${entry.pinned === true ? '（常驻）' : ''}${mark === undefined ? '' : '（⚠ ' + mark + '）'}`
+      // 0.55.0：列表项也要带短 ID。否则只调 list/search 的会话拿到的是「无 id 的正文」，
+      // 模型想接着 update/feedback 只能复述内容，等于把注入行加 ID 的收益丢掉一半。
+      return `${index + 1}. [#${shortMemoryId(entry.id)}] [${entry.category}] ${entry.content}${entry.pinned === true ? '（常驻）' : ''}${mark === undefined ? '' : '（⚠ ' + mark + '）'}`
     }).join('\n')
   }
   return value.ok ? '操作完成' : '操作失败'
@@ -164,12 +205,12 @@ export interface MemoryManageToolOptions {
 export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManageToolOptions) {
   return defineTool({
     name: 'memory_manage',
-    description: '管理天工造梦内置长期记忆（memory.entry）：save 保存记忆并自动激活（有明确用户指令时为确认信任，否则按证据链分级）；search/list/get/update/delete 用于检索和维护。需要每轮固定记住时 pinned=true。',
+    description: '管理天工造梦内置长期记忆（memory.entry）：save 保存记忆并自动激活（有明确用户指令时为确认信任，否则按证据链分级）；search/list/get/update/delete 用于检索和维护。注入到上下文的记忆行带「 · #短ID」，可直接把它当 id 传回 get/update/delete/feedback。需要每轮固定记住时 pinned=true。',
     parameters: {
       action: { type: 'string', enum: ['list', 'get', 'save', 'search', 'update', 'delete', 'feedback'], description: '操作类型，默认 list。feedback 用于标注某条记忆是否可用（接通风控反馈回路）。' },
       verdict: { type: 'string', enum: ['useful', 'irrelevant', 'incorrect', 'outdated'], description: 'feedback 必填：useful 有用；irrelevant 不相关；incorrect 内容有错；outdated 已过时（incorrect/outdated 会隔离该条并把旧说法写入负记忆层）。' },
       note: { type: 'string', description: 'feedback 可选：补充说明，用于审计与负记忆理由。' },
-      id: { type: 'string', description: 'get/update/delete 使用的记忆 id。' },
+      id: { type: 'string', description: 'get/update/delete/feedback 使用的记忆 id。可传完整 id，也可传注入行里的 8 位短 ID（如 a1b2c3d4，前缀唯一即自动解析；命中多条会提示补更多位数）。' },
       content: { type: 'string', description: 'save 必填；update 时为新内容。' },
       category: { type: 'string', enum: categories, description: '记忆分类。' },
       tags: { type: 'array', items: { type: 'string' }, description: '检索标签。' },
@@ -218,7 +259,10 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
         }
         if (action === 'get') {
           if (!args.id) return { ok: false, action, message: 'get 需要 id' }
-          const entry = store.get(args.id)
+          // 支持注入行里的 8 位短 ID：模型照着上下文引用某条记忆时应当直接命中。
+          const resolved = resolveMemoryId(store, args.id)
+          if (!resolved.ok) return { ok: false, action, message: resolved.message }
+          const entry = store.get(resolved.id)
           return entry === undefined || !visible(entry) ? { ok: false, action, message: '当前作用域内记忆不存在：' + args.id } : { ok: true, action, entry }
         }
         if (action === 'save') {
@@ -255,7 +299,10 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
         if (action === 'update') {
           if (!args.id) return { ok: false, action, committed: false, message: 'update 需要 id' }
           if (args.content === undefined && args.category === undefined && args.tags === undefined && args.source === undefined && args.sourceId === undefined && args.importance === undefined && args.pinned === undefined) return { ok: false, action, committed: false, message: 'update 至少需要一个要修改的字段' }
-          const current = store.get(args.id)
+          // 先把短 ID 解析成完整 id，分支内部一律用解析结果，避免「读到这条、写到那条」。
+          const resolved = resolveMemoryId(store, args.id)
+          if (!resolved.ok) return { ok: false, action, committed: false, message: resolved.message }
+          const current = store.get(resolved.id)
           if (current === undefined || !visible(current)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
           const requestedContent = args.content ?? current.content
           const verified = verifyLatestUserRequest(exec, requestedContent, 'update')
@@ -273,7 +320,7 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
                 ...(args.sourceId === undefined ? {} : { sourceId: args.sourceId }),
                 ...(verified.evidence === undefined ? {} : { evidence: [...current.evidence, verified.evidence] }),
               }).filter(([, value]) => value !== undefined))
-              const written = store.update(args.id, inPlace)
+              const written = store.update(resolved.id, inPlace)
               if (args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
               return { ok: true, action, committed: true, entry: written }
             }
@@ -289,30 +336,35 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
           const verifiedSourceId = verified.evidence === undefined ? args.sourceId : ['direct-user', verified.evidence.sessionId, verified.evidence.messageId, verified.evidence.digest].filter(Boolean).join(':')
           const governed = options?.governance === undefined ? {} : { source: 'user-confirmed', sourceId: verifiedSourceId, trust: 'confirmed' as const, confidence: 1, evidence: verified.evidence === undefined ? current.evidence : [...current.evidence, verified.evidence] }
           const patch = Object.fromEntries(Object.entries({ content: args.content, category: args.category, tags: args.tags, source: args.source, sourceId: args.sourceId, importance: args.importance, pinned: args.pinned, ...governed }).filter(([, value]) => value !== undefined))
-          const updated = store.update(args.id, patch)
+          const updated = store.update(resolved.id, patch)
           if (args.content !== undefined && args.content !== current.content) recordSupersededNegative(current, args.note)
           return { ok: true, action, committed: true, entry: updated }
         }
         if (action === 'feedback') {
           if (!args.id) return { ok: false, action, committed: false, message: 'feedback 需要 id' }
           if (args.verdict === undefined) return { ok: false, action, committed: false, message: 'feedback 需要 verdict（useful/irrelevant/incorrect/outdated）', missing: ['verdict：必填，写明这条记忆是否有用'] }
-          const target = store.get(args.id)
+          // 反馈是最常按短 ID 回写的动作：模型在上下文里看到某条说法被证伪时用它纠正。
+          const resolved = resolveMemoryId(store, args.id)
+          if (!resolved.ok) return { ok: false, action, committed: false, message: resolved.message }
+          const target = store.get(resolved.id)
           if (target === undefined || !visible(target)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
           if (options?.governance === undefined) {
             // 无治理层（单元测试/精简接线）时退化为直接累计计数，保证动作语义不丢。
-            store.markFeedback(args.id, args.verdict === 'useful')
-            return { ok: true, action, committed: true, entry: store.get(args.id), message: '已记录反馈：' + args.verdict }
+            store.markFeedback(resolved.id, args.verdict === 'useful')
+            return { ok: true, action, committed: true, entry: store.get(resolved.id), message: '已记录反馈：' + args.verdict }
           }
-          const feedback = options.governance.submitDirectFeedback({ entryId: args.id, verdict: args.verdict, ...(args.note === undefined ? {} : { note: args.note }) })
-          const after = store.get(args.id) ?? target
+          const feedback = options.governance.submitDirectFeedback({ entryId: resolved.id, verdict: args.verdict, ...(args.note === undefined ? {} : { note: args.note }) })
+          const after = store.get(resolved.id) ?? target
           return { ok: true, action, committed: true, entry: after, message: '已记录反馈：' + feedback.verdict + (args.verdict === 'incorrect' || args.verdict === 'outdated' ? '，该条已隔离并写入负记忆层' : '') }
         }
         if (action === 'delete') {
           if (!args.id) return { ok: false, action, committed: false, message: 'delete 需要 id' }
-          const entry = store.get(args.id)
+          const resolved = resolveMemoryId(store, args.id)
+          if (!resolved.ok) return { ok: false, action, committed: false, message: resolved.message }
+          const entry = store.get(resolved.id)
           if (entry === undefined || !visible(entry)) return { ok: false, action, committed: false, message: '当前作用域内记忆不存在：' + args.id }
           if (options?.governance !== undefined && !verifyLatestUserRequest(exec, entry.content, 'delete').explicit) return { ok: false, action, committed: false, message: '归档未通过 Host 用户确认校验，请明确说明要删除的记忆内容或在记忆工作台操作', missing: ['用户确认：请在消息里明确说明要删除的记忆内容（归档是不可逆状态变更，必须有用户原话证据）'] }
-          const archived = store.archive(args.id, true)
+          const archived = store.archive(resolved.id, true)
           // 归档的说法必须进负层（0.50.2）：否则同一错误结论会以别的措辞从沉淀里长回来，召回也没有警示。
           try {
             options?.governance?.negatives.record({
@@ -325,7 +377,7 @@ export function memoryManageTool(store: NativeMemoryStore, options?: MemoryManag
               sourceId: entry.id,
             })
           } catch { /* 负层写入失败不影响归档结果。 */ }
-          return { ok: true, action, committed: true, entry: archived, message: '已软归档内置长期记忆：' + args.id }
+          return { ok: true, action, committed: true, entry: archived, message: '已软归档内置长期记忆：' + resolved.id }
         }
         return { ok: false, action, committed: false, message: '不支持的 memory_manage action：' + action }
       } catch (error) {

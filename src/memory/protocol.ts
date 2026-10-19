@@ -2,6 +2,23 @@
  * 会话记忆层协议 —— host 与 client 共享的类型与 API 路径常量（纯类型，无 Node 依赖）。
  */
 
+/** 注入行里展示的短记忆 ID 长度（0.55.0）。
+ *
+ * 为什么不用完整 UUID：注入预算是硬约束（常驻层 600 字、档案卡 1800 字），
+ * 完整 UUID 36 字 × 6 条就会吃掉三分之一预算，把正文挤出去。
+ * 8 位十六进制在 6000+ 条规模下期望碰撞约 1%，且解析时要求前缀唯一，
+ * 撞了就报「不唯一」让调用方补位数，不会张冠李戴。
+ * 复用同一前缀即可对上 memory_manage 的 get/update/delete/feedback。 */
+export const SHORT_MEMORY_ID_LENGTH = 8
+
+/** 把完整记忆 ID 缩成注入用的短 ID（导出供单测）。 */
+export function shortMemoryId(id: string): string {
+  return id.slice(0, SHORT_MEMORY_ID_LENGTH)
+}
+
+/** 注入行里的短 ID 标记前缀（形如 · #a1b2c3d4），两端共用同一常量防漂移。 */
+export const SHORT_MEMORY_ID_PREFIX = ' · #'
+
 /** 记忆工作台路由族。 */
 export const MEMORY_API = {
   status: '/api/dsh-devforge/memory/status',
@@ -108,6 +125,17 @@ export interface MemorySettings {
   curatorMaxMerge: number
   /** 管家自动巡检间隔（小时）；仅库容超限时才会真正动手。 */
   curatorIntervalHours: number
+  /** 轮末自评修复（0.55.0）：每轮结束后让模型复查本轮真正注入过的记忆，
+   * 发现事实错误、已过时、重复或不再成立就自动修正。辉哥 2026-10-19 决策：全自动（含删除）、每轮都跑。 */
+  selfRepairEnabled: boolean
+  /** 自评模型 provider 覆盖；空串 = 跟随全局默认路由。 */
+  selfRepairProvider: string
+  /** 自评模型名覆盖；空串 = 跟随全局默认路由。 */
+  selfRepairModel: string
+  /** 单轮最多应用的动作数：防止模型在一轮里大范围改动记忆库（爆炸半径控制）。 */
+  selfRepairMaxActions: number
+  /** 单轮最多归档条数：删除一律走软归档（工作台可恢复），此项进一步限制爆炸半径。 */
+  selfRepairMaxArchive: number
 }
 
 /** 记忆层状态（面板顶栏）。 */
@@ -235,7 +263,7 @@ export interface NativeMemoryEntry {
   /** 做梦整理标记：true=已归档（软删除，可恢复），不参与注入/检索/图谱。 */
   archived?: boolean
   /** 归档来源（0.51.0）：区分人工归档 / 记忆管家 / 做梦。 */
-  archivedBy?: 'user' | 'curator' | 'dream' | 'system'
+  archivedBy?: 'user' | 'curator' | 'dream' | 'selfrepair' | 'system'
 }
 
 /** 内置记忆写入输入。 */
@@ -324,7 +352,7 @@ export interface MemoryEntryMeta {
   lastAccessedAt?: number
   updatedAt: number
   /** 归档来源（0.51.0）：区分人工归档 / 记忆管家 / 做梦，面板据此显示不同标签。 */
-  archivedBy?: 'user' | 'curator' | 'dream' | 'system'
+  archivedBy?: 'user' | 'curator' | 'dream' | 'selfrepair' | 'system'
 }
 
 /** 模型提炼和外部导入只进入候选域；pending 候选永不参与召回。 */
