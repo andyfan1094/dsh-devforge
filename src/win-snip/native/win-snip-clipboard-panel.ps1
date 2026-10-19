@@ -151,6 +151,8 @@ function Show-SnipClipboardPanel {
     $form.KeyPreview = $true
     $form.BackColor = (Get-SnipTheme 'Canvas')
     Set-SnipRoundedRegion -Form $form -Radius 12
+    Enable-SnipWindowShadow -Form $form
+    Add-SnipWindowBorder -Form $form -Radius 12
     $state.Form = $form
 
     # ---------- 标题栏 ----------

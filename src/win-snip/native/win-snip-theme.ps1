@@ -96,3 +96,61 @@ function Set-SnipRoundedRegion {
         # 圆角失败只影响观感，不影响功能。
     }
 }
+
+<#
+.SYNOPSIS
+    给无边框窗体加系统的 CS_DROPSHADOW 投影。
+.DESCRIPTION
+    无边框窗口在桌面背景上容易糊成"半透明的一块"——那是因为窗口边界没有影子，
+    视觉上和背景连成一片。加一层系统投影把窗口"抬"起来，边界清楚就不像透了。
+#>
+function Enable-SnipWindowShadow {
+    param([Parameter(Mandatory = $true)]$Form)
+    if (-not ('SnipWindowFx' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class SnipWindowFx
+{
+    [DllImport("user32.dll", EntryPoint = "GetClassLong")]
+    private static extern int GetClassLong32(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetClassLong")]
+    private static extern int SetClassLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    public static void EnableShadow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        int style = GetClassLong32(hwnd, -26);
+        SetClassLong32(hwnd, -26, style | 0x00020000);
+    }
+}
+'@
+    }
+    try { [SnipWindowFx]::EnableShadow($Form.Handle) } catch { }
+}
+
+<#
+.SYNOPSIS
+    在窗体最外圈画 1px 发丝边框（圆角），让深色窗口在深色壁纸上也有清晰边界。
+#>
+function Add-SnipWindowBorder {
+    param(
+        [Parameter(Mandatory = $true)]$Form,
+        [int]$Radius = 12
+    )
+    $Form.Add_Paint({
+            param($sender, $e)
+            try {
+                $g = $e.Graphics
+                $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                $rect = New-Object System.Drawing.Rectangle(0, 0, ($sender.Width - 1), ($sender.Height - 1))
+                $path = New-SnipRoundPath -Bounds $rect -Radius $Radius
+                try {
+                    $pen = New-Object System.Drawing.Pen((Get-SnipTheme 'Hairline'), 1)
+                    try { $g.DrawPath($pen, $path) } finally { $pen.Dispose() }
+                } finally { $path.Dispose() }
+            } catch { }
+        })
+}

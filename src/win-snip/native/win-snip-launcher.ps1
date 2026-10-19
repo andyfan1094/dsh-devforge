@@ -52,6 +52,8 @@ function Show-SnipLauncher {
     $form.Height = 202
     $form.BackColor = (Get-SnipTheme 'Canvas')
     Set-SnipRoundedRegion -Form $form -Radius 12
+    Enable-SnipWindowShadow -Form $form
+    Add-SnipWindowBorder -Form $form -Radius 12
     $form.KeyPreview = $true
 
     $title = New-Object System.Windows.Forms.Label
