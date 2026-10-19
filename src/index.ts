@@ -1201,7 +1201,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       },
     }),
     ...makeRagRoutes(ragService, ragEmbedders),
-    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream, curator }),
+    ...makeMemoryRoutes({ rag: ragService, sediment, injection, stats: memoryStats, getSettings: memorySettingsRead, putSettings: memorySettingsWrite, getProfile: memoryProfileRead, putProfile: memoryProfileWrite, native: nativeMemory, governance: memoryGovernance, dream, curator, selfRepair }),
     ...makeWorkflowRoutes(workflowEngine),
     ...makeMcpRoutes(mcpService),
     // 数据管理（0.39.0）：库表透明浏览 + 密钥掩码/明文复制（reveal 走审计日志，值不入日志）。

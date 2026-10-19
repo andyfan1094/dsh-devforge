@@ -233,6 +233,19 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
   const sedimentTitle = status !== null && status.lastSedimentAt > 0 ? '最近沉淀：' + fmtTime(status.lastSedimentAt) + (status.sedimentLastOutcome !== '' ? ' · 判定 ' + status.sedimentLastOutcome : '') + (status.sedimentLastError !== '' ? ' · 最近失败：' + status.sedimentLastError : '') : '本版启用后尚未沉淀'
   const injectTitle = status !== null && status.lastInjectPreview !== '' ? '最近注入：' + status.lastInjectPreview : '尚未注入过；每轮对话第一步检索命中才注入'
   const dreamTitle = status !== null && status.lastDreamSummary !== '' ? '最近做梦：' + status.lastDreamSummary : '尚未做梦；开启后按静默窗口自动整理'
+  // 自评是本版唯一会自动删记忆的能力，标题里必须写清「最近一次为什么没动」，
+  // 否则用户看到 0 改动只会怀疑它坏了。
+  const selfRepairOutcomeText: Record<string, string> = {
+    disabled: '已关闭', 'no-injected': '本轮无可审记忆', 'actions-disabled': '单轮动作上限为 0',
+    'no-dialog': '本轮无对话证据', 'parse-failed': '模型输出无法解析', 'no-action': '模型未给出动作',
+    'no-change': '审阅后无需改动', applied: '已改动记忆', failed: '执行失败',
+  }
+  const selfRepair = status?.selfRepair ?? null
+  const selfRepairTitle = selfRepair === null
+    ? '未接线'
+    : '最近判定：' + (selfRepairOutcomeText[selfRepair.lastOutcome] ?? selfRepair.lastOutcome)
+      + ' · 更新 ' + selfRepair.updateCount + ' · 隔离 ' + selfRepair.feedbackCount + ' · 归档 ' + selfRepair.archiveCount
+      + (selfRepair.failureCount > 0 ? ' · 失败 ' + selfRepair.failureCount + '：' + selfRepair.lastError : '')
 
   return (
     <section className={css['memoryWorkspace']}>
@@ -249,6 +262,7 @@ export function MemoryTab({ api }: { api: DevforgeApi }): JSX.Element {
         <div className={css['memoryStat']} title={sedimentTitle}><span>自动沉淀</span><strong>{status?.sedimentCount ?? '—'} 条</strong><small>{settings?.autoSediment ? '已开启' : '已关闭'} · 最近 {status !== null && status.lastSedimentAt > 0 ? fmtTime(status.lastSedimentAt) : '—'}</small></div>
         <div className={css['memoryStat']} title={injectTitle}><span>主动注入</span><strong>{status?.injectCount ?? '—'} 次</strong><small>{settings?.autoInject ? '已开启' : '已关闭'} · 最近 {status !== null && status.lastInjectAt > 0 ? fmtTime(status.lastInjectAt) : '—'}</small></div>
         <div className={css['memoryStat']} title={dreamTitle}><span>做梦整理</span><strong>{status?.dreamTotal ?? '—'} 次</strong><small>{settings?.dreamEnabled ? '自动运行' : '已关闭'}{dream?.running === true ? ' · 整理中…' : ''}</small></div>
+        <div className={css['memoryStat']} title={selfRepairTitle}><span>轮末自评修复</span><strong>{selfRepair === null ? '—' : selfRepair.attemptCount + ' 次'}</strong><small>{selfRepair === null ? '未接线' : (settings?.selfRepairEnabled ? (selfRepairOutcomeText[selfRepair.lastOutcome] ?? selfRepair.lastOutcome) : '已关闭')}</small></div>
       </div>
 
       <nav className={css['tabBar']}>

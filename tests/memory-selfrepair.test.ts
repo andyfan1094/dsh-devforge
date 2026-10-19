@@ -482,3 +482,67 @@ test('宿主没给轮次号（turn=0）时兜底取本会话最近一条轨迹',
     assert.equal(rig.store.get('mem-t0')?.content, '兜底路径也能修正的正文')
   } finally { rig.dispose() }
 })
+
+// ---------------------------------------------------------------------------
+// 可观测性契约：状态接口读的就是这几个计数。
+// 「没接线」「没跑」「跑了但判定无需改动」是三种不同状态，必须能区分开，
+// 否则用户看到一个全 0 的面板，无法判断这个自动删除能力到底活着没有。
+// ---------------------------------------------------------------------------
+
+test('可观测性：每条提前返回路径都写下 lastOutcome，面板才分得清「没跑」和「跑了 0 次」', async () => {
+  // 关闭 → disabled
+  const off = makeRig({ settings: { selfRepairEnabled: false } })
+  try {
+    const result = await off.service.run({ sessionId: 's-obs', turn: 1, ...DIALOG })
+    assert.equal(off.service.lastOutcome, 'disabled')
+    assert.deepEqual(result.injected, 0)
+    assert.equal(off.service.attemptCount, 0)
+  } finally { off.dispose() }
+
+  // 本轮无注入 → no-injected
+  const empty = makeRig({ reply: '[]' })
+  try {
+    await empty.service.run({ sessionId: 's-obs', turn: 1, ...DIALOG })
+    assert.equal(empty.service.lastOutcome, 'no-injected')
+    assert.equal(empty.service.attemptCount, 0)
+  } finally { empty.dispose() }
+
+  // 有注入且真的调了模型 → 计数前进且 outcome 不再是跳过态
+  const live = makeRig({ reply: '{"actions":[{"id":"mem-obs","action":"keep"}]}' })
+  try {
+    seedEntry(live.store, { id: 'mem-obs' })
+    live.governance.recordRecall(recallTrace({ sessionId: 's-obs', turn: 1, ids: ['mem-obs'] }))
+    const result = await live.service.run({ sessionId: 's-obs', turn: 1, ...DIALOG })
+    assert.equal(live.service.attemptCount, 1)
+    // 模型只回 keep：调了模型但库里一条没变，outcome 必须是 no-change 而不是 applied。
+    assert.equal(live.service.lastOutcome, 'no-change')
+    assert.equal(result.injected, 1)
+    assert.equal(result.kept, 1)
+    assert.equal(live.service.failureCount, 0)
+    assert.equal(live.service.lastError, '')
+  } finally { live.dispose() }
+})
+
+test('可观测性：真正动库时计数落到对应槽位，失败也有独立计数与原因', async () => {
+  const rig = makeRig({ reply: '{"actions":[{"id":"mem-obs2","action":"update","content":"被自评修正后的正文内容"}]}' })
+  try {
+    seedEntry(rig.store, { id: 'mem-obs2', content: '原始正文' })
+    rig.governance.recordRecall(recallTrace({ sessionId: 's-obs2', turn: 2, ids: ['mem-obs2'] }))
+    await rig.service.run({ sessionId: 's-obs2', turn: 2, ...DIALOG })
+    assert.equal(rig.service.updateCount, 1)
+    assert.equal(rig.service.lastOutcome, 'applied')
+  } finally { rig.dispose() }
+
+  const boom = makeRig({ onGenerate: () => { throw new Error('模型网关 502') } })
+  try {
+    seedEntry(boom.store, { id: 'mem-obs3' })
+    boom.governance.recordRecall(recallTrace({ sessionId: 's-obs3', turn: 3, ids: ['mem-obs3'] }))
+    const result = await boom.service.run({ sessionId: 's-obs3', turn: 3, ...DIALOG })
+    assert.equal(boom.service.lastOutcome, 'failed')
+    assert.equal(boom.service.failureCount, 1)
+    assert.match(boom.service.lastError, /502/u)
+    // 自评失败必须是「旁路失败」：不抛给会话收尾，且不改动任何条目。
+    assert.equal(result.updated, 0)
+    assert.equal(boom.store.get('mem-obs3')?.content, '这是一条测试记忆正文')
+  } finally { boom.dispose() }
+})

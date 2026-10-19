@@ -291,7 +291,10 @@ export class MemorySelfRepairService {
       if (parsed.actions.length === 0) { this.lastOutcome = 'no-action'; return result }
 
       this.applyActions(injected, parsed.actions, { maxActions, maxArchive }, result)
-      this.lastOutcome = 'applied'
+      // 「模型返回了动作」和「真的改写了库」是两件事：若全是 keep，outcome 不能叫 applied，
+      // 否则面板上会长期显示「已应用」，而库里一条都没变——观测口径必须与实践一致。
+      const wrote = result.updated + result.outdated + result.incorrect + result.archived
+      this.lastOutcome = wrote > 0 ? 'applied' : 'no-change'
       return result
     } catch (error) {
       this.failureCount += 1

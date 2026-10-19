@@ -184,6 +184,21 @@ export interface MemoryRouteDeps {
   stats: MemoryStatsStore
   /** 注入服务：状态接口回读真实注入次数（此前硬编码 0 是统计 bug）。 */
   injection: MemoryInjectionService
+  /**
+   * 轮末自评修复的观测口（0.59.0）。只取计数，因此用结构化最小接口而不是引用服务类型：
+   * 自评 import 了 sediment，routes 再 import 自评的完整类型容易绕成环。
+   * 传 undefined 表示该能力未接线，状态接口按 null 返回而不是伪造 0——「没接线」和「跑了 0 次」是两件事。
+   */
+  selfRepair?: {
+    readonly attemptCount: number
+    readonly updateCount: number
+    readonly feedbackCount: number
+    readonly archiveCount: number
+    readonly skipCount: number
+    readonly failureCount: number
+    readonly lastError: string
+    readonly lastOutcome: string
+  }
   getSettings: () => MemorySettings
   putSettings: (next: MemorySettings) => void
   /** 用户身份卡读写（settings 域 memory.profile；常驻注入的动态数据源）。 */
@@ -507,6 +522,23 @@ export function makeMemoryRoutes(deps: MemoryRouteDeps): WebRoute[] {
               lastDreamStatus: stats.read().lastDreamStatus,
               lastDreamSummary: stats.read().lastDreamSummary,
               quality: governance.quality(),
+              // 自评修复是「全自动含删除」的能力，必须能被看见：没这几个计数，
+              // 用户无法区分「它每轮都在跑但判定无需改动」和「它根本没跑」。
+              selfRepair: deps.selfRepair === undefined ? null : {
+                enabled: settings.selfRepairEnabled,
+                provider: settings.selfRepairProvider,
+                model: settings.selfRepairModel,
+                maxActions: settings.selfRepairMaxActions,
+                maxArchive: settings.selfRepairMaxArchive,
+                attemptCount: deps.selfRepair.attemptCount,
+                updateCount: deps.selfRepair.updateCount,
+                feedbackCount: deps.selfRepair.feedbackCount,
+                archiveCount: deps.selfRepair.archiveCount,
+                skipCount: deps.selfRepair.skipCount,
+                failureCount: deps.selfRepair.failureCount,
+                lastError: deps.selfRepair.lastError,
+                lastOutcome: deps.selfRepair.lastOutcome,
+              },
               mirror: {
                 mnemonRootExists: existsSync(mnemonRoot),
                 hindsightConfigured: hindsight !== undefined,

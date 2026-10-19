@@ -179,6 +179,35 @@ export interface MemoryStatus {
   /** 可信记忆闭环的质量与治理统计。 */
   quality: MemoryQualityStats
   mirror: { mnemonRootExists: boolean; hindsightConfigured: boolean; hindsightServerMode: string; hindsightBank: string }
+  /**
+   * 轮末自评修复的实时观测（0.59.0）。null 表示未接线。
+   * 为什么必须暴露：这是唯一会「自动删除」记忆的能力，用户必须能看见它在跑、
+   * 跑了几轮、改了几条、最近一次为什么没动——否则一个静默的自动删除是不可接受的。
+   */
+  selfRepair: MemorySelfRepairStatus | null
+}
+
+/** 轮末自评修复的观测快照（面板与状态接口共用）。 */
+export interface MemorySelfRepairStatus {
+  enabled: boolean
+  provider: string
+  model: string
+  maxActions: number
+  maxArchive: number
+  /** 本次进程运行期真正调用模型的次数（跳过轮次不计）。 */
+  attemptCount: number
+  updateCount: number
+  feedbackCount: number
+  archiveCount: number
+  skipCount: number
+  failureCount: number
+  lastError: string
+  /**
+   * 最近一轮的判定结果。取值：disabled / no-injected / actions-disabled / no-dialog /
+   * parse-failed / no-action / no-change / applied / failed。
+   * 「no-injected」和「attemptCount=0」配合才能说明「不是坏了，是这轮确实没有可审的记忆」。
+   */
+  lastOutcome: string
 }
 
 /** 镜像同步响应。 */
