@@ -47,24 +47,24 @@ export const TIANGONG_DECLARED_MODEL_IDS: readonly string[] = [
 ]
 
 /**
- * 天工造梦 provider 使用的聊天协议（辉哥 2026-10-18 定稿）：
- * 官网网关在既有 OpenAI 兼容端点之外新增 /api/gw/v1/messages，
- * 插件改为按 Anthropic Messages 调用；官网仍保留 OpenAI 端点作回退，两条协议互不影响。
+ * 天工造梦 provider 使用的聊天协议（辉哥 2026-10-19 定稿：统一回 OpenAI 兼容）：
+ * 官网网关对外只保留一条 OpenAI 兼容入口 https://modagentai.com/api/gw/v1（/chat/completions），
+ * 安装、登录自动配置、用户手填中转地址一律用它；Anthropic 的 /api/gw/v1/messages 不再作为默认链路。
  */
-export const TIANGONG_PROTOCOL = 'anthropic-messages' as const
+export const TIANGONG_PROTOCOL = 'openai-completions' as const
 
 /**
- * 官网站点网关基址前缀。
- * Anthropic 适配器会自行拼 /v1/messages，故 provider 的 baseURL 用不带 /v1 的前缀；
- * 旧版注入的是 {前缀}/v1（OpenAI 兼容），启动自愈据此识别并改写。
+ * 官网站点网关基址前缀（用于识别「本站地址」，避免覆盖用户自填的第三方端点）。
+ * OpenAI 兼容适配器自带 /chat/completions，故 provider 的 baseURL 必须带 /v1：
+ * https://modagentai.com/api/gw/v1。
  */
 export const TIANGONG_GATEWAY_PREFIX = 'https://modagentai.com/api/gw'
 
 /**
- * 判断已注册声明的聊天协议是否仍是旧版 OpenAI 兼容组合。
- * 只认「旧组合」（协议不是 anthropic-messages 且基址指向本站旧网关）——
- * 用户把端点改成第三方地址或自定义协议时，不会被启动自愈覆盖。
- * 未注册或结构异常返回 false（交给迁移/注册流程处理）。
+ * 判断已注册声明是否仍在用旧协议组合。
+ * 只认「旧组合」（协议不是 openai-completions 且基址指向本站网关，典型是 2026-10-18
+ * 那版的 anthropic-messages + 不带 /v1 的前缀）——用户把端点改成第三方地址或自定义协议时，
+ * 不会被启动自愈覆盖。未注册或结构异常返回 false（交给迁移/注册流程处理）。
  */
 export function tiangongProtocolOutdated(provider: unknown): boolean {
   if (provider === undefined || provider === null || typeof provider !== 'object') return false

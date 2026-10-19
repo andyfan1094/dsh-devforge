@@ -16,12 +16,13 @@ export const MODAGENTAI_API = {
 
 /** 官网站点与用户级网关地址。 */
 export const MODAGENTAI_SITE = 'https://modagentai.com'
-/** OpenAI 兼容端点基址（/api/gw/v1）——保留给官网生图线路与回退用。 */
+/** 官网 OpenAI 兼容端点基址（/api/gw/v1）：插件聊天、生图线路、用户安装与登录自动配置统一用它。 */
 export const MODAGENTAI_GW_BASE = 'https://modagentai.com/api/gw/v1'
 /**
  * Anthropic Messages 端点基址（/api/gw）。
- * pi-ai 的 anthropic 适配器会自行拼 /v1/messages，故此处必须不带 /v1 尾缀，
- * 否则会拼成 /api/gw/v1/v1/messages。辉哥 2026-10-18 定稿：插件聊天默认走这条协议。
+ * 2026-10-18 曾作为默认聊天链路，辉哥 2026-10-19 定稿统一回 OpenAI 兼容后，
+ * 该常量仅保留给需要显式指定 Anthropic 协议的场景（官网 /api/gw/v1/messages 仍在）。
+ * pi-ai 的 anthropic 适配器会自行拼 /v1/messages，故此处必须不带 /v1 尾缀。
  */
 export const MODAGENTAI_GW_ANTHROPIC_BASE = 'https://modagentai.com/api/gw'
 

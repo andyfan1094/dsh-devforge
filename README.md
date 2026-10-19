@@ -2,7 +2,7 @@
 
 `dsh-devforge` 是面向 DeepSeek Harness（DSH）的规范驱动服务工厂与本机智能体工作台。它同时提供 Host 能力和 Web 面板：Host 负责路由、工具、凭据、SQLite 持久化、子代理和外部服务；浏览器侧负责操作台、配置页和可视化状态。
 
-当前源码版本：`0.50.0`，**已适配 DSH 0.2.1-rc.2**（适配 DeepSeek-V4.1-Flash-1017 与原生 Search/Fetch 的最新版本；peer 依赖要求 `dsh-agent >=0.1.0-rc.8`、`dsh-mcp-client`／`dsh-subprocess ^0.2.0-rc.1`，在 0.1.7-rc.2 至 0.2.1-rc.2 区间实测运行正常）。0.50.0 起天工造梦 provider 改按 **Anthropic Messages 协议**调用官网网关（`/api/gw/v1/messages`），已安装的旧 OpenAI 兼容声明由启动自愈自动改写，无需重登或重配；官网 OpenAI 端点保留作回退。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
+当前源码版本：`0.61.1`，**已适配 DSH 0.2.1-rc.2**（适配 DeepSeek-V4.1-Flash-1017 与原生 Search/Fetch 的最新版本；peer 依赖要求 `dsh-agent >=0.1.0-rc.8`、`dsh-mcp-client`／`dsh-subprocess ^0.2.0-rc.1`，在 0.1.7-rc.2 至 0.2.1-rc.2 区间实测运行正常）。0.61.1 起天工造梦 provider **统一回 OpenAI 兼容协议**调用官网网关 `https://modagentai.com/api/gw/v1`（`/chat/completions`），安装、登录自动配置、用户手填中转地址一律用这条入口；0.50.0～0.61.0 期间写入的 Anthropic Messages 声明（`/api/gw/v1/messages`）由启动自愈自动改写回 OpenAI 兼容，无需重登或重配。已发布到自有官网的稳定包以 [版本清单](https://modagentai.com/downloads/index.json) 为准；完整页面说明、截图和发布流程见：
 
 1. **通用开发规范库**：版本化 Markdown 规范存放于 `standards/`，通过系统提示和 `devforge_standards` 工具提供给 Agent；创建服务时按模板注入生成子代理。
 2. **一键生成服务与 250k 压缩**：`devforge_jobs` 工具和“新建服务”页创建独立子代理，默认实际挂载用户预设 `cordis-250k`（1M 上下文模型约 250k 请求包触发自动压缩）；缺失或损坏时告警并回退官方 `cordis`，可用 `forgeAgentPreset` 指定其它预设。操作台「教程」页提供 **250k 压缩一键配置**（Windows/Mac 通用）：一键写入 `cordis-250k` 用户预设（窗口 25% 触发、保留 32k 近期原文）并可选设为全局默认，已存在的预设文件不覆盖；需要完整创作模式时按 [250k 预设文档](docs/创造模式250k压缩预设.md) 手动生成 compat 模块。后端服务默认注入 Api、Bll/BAL、Dal、Model、Utility/Utils 分层，要求中文注释、通用能力复用、成熟开源包优先、结构化日志和验证后的中文 Git 提交。

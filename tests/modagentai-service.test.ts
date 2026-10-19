@@ -327,8 +327,8 @@ test('启动自愈：声明已是 300K 完整版时不写入（升级过的安�
     const current = {
       apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
       displayName: '天工造梦',
-      api: 'anthropic-messages',
-      baseURL: 'https://modagentai.com/api/gw',
+      api: 'openai-completions',
+      baseURL: 'https://modagentai.com/api/gw/v1',
       models: [
         { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
         { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
@@ -346,29 +346,33 @@ test('启动自愈：声明已是 300K 完整版时不写入（升级过的安�
   }
 })
 
-test('协议判定：旧 OpenAI 组合判落后，anthropic 新组合不落后，第三方端点不覆盖', () => {
-  assert.equal(tiangongProtocolOutdated(LEGACY_TIANGONG), true, '旧组合（openai-completions + /api/gw/v1）应判落后')
+test('协议判定：上一版 Anthropic 组合判落后，OpenAI 兼容组合不落后，第三方端点不覆盖', () => {
   assert.equal(tiangongProtocolOutdated({
     api: 'anthropic-messages',
     baseURL: 'https://modagentai.com/api/gw',
-  }), false, '已是 anthropic-messages 新组合不落后')
+  }), true, '上一版 Anthropic 组合（2026-10-18）应判落后，改写回 OpenAI 兼容')
+  assert.equal(tiangongProtocolOutdated(LEGACY_TIANGONG), false, 'OpenAI 兼容 + /api/gw/v1 是当前形态，不落后')
   assert.equal(tiangongProtocolOutdated({
     api: 'openai-completions',
     baseURL: 'https://relay.example.com/v1',
   }), false, '第三方端点不被启动自愈覆盖')
+  assert.equal(tiangongProtocolOutdated({
+    api: 'anthropic-messages',
+    baseURL: 'https://relay.example.com',
+  }), false, '第三方 Anthropic 端点同样不覆盖')
   assert.equal(tiangongProtocolOutdated(undefined), false)
   assert.equal(tiangongProtocolOutdated({ api: 'openai-completions' }), false, '缺 baseURL 时不判定')
 })
 
-test('启动自愈：旧 OpenAI 兼容声明自动改写为 Anthropic Messages 协议', async () => {
+test('启动自愈：上一版 Anthropic Messages 声明自动改写回 OpenAI 兼容协议', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
   try {
-    const legacyOpenAi = {
+    const legacyAnthropic = {
       apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
       displayName: '天工造梦',
-      api: 'openai-completions',
-      baseURL: 'https://modagentai.com/api/gw/v1',
+      api: 'anthropic-messages',
+      baseURL: 'https://modagentai.com/api/gw',
       models: [
         { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
         { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
@@ -376,12 +380,12 @@ test('启动自愈：旧 OpenAI 兼容声明自动改写为 Anthropic Messages �
       ],
       defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
     }
-    const { service, state } = makeCtx({ tiangong: legacyOpenAi })
+    const { service, state } = makeCtx({ tiangong: legacyAnthropic })
     await service.migrateLegacyGateway()
     const written = state.providers.tiangong as { api?: string; baseURL?: string; streamIdleTimeoutMs?: number }
-    assert.equal(written.api, 'anthropic-messages', '协议改写为 Anthropic Messages')
-    assert.equal(written.baseURL, 'https://modagentai.com/api/gw', 'baseURL 去掉 /v1（适配器自拼 /v1/messages）')
-    assert.equal(written.streamIdleTimeoutMs, 600_000, 'Anthropic 通道放宽流空闲超时')
+    assert.equal(written.api, 'openai-completions', '协议改写回 OpenAI 兼容')
+    assert.equal(written.baseURL, 'https://modagentai.com/api/gw/v1', 'baseURL 带 /v1（适配器自拼 /chat/completions）')
+    assert.equal(written.streamIdleTimeoutMs, 600_000, '保留放宽的流空闲超时')
     state.mutations.length = 0
     await service.migrateLegacyGateway()
     assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
