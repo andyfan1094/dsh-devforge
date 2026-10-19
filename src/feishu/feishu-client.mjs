@@ -319,10 +319,11 @@ const FEISHU_CHANNEL_HINT = [
   '【通道提示】本会话经飞书通道接入：用户正在手机飞书上对话，看不到电脑端 Web 面板。',
   '需要向用户提问或让用户做选择时，正常调用 ask_user_question——问题会以飞书互动卡片送达用户手机；除该工具外，不要依赖其他只存在于电脑端 GUI 的交互方式。',
   '⚠️ 铁律：ask_user_question 只能写在 run_code 程序里，调用后【必须把返回值输出】（return 或 console.log），否则答案不会进入你的上下文——用户在手机上点了卡片你也看不到，等于白问。唯一正确写法：',
-  '  const r = await tools.ask_user_question({ questions: [...] })',
+  '  const r = await tools.ask_user_question({ timeout: 570, questions: [...] })',
   '  console.log(JSON.stringify(r))',
   '  return r',
   '错误写法：await tools.ask_user_question({ ... }) —— 返回值被丢弃，你永远等不到用户的选择。',
+  '⚠️ 等待时长必须显式写足（否则卡片会在用户点之前失效）：ask_user_question 的 timeout 单位是秒，推荐 timeout: 570（9.5 分钟）；run_code 必须同时传 timeoutMs: 600000（宿主 run_code 上限 10 分钟，默认只有 120000 毫秒）。宿主等待结束（ask 默认 120 秒 / run_code 到点）后会结束前台等待，此时卡片虽仍可点、点选结果会作为补充消息送达，但已经错过正常作答流程——所以不要依赖默认值。',
   '生成的文件、图片等产出直接以文字说明路径，或调用飞书发送工具（如 dsh_feishu_send_file / dsh_feishu_send_image）发给用户，不要依赖网页 GUI 展示。',
 ].join('\n')
 

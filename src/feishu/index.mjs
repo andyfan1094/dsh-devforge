@@ -323,6 +323,24 @@ export function apply(ctx, config = {}) {
     // 答完卡片立刻翻页：当前执行过程卡就地收尾，续跑的答复落到一张新卡片上，
     // 手机端才能在提问卡片下方看到「继续处理 → 已完成」的新消息（0.41.6）。
     onAnswered: (chatId) => tracker.rolloverChat(chatId),
+    // 迟到作答：宿主前台等待结束（run_code 10 分钟上限 / ask 的 timeout 到达）后
+    // 用户才点卡片时，原工具调用已经返回，答案只能作为补充消息送进飞书会话。
+    // running 时用 steer 插进当前轮次，空闲时用 followup 开新一轮。
+    onLateAnswer: (key, text) => {
+      const entry = conversations.get(String(key ?? ''))
+      if (entry === undefined) {
+        warn('迟到作答无法送达：飞书会话已不存在 key=' + String(key ?? ''))
+        return
+      }
+      try {
+        const payload = buildUserMessage(withFeishuChannelHint('【飞书卡片补充作答】' + text))
+        if (entry.agent.status === 'running') entry.agent.steer(payload)
+        else entry.agent.followup(payload)
+        info('迟到作答已补充送入飞书会话 key=' + String(key ?? ''))
+      } catch (error) {
+        warn('迟到作答送达失败：' + (error instanceof Error ? error.message : String(error)))
+      }
+    },
     // 答题器诊断日志落固定文件：认领 miss、注册映射、投递失败都要有据可查；
     // homedir() 跟随 HOME 环境变量，隔离 HOME 暂存实例自然落自己的 logs。
     logFile: join(homedir(), '.dsh', 'logs', 'feishu-questions.log'),

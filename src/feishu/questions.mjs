@@ -131,6 +131,10 @@ export function createQuestionAnswerer({
   // 结算回调：答案交给模型之前先「翻页」，让续跑的答复落到一张新卡片上
   // （不翻页会写回提问卡片上方那张执行过程卡，手机端看不到任何新消息）。
   onAnswered,
+  // 迟到作答回调：宿主前台等待已结束（run_code 到 10 分钟上限或 ask 的 timeout
+  // 到达）后用户才点卡片时，答案不能再从原工具调用返回，必须作为补充消息送进
+  // 飞书会话（宿主注入 followup/steer），否则用户点了也等于白点。
+  onLateAnswer,
   logFile = '',
   warn = () => {},
   info = () => {},
@@ -201,6 +205,46 @@ export function createQuestionAnswerer({
     record.reject(error)
   }
 
+  /**
+   * 前台等待结束（run_code 到达 10 分钟上限，或 ask_user_question 的 timeout 到达）：
+   * 宿主只中止前台请求的 signal，问题本身仍应可回答。旧实现收到 abort 就 failRecord
+   * 删掉挂起记录，卡片按钮随即弹「该问题已结束或已失效」（0.64.2 线上实录）。
+   * 这里改为保留记录与 30 分钟兜底：卡片仍可点，迟到的答案在 completeRecord 里
+   * 经 onLateAnswer 作为补充消息送进会话。
+   */
+  const noteForegroundClosed = (record) => {
+    if (record.foregroundClosed || !pending.has(record.askId)) return
+    record.foregroundClosed = true
+    fileLog('warn', 'foreground closed: ask=' + record.askId + ' chat=' + record.chatId + '（卡片保留可点，迟到作答走补充消息）')
+    // 前台等待结束后宿主已不再消费 answer() 的返回；给承诺挂一个 catch，
+    // 防止 30 分钟兜底或取消时的 reject 变成 unhandledRejection（测试已复现）。
+    void record.promise?.catch(() => {})
+    // 明确告知用户卡片没有失效，避免用户以为点了没反应/不敢点。
+    try {
+      void Promise.resolve(sendText(
+        record.chatId,
+        '⏰ 这次提问的前台等待已结束（卡片不会失效）：仍可点选卡片选项，点选结果会作为补充消息送达。',
+      )).catch(() => {})
+    } catch {}
+  }
+
+  /** 从挂起记录生成宿主契约形状的答案批次。 */
+  const answersOf = (record) => record.questions.map((question) => {
+    const entry = record.answers.get(String(question?.id ?? '')) ?? { selected: [] }
+    return entry.custom === undefined
+      ? { id: question.id, selected: entry.selected }
+      : { id: question.id, selected: entry.selected, custom: entry.custom }
+  })
+
+  /** 把答案批次整理成一条中文摘要（回执文本与迟到补充消息共用）。 */
+  const summaryOf = (record) => record.questions.map((question, index) => {
+    const entry = record.answers.get(String(question?.id ?? ''))
+    const answerText = entry?.custom !== undefined && entry.custom !== ''
+      ? entry.custom
+      : (entry?.selected ?? []).join('、')
+    return (index + 1) + '. ' + clip(question?.question ?? '', 80) + ' → ' + (answerText === '' ? '（跳过）' : clip(answerText, 120))
+  }).join('\n')
+
   /** 完成收口：清理挂起记录并 resolve 答案批次，同时给飞书回一条确认。 */
   const completeRecord = (record) => {
     if (!pending.has(record.askId)) return
@@ -208,34 +252,36 @@ export function createQuestionAnswerer({
     if (pendingByChat.get(record.chatId) === record.askId) pendingByChat.delete(record.chatId)
     if (record.timer !== undefined) clearTimeout(record.timer)
     if (record.onAbort !== undefined) record.signal?.removeEventListener?.('abort', record.onAbort)
-    const answers = record.questions.map((question) => {
-      const entry = record.answers.get(String(question?.id ?? '')) ?? { selected: [] }
-      return entry.custom === undefined
-        ? { id: question.id, selected: entry.selected }
-        : { id: question.id, selected: entry.selected, custom: entry.custom }
-    })
+    const answers = answersOf(record)
+    const summary = summaryOf(record)
+    const late = record.foregroundClosed
     void (async () => {
       try {
-        const summary = record.questions.map((question, index) => {
-          const entry = record.answers.get(String(question?.id ?? ''))
-          const answerText = entry?.custom !== undefined && entry.custom !== ''
-            ? entry.custom
-            : (entry?.selected ?? []).join('、')
-          return (index + 1) + '. ' + clip(question?.question ?? '', 80) + ' → ' + (answerText === '' ? '（跳过）' : clip(answerText, 120))
-        }).join('\n')
-        await sendText(record.chatId, '已收到你的回答：\n' + summary)
+        await sendText(record.chatId, (late ? '已收到你的回答（超时补充）：\n' : '已收到你的回答：\n') + summary)
       } catch (error) {
         warn('飞书答题确认发送失败：' + (error instanceof Error ? error.message : String(error)))
       }
     })()
-    // 先翻页再交答案：翻页请求在 resolve 之前提交，续跑首个事件只会更新新卡片。
-    // 失败只 warn：翻页纯属呈现优化，绝不允许阻断答题主链路。
-    try {
-      void Promise.resolve(onAnswered?.(record.chatId)).catch((error) => {
+    if (late) {
+      // 迟到作答：原工具调用已经结束，答案只能作为补充消息放进会话；
+      // 送达失败只 warn，绝不影响用户侧「已收到」的回执。
+      try {
+        void Promise.resolve(onLateAnswer?.(record.chatId, summary)).catch((error) => {
+          warn('飞书迟到作答补充失败：' + (error instanceof Error ? error.message : String(error)))
+        })
+      } catch (error) {
+        warn('飞书迟到作答补充失败：' + (error instanceof Error ? error.message : String(error)))
+      }
+    } else {
+      // 先翻页再交答案：翻页请求在 resolve 之前提交，续跑首个事件只会更新新卡片。
+      // 失败只 warn：翻页纯属呈现优化，绝不允许阻断答题主链路。
+      try {
+        void Promise.resolve(onAnswered?.(record.chatId)).catch((error) => {
+          warn('飞书答题翻页失败：' + (error instanceof Error ? error.message : String(error)))
+        })
+      } catch (error) {
         warn('飞书答题翻页失败：' + (error instanceof Error ? error.message : String(error)))
-      })
-    } catch (error) {
-      warn('飞书答题翻页失败：' + (error instanceof Error ? error.message : String(error)))
+      }
     }
     record.resolve({ answers })
   }
@@ -268,10 +314,13 @@ export function createQuestionAnswerer({
       multiSets: new Map(),
       resolve: completion.resolve,
       reject: completion.reject,
+      promise: completion.promise,
       timer: undefined,
       signal: request?.signal ?? undefined,
       onAbort: undefined,
       messageId: '',
+      // 宿主前台等待是否已结束（abort）。置位后卡片仍可点，答案走迟到补充。
+      foregroundClosed: false,
     }
     pending.set(askId, record)
     pendingByChat.set(chatId, askId)
@@ -286,11 +335,11 @@ export function createQuestionAnswerer({
       failRecord(record, questionError('用户 30 分钟未作答，问题已自动取消；请直接用文字与用户沟通', 'ASK_ABORTED'))
     }, QUESTION_TIMEOUT_MS)
     record.timer.unref?.()
-    // 会话被中止（用户停止任务、插件关闭）时同步取消挂起问题。
+    // 会话被中止（前台等待超时、用户停止任务、插件关闭）时：
+    // 旧实现一律 failRecord 删记录，导致「宿主 120 秒/10 分钟超时后点卡片报失效」。
+    // 现在只标记前台等待结束，卡片与记录保留到用户作答或 30 分钟兜底。
     if (record.signal !== undefined && record.signal !== null) {
-      record.onAbort = () => {
-        failRecord(record, questionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED'))
-      }
+      record.onAbort = () => { noteForegroundClosed(record) }
       try {
         record.signal.addEventListener('abort', record.onAbort, { once: true })
         if (record.signal.aborted) record.onAbort()
@@ -340,6 +389,8 @@ export function createQuestionAnswerer({
   const hasPendingCustom = (chatId) => {
     const record = pending.get(pendingByChat.get(String(chatId ?? '').trim()) ?? '')
     if (record === undefined) return false
+    // 前台等待已结束：后续文本是用户的新消息，不能再被当成开放题答案吞掉。
+    if (record.foregroundClosed) return false
     return record.questions.some((question) => {
       const options = Array.isArray(question?.options) ? question.options : []
       return options.length === 0 && !isAnswered(record, question?.id)
@@ -350,6 +401,8 @@ export function createQuestionAnswerer({
   const recordCustomAnswer = (chatId, text) => {
     const record = pending.get(pendingByChat.get(String(chatId ?? '').trim()) ?? '')
     if (record === undefined) return false
+    // 同上：超时后的普通消息必须原样交给会话，不能静默吞掉。
+    if (record.foregroundClosed) return false
     const value = String(text ?? '').trim()
     if (value === '') return false
     const question = record.questions.find((item) => {

@@ -287,6 +287,49 @@ test('答题器：桥重启 cancelAll 只结算挂起问题，答题器仍可用
   assert.deepEqual(answer.answers[0], { id: 'q9', selected: ['继续'] })
 })
 
+test('答题器：前台等待被 abort 后卡片仍可作答，迟到答案经 onLateAnswer 补充送达', async () => {
+  const lateAnswers: { chatId: string, text: string }[] = []
+  const cards: any[] = []
+  let notify: (() => void) | null = null
+  const controller = new AbortController()
+  const answerer = createQuestionAnswerer({
+    getClient: () => ({}),
+    sendText: async () => {},
+    deliverCard: async (chatId: string, card: any) => {
+      cards.push({ chatId, card })
+      notify?.()
+      return 'om_card_late'
+    },
+    onLateAnswer: (chatId: string, text: string) => { lateAnswers.push({ chatId, text }) },
+    warn: () => {},
+    info: () => {},
+  })
+  const waitCards = (n: number) => new Promise<void>((resolve) => {
+    if (cards.length >= n) { resolve(); return }
+    notify = () => { if (cards.length >= n) resolve() }
+  })
+  answerer.registerAgent('agent-1', 'oc_chat1')
+  const pendingPromise = answerer.answer({
+    agent: { id: 'agent-1' },
+    signal: controller.signal,
+    questions: [{ id: 'q1', question: '选哪个？', options: [{ label: 'A' }] }],
+  })
+  await waitCards(1)
+  // 宿主前台等待超时（run_code 10 分钟上限 / ask 默认 120 秒）会 abort 请求 signal
+  controller.abort()
+  // 超时后普通文本不得被当成开放题答案吞掉（那是用户的新消息，不是作答）
+  assert.equal(answerer.recordCustomAnswer('oc_chat1', '我先说点别的'), false)
+  const askId = cards[0].card.body.elements
+    .flatMap((element: any) => element?.behaviors?.[0]?.value ?? [])
+    .find((value: any) => value?.askId)?.askId
+  const toast = answerer.handleCardValue({ action: 'feishu_question', askId, questionId: 'q1', label: 'A' })
+  assert.notEqual(toast?.toast?.content, '该问题已结束或已失效', '超时后卡片按钮必须仍可点选，不能报失效')
+  const answer = await pendingPromise
+  assert.deepEqual(answer.answers[0], { id: 'q1', selected: ['A'] })
+  assert.equal(lateAnswers.length, 1, '迟到答案必须经 onLateAnswer 作为补充消息送达会话')
+  assert.ok(lateAnswers[0].text.includes('A'), '补充消息应包含用户点选的答案')
+})
+
 test('答题器：dispose 结算挂起问题并清空会话映射，与桥重启语义区分开', async () => {
   const { answerer } = fakeAnswerer()
   answerer.registerAgent('agent-1', 'oc_chat1')
