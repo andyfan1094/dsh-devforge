@@ -32,6 +32,17 @@ export const DEFAULT_RAG_SETTINGS: RagSettings = {
   mirrorSync: { enabled: false, intervalMinutes: 60 },
 }
 
+/** 知识库写操作审计保留条数（超出按时间删最旧，防随会话无限膨胀）。 */
+export const KB_AUDIT_KEEP = 500
+
+/**
+ * 覆盖/删除前原文快照的保留条数（超出按时间删最旧）。
+ *
+ * 必要性（2026-10-19 独立复审实测）：快照单条可达 200000 字，而 store.db 会被
+ * CNB 加密备份整体打包推送；没有上限时反复覆盖会持续膨胀备份体积。
+ */
+export const KB_BACKUP_KEEP = 200
+
 /** RAG 服务（进程内单例由接线层持有）。 */
 export class RagService {
   private readonly store: RagStore
@@ -204,6 +215,107 @@ export class RagService {
     const doc = this.store.getDoc(docId)
     this.store.deleteDoc(docId)
     if (doc !== undefined) this.invalidateEngine(doc.kbId)
+  }
+
+  /**
+   * 读回文档正文（按切块行号重建）。
+   *
+   * 为什么不直接把切块拼起来：相邻切块带 overlap 重叠区，直接 join 会把重叠内容
+   * 重复一份——而模型拿到正文后往往整篇回灌（改写），重复内容会被真的写回库里。
+   * 切块自带原文绝对行号 startLine，逐行落位可让重叠区自然幂等覆盖。
+   *
+   * 边界：切块正文入库时做过 trim，块首尾空白会被规范化，故本方法返回的是
+   * 「索引里的正文」，不承诺与上传前逐字节一致；调用方要整篇重写应以自有源文本为准。
+   */
+  readDocText(docId: string): string {
+    const chunks = this.store.listChunks(docId)
+    if (chunks.length === 0) return ''
+    const lines: string[] = []
+    for (const chunk of chunks) {
+      const parts = chunk.text.split('\n')
+      for (let i = 0; i < parts.length; i++) lines[chunk.startLine + i] = parts[i]
+    }
+    return lines.map((line) => line ?? '').join('\n')
+  }
+
+  /**
+   * 覆盖写入前留原文快照（kb_manage 的 ingest 调用）。
+   *
+   * 必要性：工具允许模型覆盖文档正文，必须留下可回滚的原件，否则一次误写不可逆。
+   * 快照只存文本与元数据，不切块、不嵌入、不参与检索（故无额外向量成本）。
+   */
+  snapshotDocText(input: { kbId: string; docId: string; fileName: string; text: string; reason: string }): string {
+    const id = randomUUID()
+    this.store.putDomainDoc('rag.backup', id, {
+      id,
+      kbId: input.kbId,
+      docId: input.docId,
+      fileName: input.fileName,
+      text: input.text,
+      chars: input.text.length,
+      reason: input.reason,
+      at: Date.now(),
+    })
+    this.pruneKbBackup()
+    return id
+  }
+
+  /** 按 id 取一条原文快照（kb_manage 的 restore 用它把正文写回）。 */
+  getKbBackup(backupId: string): { kbId: string; docId: string; fileName: string; text: string; reason: string; at: number } | undefined {
+    const row = this.store.getDomainDoc('rag.backup', backupId)
+    if (row === undefined || row.data === null || typeof row.data !== 'object') return undefined
+    const data = row.data as { kbId?: unknown; docId?: unknown; fileName?: unknown; text?: unknown; reason?: unknown; at?: unknown }
+    if (typeof data.kbId !== 'string' || typeof data.fileName !== 'string' || typeof data.text !== 'string') return undefined
+    return {
+      kbId: data.kbId,
+      docId: typeof data.docId === 'string' ? data.docId : '',
+      fileName: data.fileName,
+      text: data.text,
+      reason: typeof data.reason === 'string' ? data.reason : '',
+      at: typeof data.at === 'number' ? data.at : 0,
+    }
+  }
+
+  /**
+   * 知识库写操作审计（只记元数据，绝不记正文）。
+   *
+   * 为什么要它：写入/删除是破坏性能力，事后必须能回答「什么时候、把哪条、改成了多大」。
+   * 审计只保留最近 KB_AUDIT_KEEP 条，避免随会话无限膨胀。
+   */
+  /**
+   * 知识库写操作审计（只记元数据，绝不记正文）。
+   *
+   * 为什么要它：写入/删除是破坏性能力，事后必须能回答「什么时候、把哪条、改成了多大」。
+   * 审计只保留最近 KB_AUDIT_KEEP 条，避免随会话无限膨胀。
+   *
+   * result 区分成败（2026-10-19 复审补）：失败那次也要留痕，否则"谁动过什么"在
+   * 嵌入报错等异常路径上会缺一条，事后无法分辨"没写"与"写了但失败"。
+   */
+  auditKbWrite(record: { action: 'ingest' | 'delete' | 'restore'; result?: 'ok' | 'failed'; kbId: string; kbName: string; fileName: string; docId?: string; textChars?: number; backupId?: string; error?: string }): void {
+    const id = randomUUID()
+    this.store.putDomainDoc('rag.audit', id, { ...record, id, actor: 'model', at: Date.now(), result: record.result ?? 'ok' })
+    this.pruneKbAudit()
+  }
+
+  /** 审计只留最近 KB_AUDIT_KEEP 条，按写入时间戳删最旧的。 */
+  private pruneKbAudit(): void {
+    this.pruneDomain('rag.audit', KB_AUDIT_KEEP)
+  }
+
+  /** 快照只留最近 KB_BACKUP_KEEP 条（同样按时间删最旧），防 store.db 与备份无限膨胀。 */
+  private pruneKbBackup(): void {
+    this.pruneDomain('rag.backup', KB_BACKUP_KEEP)
+  }
+
+  /** 某域按时间戳（data.at）保留最近 keep 条，其余删除。 */
+  private pruneDomain(domain: string, keep: number): void {
+    const rows = this.store.listDomainDocs(domain) as Array<{ id: string; data: { at?: number } | null }>
+    if (rows.length <= keep) return
+    const oldest = rows
+      .slice()
+      .sort((a, b) => (a.data?.at ?? 0) - (b.data?.at ?? 0))
+      .slice(0, rows.length - keep)
+    for (const row of oldest) this.store.deleteDomainDoc(domain, row.id)
   }
 
   /** 切块预览（不入库、不嵌入，面板调参用）。 */

@@ -79,6 +79,7 @@ import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { RagSettings as RagSettingsPartial } from './rag/protocol.ts'
 import { makeRagRoutes } from './rag/routes.ts'
 import { ragSearchTool } from './rag/tools.ts'
+import { kbManageTool } from './rag/kb-tools.ts'
 import { MirrorSyncScheduler, normalizeMirrorSyncSettings } from './rag/mirror-sync.ts'
 import { activateBrowser, type BrowserActivation } from './browser/activate.ts'
 import { activateWinSnip, type WinSnipActivation } from './win-snip/activate.ts'
@@ -1213,7 +1214,10 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   // 工作流软下线（0.39.0，辉哥定稿）：rag_run 工具停注、面板页签隐藏；引擎与路由保留，
   // 恢复方法——本行数组重新加回 `ragRunTool(workflowEngine)`（import 恢复 './workflow/tools.ts'）即可。
   // 官网搜索（0.39.0，辉哥定稿）：modagentai.com 联网搜索开放给模型，智谱/MiniMax 限额时的第三条通道。
-  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeDesignTool(design), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool({ run: runProjectProbeById }), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
+  // kb_manage（0.60.0）：补齐知识库文档的写入路径。此前模型侧只有 rag_search（只读检索）
+  // 与 memory_manage（只管内置长期记忆），遇到「知识库里那条文档写过时了」只能编一句
+  // 「那条文档是只读的、改不了」——本工具让「能不能改、为什么不能改、该去哪改」变成真实返回值。
+  const tools = [devforgeJobsTool(engine), devforgeStandardsTool(standards), devforgeDesignTool(design), devforgeRestartTool(restartManager), backupNowTool(), backupStatusTool(), ragSearchTool(ragService, nativeMemory), kbManageTool(ragService, { log: (message) => { try { ctx.logger.info(message) } catch { /* 日志失败不影响工具 */ } } }), memoryManageTool(nativeMemory, { governance: memoryGovernance, scopeOfAgent: memoryScopeOfAgent }), devforgeProjectTool({ run: runProjectProbeById }), devforgeWorkspaceTool(), ...devforgeDbTools(), ...modagentaiWebTools(modagentaiService)]
   let disposeRoutes: (() => void) | undefined
   let disposeTools: (() => void) | undefined
   let disposeSection: (() => void) | undefined
