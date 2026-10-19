@@ -652,6 +652,21 @@ export function ProjectsTab({ api }: ProjectsTabProps): JSX.Element {
                       <span className={css['badge']} data-kind={dir.kind === 'projects' ? 'cnb' : 'git'}>{dir.kind}</span>
                       {' '}<strong>{dir.dirname}/</strong>（{dir.label}）{dir.purpose !== '' ? '：' + dir.purpose : ''}
                     </span>
+                    {dir.subdirs !== undefined && dir.subdirs.length > 0 && (
+                      <span
+                        className={css['resourceMeta']}
+                        title={dir.subdirs.map((sub) => sub.dirname + '：' + sub.purpose).join('\n')}
+                      >
+                        {'二级布局：' + dir.dirname + '/<项目>/<形态桶>　'}
+                        {dir.subdirs.map((sub) => sub.dirname).join('、')}
+                      </span>
+                    )}
+                    {dir.naming !== undefined && dir.naming !== '' && (
+                      <span className={css['resourceMeta']} title={dir.naming}>{'命名硬约束：' + dir.naming}</span>
+                    )}
+                    {(dir.rules ?? []).map((rule, ruleIndex) => (
+                      <span key={ruleIndex} className={css['resourceMeta']} title={rule}>{'规则：' + rule}</span>
+                    ))}
                   </div>
                   <div className={css['inlineActions']}>
                     <button

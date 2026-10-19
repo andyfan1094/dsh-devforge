@@ -15,7 +15,7 @@ const home = mkdtempSync(join(tmpdir(), 'convention-'))
 process.env.DSH_HOME = home
 
 const { closeDb } = await import('../src/store/db.ts')
-const { DEFAULT_CONVENTION, auditWorkspace, getConvention, renderConventionSummary, resolveConventionDir, saveConvention, validateConvention } = await import('../src/workspace/convention.ts')
+const { DEFAULT_CONVENTION, GENERIC_PROJECT_DIRNAME, auditWorkspace, getConvention, renderConventionSummary, resolveConventionDir, saveConvention, validateConvention } = await import('../src/workspace/convention.ts')
 const { matchProjectByCwd, renderProjectCard } = await import('../src/constraints.ts')
 const { matchProject } = await import('../src/projects/tools.ts')
 
@@ -89,8 +89,11 @@ test('audit：散落文件按扩展名建议归类，目录与隐藏项跳过，
   assert.equal(byName.has('.hidden.sh'), false)
   assert.equal(byName.has('some-dir'), false)
   assert.equal(byName.has('random.xyz'), false)
-  // 建议目标在公约目录下。
+  // 建议目标在公约目录下；scripts 无二级结构 → 落类别目录本身。
   assert.equal(byName.get('v4_decode.py')?.targetPath, join(root, 'scripts'))
+  // 0.61.0 起 outputs 为项目优先两级：根目录截图落到 _通用/截图，并给出桶键。
+  assert.equal(byName.get('cover.png')?.suggestedSubdirKey, 'screenshots')
+  assert.equal(byName.get('cover.png')?.targetPath, join(root, 'outputs', GENERIC_PROJECT_DIRNAME, '截图'))
   rmSync(root, { recursive: true, force: true })
 })
 
