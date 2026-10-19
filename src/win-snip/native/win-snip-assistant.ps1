@@ -28,6 +28,7 @@ $ErrorActionPreference = 'Continue'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptDir 'win-snip-common.ps1')
+. (Join-Path $scriptDir 'win-snip-theme.ps1')
 
 # 先声明 DPI 感知，再创建任何窗口：否则高分屏上坐标与位图会错位。
 try { [void][WinSnipNative]::SetProcessDPIAware() } catch { }

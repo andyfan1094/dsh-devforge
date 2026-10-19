@@ -135,62 +135,75 @@ function Show-SnipClipboardPanel {
 
     $form = New-SnipDarkForm
     $form.Text = '剪贴板历史'
-    $form.Width = 900
-    $form.Height = 600
+    $form.Width = 860
+    $form.Height = 560
     $form.KeyPreview = $true
-    $form.BackColor = [System.Drawing.Color]::FromArgb(38, 38, 42)
+    $form.BackColor = (Get-SnipTheme 'Canvas')
+    Set-SnipRoundedRegion -Form $form -Radius 12
     $state.Form = $form
 
     # ---------- 标题栏 ----------
     $title = New-Object System.Windows.Forms.Label
     $title.Text = '剪贴板历史'
     $title.AutoSize = $false
-    $title.Location = New-Object System.Drawing.Point(18, 13)
-    $title.Size = New-Object System.Drawing.Size(120, 26)
-    $title.ForeColor = [System.Drawing.Color]::FromArgb(238, 238, 242)
+    $title.Location = New-Object System.Drawing.Point(18, 14)
+    $title.Size = New-Object System.Drawing.Size(220, 24)
+    $title.ForeColor = (Get-SnipTheme 'Text')
     $title.BackColor = $form.BackColor
-    $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 12.5, [System.Drawing.FontStyle]::Bold)
+    $title.Font = New-SnipUiFont -Size 11.5 -Style Bold
     $form.Controls.Add($title)
-
-    $subtitle = New-Object System.Windows.Forms.Label
-    $subtitle.Text = 'Enter 复制 · Delete 删除 · Esc 关闭'
-    $subtitle.AutoSize = $false
-    $subtitle.Location = New-Object System.Drawing.Point(150, 17)
-    $subtitle.Size = New-Object System.Drawing.Size(400, 20)
-    $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
-    $subtitle.BackColor = $form.BackColor
-    $subtitle.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
-    $form.Controls.Add($subtitle)
 
     $closeButton = New-Object SnipToolButton
     $closeButton.IconId = 'close'
     $closeButton.Text = ''
-    $closeButton.Width = 38
-    $closeButton.Location = New-Object System.Drawing.Point(844, 11)
+    $closeButton.Width = 30
+    $closeButton.Height = 30
+    $closeButton.Location = New-Object System.Drawing.Point(812, 11)
+    $closeButton.BackColor = $form.BackColor
     $form.Controls.Add($closeButton)
 
     # ---------- 搜索框 ----------
+    # 原生 TextBox 的边框色改不了（FixedSingle 在深色底上是一条白线），
+    # 所以用「无边框输入框 + 自绘描边容器」：观感统一，也不引入额外控件库。
     $searchHint = '搜索内容或来源应用…'
+    $searchPanel = New-Object System.Windows.Forms.Panel
+    $searchPanel.Location = New-Object System.Drawing.Point(18, 50)
+    $searchPanel.Size = New-Object System.Drawing.Size(824, 32)
+    $searchPanel.BackColor = (Get-SnipTheme 'Surface')
+    $form.Controls.Add($searchPanel)
+    $searchPanel.Add_Paint({
+            param($sender, $e)
+            try {
+                $g = $e.Graphics
+                $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                $rect = New-Object System.Drawing.Rectangle(0, 0, ($sender.Width - 1), ($sender.Height - 1))
+                $path = New-SnipRoundPath -Bounds $rect -Radius 8
+                try {
+                    $pen = New-Object System.Drawing.Pen((Get-SnipTheme 'Hairline'), 1)
+                    try { $g.DrawPath($pen, $path) } finally { $pen.Dispose() }
+                } finally { $path.Dispose() }
+            } catch { }
+        })
+    $searchPanel.Add_Click({ try { $script:SnipClipboardPanelState.Search.Focus() } catch { } })
+
     $search = New-Object System.Windows.Forms.TextBox
-    $search.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $search.Location = New-Object System.Drawing.Point(18, 62)
-    $search.Size = New-Object System.Drawing.Size(820, 30)
-    $search.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
-    $search.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $search.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
+    $search.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $search.Location = New-Object System.Drawing.Point(12, 7)
+    $search.Size = New-Object System.Drawing.Size(800, 20)
+    $search.Font = New-SnipUiFont -Size 9.5
+    $search.BackColor = (Get-SnipTheme 'Surface')
+    $search.ForeColor = (Get-SnipTheme 'Text2')
     $search.Text = $searchHint
-    $form.Controls.Add($search)
+    $searchPanel.Controls.Add($search)
+    $form.Controls.Add($searchPanel)
     $state.Search = $search
     $state.SearchHint = $searchHint
 
-
-
     # ---------- 左侧列表容器 ----------
     $listPanel = New-Object System.Windows.Forms.Panel
-    $listPanel.Location = New-Object System.Drawing.Point(18, 104)
-    $listPanel.Size = New-Object System.Drawing.Size(340, 424)
-    $listPanel.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $listPanel.Padding = New-Object System.Windows.Forms.Padding(1)
+    $listPanel.Location = New-Object System.Drawing.Point(18, 94)
+    $listPanel.Size = New-Object System.Drawing.Size(336, 420)
+    $listPanel.BackColor = (Get-SnipTheme 'Surface')
     $form.Controls.Add($listPanel)
     $state.ListPanel = $listPanel
 
@@ -198,11 +211,11 @@ function Show-SnipClipboardPanel {
     $list.Dock = [System.Windows.Forms.DockStyle]::Fill
     $list.BorderStyle = [System.Windows.Forms.BorderStyle]::None
     $list.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
-    $list.ItemHeight = 56
+    $list.ItemHeight = 54
     $list.IntegralHeight = $false
-    $list.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $list.ForeColor = [System.Drawing.Color]::FromArgb(238, 238, 242)
-    $list.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
+    $list.BackColor = (Get-SnipTheme 'Surface')
+    $list.ForeColor = (Get-SnipTheme 'Text')
+    $list.Font = New-SnipUiFont -Size 9.5
     $listPanel.Controls.Add($list)
     $state.List = $list
 
@@ -211,9 +224,9 @@ function Show-SnipClipboardPanel {
     $emptyLabel.Dock = [System.Windows.Forms.DockStyle]::Fill
     $emptyLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
     $emptyLabel.Text = "还没有记录`r`n复制文本、图片或文件后会自动出现在这里（保留最近 $Days 天）"
-    $emptyLabel.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
-    $emptyLabel.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $emptyLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
+    $emptyLabel.ForeColor = (Get-SnipTheme 'Muted')
+    $emptyLabel.BackColor = (Get-SnipTheme 'Surface')
+    $emptyLabel.Font = New-SnipUiFont -Size 9.5
     $emptyLabel.Visible = $false
     $listPanel.Controls.Add($emptyLabel)
     $emptyLabel.BringToFront()
@@ -221,53 +234,56 @@ function Show-SnipClipboardPanel {
 
     # ---------- 右侧预览 ----------
     $previewPanel = New-Object System.Windows.Forms.Panel
-    $previewPanel.Location = New-Object System.Drawing.Point(374, 104)
-    $previewPanel.Size = New-Object System.Drawing.Size(508, 424)
-    $previewPanel.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $previewPanel.Padding = New-Object System.Windows.Forms.Padding(12)
+    $previewPanel.Location = New-Object System.Drawing.Point(366, 94)
+    $previewPanel.Size = New-Object System.Drawing.Size(476, 420)
+    $previewPanel.BackColor = (Get-SnipTheme 'Surface')
+    $previewPanel.Padding = New-Object System.Windows.Forms.Padding(14)
     $form.Controls.Add($previewPanel)
 
     $previewInfo = New-Object System.Windows.Forms.Label
     $previewInfo.Dock = [System.Windows.Forms.DockStyle]::Top
-    $previewInfo.Height = 26
+    $previewInfo.Height = 24
     $previewInfo.Text = '选择左侧一条记录查看内容'
-    $previewInfo.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
-    $previewInfo.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-    $previewInfo.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 8.5)
+    $previewInfo.ForeColor = (Get-SnipTheme 'Muted')
+    $previewInfo.BackColor = (Get-SnipTheme 'Surface')
+    $previewInfo.Font = New-SnipUiFont -Size 8.5
     $previewPanel.Controls.Add($previewInfo)
     $state.PreviewInfo = $previewInfo
 
     $previewHost = New-Object System.Windows.Forms.Panel
     $previewHost.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $previewHost.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
+    $previewHost.BackColor = (Get-SnipTheme 'Surface')
     $previewPanel.Controls.Add($previewHost)
     $state.PreviewHost = $previewHost
 
     # ---------- 底部操作栏 ----------
     $statusLabel = New-Object System.Windows.Forms.Label
     $statusLabel.AutoSize = $false
-    $statusLabel.Location = New-Object System.Drawing.Point(18, 542)
-    $statusLabel.Size = New-Object System.Drawing.Size(480, 22)
-    $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
+    $statusLabel.Location = New-Object System.Drawing.Point(18, 528)
+    $statusLabel.Size = New-Object System.Drawing.Size(460, 20)
+    $statusLabel.ForeColor = (Get-SnipTheme 'Muted')
     $statusLabel.BackColor = $form.BackColor
-    $statusLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+    $statusLabel.Font = New-SnipUiFont -Size 8.5
     $statusLabel.Text = ''
     $form.Controls.Add($statusLabel)
     $state.Status = $statusLabel
 
+    # 主操作（复制）用琥珀实心，其余是安静的文字按钮：一屏只有一个地方喊"点我"。
     $copyButton = New-Object SnipToolButton
     $copyButton.IconId = 'copy'
     $copyButton.Text = '复制'
     $copyButton.Active = $true
-    $copyButton.Width = 96
-    $copyButton.Location = New-Object System.Drawing.Point(680, 538)
+    $copyButton.Width = 92
+    $copyButton.Location = New-Object System.Drawing.Point(648, 522)
+    $copyButton.BackColor = $form.BackColor
     $form.Controls.Add($copyButton)
 
     $deleteButton = New-Object SnipToolButton
     $deleteButton.IconId = 'trash'
     $deleteButton.Text = '删除'
-    $deleteButton.Width = 96
-    $deleteButton.Location = New-Object System.Drawing.Point(784, 538)
+    $deleteButton.Width = 92
+    $deleteButton.Location = New-Object System.Drawing.Point(748, 522)
+    $deleteButton.BackColor = $form.BackColor
     $form.Controls.Add($deleteButton)
 
     # 清空历史是破坏性动作，放在底部并用明确文案；早先它挂在搜索框右边、文案只写「清空」，
@@ -275,8 +291,9 @@ function Show-SnipClipboardPanel {
     $clearButton = New-Object SnipToolButton
     $clearButton.IconId = 'close'
     $clearButton.Text = '清空历史'
-    $clearButton.Width = 104
-    $clearButton.Location = New-Object System.Drawing.Point(528, 538)
+    $clearButton.Width = 92
+    $clearButton.Location = New-Object System.Drawing.Point(548, 522)
+    $clearButton.BackColor = $form.BackColor
     $form.Controls.Add($clearButton)
 
     # ---------- 行为函数（全部走 $script 状态，避免回调取不到局部变量） ----------
@@ -301,8 +318,8 @@ function Show-SnipClipboardPanel {
             $placeholder.Dock = [System.Windows.Forms.DockStyle]::Fill
             $placeholder.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
             $placeholder.Text = '左侧选择一条记录'
-            $placeholder.ForeColor = [System.Drawing.Color]::FromArgb(118, 118, 126)
-            $placeholder.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
+            $placeholder.ForeColor = [System.Drawing.Color]::FromArgb(111, 111, 120)
+            $placeholder.BackColor = [System.Drawing.Color]::FromArgb(27, 27, 31)
             $placeholder.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
             $hostPanel.Controls.Add($placeholder)
             return
@@ -329,7 +346,7 @@ function Show-SnipClipboardPanel {
                     $picture = New-Object System.Windows.Forms.PictureBox
                     $picture.Dock = [System.Windows.Forms.DockStyle]::Fill
                     $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-                    $picture.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
+                    $picture.BackColor = [System.Drawing.Color]::FromArgb(27, 27, 31)
                     $picture.Image = $bitmap
                     $hostPanel.Controls.Add($picture)
                 } else {
@@ -337,7 +354,7 @@ function Show-SnipClipboardPanel {
                     $missing.Dock = [System.Windows.Forms.DockStyle]::Fill
                     $missing.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
                     $missing.Text = '图片文件已被清理'
-                    $missing.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
+                    $missing.ForeColor = [System.Drawing.Color]::FromArgb(163, 163, 171)
                     $hostPanel.Controls.Add($missing)
                 }
             } catch {
@@ -353,8 +370,8 @@ function Show-SnipClipboardPanel {
         $textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
         $textBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
         $textBox.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $textBox.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 33)
-        $textBox.ForeColor = [System.Drawing.Color]::FromArgb(222, 222, 228)
+        $textBox.BackColor = [System.Drawing.Color]::FromArgb(27, 27, 31)
+        $textBox.ForeColor = [System.Drawing.Color]::FromArgb(214, 214, 220)
         $textBox.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
         if ($kind -eq 'files') {
             $lines = @()
@@ -535,13 +552,13 @@ function Show-SnipClipboardPanel {
                 $entry = $items[$e.Index]
                 $g = $e.Graphics
                 $selected = (($e.State -band [System.Windows.Forms.DrawItemState]::Selected) -ne 0)
-                $bg = if ($selected) { [System.Drawing.Color]::FromArgb(48, 48, 54) } else { [System.Drawing.Color]::FromArgb(30, 30, 33) }
+                $bg = if ($selected) { [System.Drawing.Color]::FromArgb(35, 35, 40) } else { [System.Drawing.Color]::FromArgb(27, 27, 31) }
                 $brush = New-Object System.Drawing.SolidBrush($bg)
                 try { $g.FillRectangle($brush, $e.Bounds) } finally { $brush.Dispose() }
 
-                $kindColor = if ($selected) { [System.Drawing.Color]::FromArgb(238, 238, 242) } else { [System.Drawing.Color]::FromArgb(148, 148, 158) }
-                $mainColor = if ($selected) { [System.Drawing.Color]::FromArgb(238, 238, 242) } else { [System.Drawing.Color]::FromArgb(222, 222, 228) }
-                $mutedColor = [System.Drawing.Color]::FromArgb(132, 132, 142)
+                $kindColor = if ($selected) { [System.Drawing.Color]::FromArgb(239, 239, 241) } else { [System.Drawing.Color]::FromArgb(163, 163, 171) }
+                $mainColor = if ($selected) { [System.Drawing.Color]::FromArgb(239, 239, 241) } else { [System.Drawing.Color]::FromArgb(214, 214, 220) }
+                $mutedColor = [System.Drawing.Color]::FromArgb(111, 111, 120)
 
                 $kindFont = New-Object System.Drawing.Font('Microsoft YaHei UI', 8.5)
                 $mainFont = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
@@ -560,10 +577,7 @@ function Show-SnipClipboardPanel {
                 } finally {
                     $kindFont.Dispose(); $mainFont.Dispose(); $mutedFont.Dispose()
                 }
-                $linePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(42, 42, 48), 1)
-                try {
-                    $g.DrawLine($linePen, $e.Bounds.X + 12, ($e.Bounds.Bottom - 1), ($e.Bounds.Right - 12), ($e.Bounds.Bottom - 1))
-                } finally { $linePen.Dispose() }
+
             } catch {
                 Write-SnipLog ('剪贴板列表绘制失败：' + $_.Exception.Message)
             }
@@ -598,7 +612,7 @@ function Show-SnipClipboardPanel {
                 $st = $script:SnipClipboardPanelState
                 if ($null -ne $st -and $st.Search.Text -eq $st.SearchHint) {
                     $st.Search.Text = ''
-                    $st.Search.ForeColor = [System.Drawing.Color]::FromArgb(238, 238, 242)
+                    $st.Search.ForeColor = [System.Drawing.Color]::FromArgb(239, 239, 241)
                 }
             } catch { }
         })
@@ -607,7 +621,7 @@ function Show-SnipClipboardPanel {
                 $st = $script:SnipClipboardPanelState
                 if ($null -ne $st -and $st.Search.Text -eq '') {
                     $st.Search.Text = $st.SearchHint
-                    $st.Search.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
+                    $st.Search.ForeColor = [System.Drawing.Color]::FromArgb(163, 163, 171)
                 }
             } catch { }
         })

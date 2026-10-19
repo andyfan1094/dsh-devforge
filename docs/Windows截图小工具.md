@@ -1,6 +1,6 @@
 # Windows 截图小工具（win-snip）
 
-> 状态：0.52.0 引入；0.63.0 增加「热键先弹功能选择框」与「剪贴板历史（默认保留 15 天）」。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
+> 状态：0.52.0 引入；0.63.0 增加「热键先弹功能选择框」与「剪贴板历史（默认保留 15 天）」；0.64.0 全部界面重设计为「石墨 · 琥珀」主题。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
 
 ## 一、它是什么
 
@@ -104,7 +104,7 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - `native/win-snip-float.ps1` — 置顶浮窗（拖动/缩放/Esc）
 - `native/win-snip-result.ps1` — 识别/翻译结果窗
 - `native/win-snip-ui.ps1` — 工具条控件（`SnipToolButton` 自绘矢量图标按钮 + `SnipToolbarPanel` 容器）
-- `native/win-snip-launcher.ps1` + `native/win-snip-choice.cs` — 热键功能选择框（两张卡片 + 键盘操作）
+- `native/win-snip-theme.ps1` — 「石墨 · 琥珀」主题令牌（颜色 / 字体 / 圆角 / 圆角窗体）
 - `native/win-snip-clipboard-store.ps1` — 剪贴板历史存储（按天 JSONL、图片落盘、去重、过期清理）
 - `native/win-snip-clipboard-watch.ps1` — 剪贴板采集（序列号轮询、文本/图片/文件、hash 去重）
 - `native/win-snip-clipboard-read.cs` — 纯 Win32 剪贴板读写（文本 / 文件 / CF_DIB 图片）
@@ -219,7 +219,7 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - 热键触发后 150ms 才 arm 失焦自动关闭，避免刚显示就被判定失焦闪退；
 - 数字键 1/2、↑↓ 切换、Enter 确认、Esc 取消，点卡片也可以；
 - 返回 `'capture'` / `'clipboard'` / `$null`，`$null` 表示取消（不执行任何动作）；
-- 位置跟随光标，贴边时自动翻到左上，保证整个框都在工作区内。
+- 位置以**鼠标当前位置为中心**（2026-10-19 辉哥定：不要侧边弹出），贴边时自动夹进工作区；
 
 **剪贴板历史**（`win-snip-clipboard-*.ps1/.cs`）：
 
@@ -245,3 +245,21 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - **锁屏 / RDP 断开时 `CopyFromScreen` 报"句柄无效"**：UI 验收改用
   `PrintWindow(hwnd, hdc, 2)` 离屏渲染；键盘交互用 `PostMessage` 发给**焦点控件**
   （剪贴板面板里是 ListBox，不是顶层窗体）。
+
+## 十二、界面设计（石墨 · 琥珀）
+
+2026-10-19 全部原生界面重做了一遍。目标不是"更花"，而是**更安静**：这是一个高频、短时的工具，
+界面不该抢用户的注意力。
+
+- **定调**：桌面工具，读起来像系统级工具（Raycast / Spotlight 那类），不是营销页。
+  三旋钮：`DESIGN_VARIANCE 4` / `MOTION_INTENSITY 2` / `VISUAL_DENSITY 4`。
+- **色彩**：中性偏暖的近黑（画布 `#141416`、面 `#1B1B1F`、抬升 `#232328`、发丝线 `#2F2F35`），
+  全文只有一个强调色——琥珀 `#E2A45C`，只出现在**选中态和主操作**（复制按钮）上。
+  不用默认靛蓝、不用紫蓝渐变、不用纯黑纯白。
+- **层级**：靠 1px 发丝描边和 2 个色阶的底色差分层，不叠阴影、不发光；圆角统一（卡片 10、控件 7、键帽 4）。
+- **字体**：Microsoft YaHei UI；标题 Bold、正文 Regular、辅助信息降到 8.5pt 且用次级灰。
+- **图标**：1.6px 圆头单线矢量，选中时随强调色；不用 emoji。
+- **位置**：选择框以鼠标位置为中心弹出，贴边时夹进工作区。
+- **动效**：原生窗口只保留 hover / 按下 1px 位移的瞬时反馈，不做淡入淡出。
+
+token 全在 `native/win-snip-theme.ps1`，改主题只动这一处；各窗口只负责布局，不再各写一份色值。

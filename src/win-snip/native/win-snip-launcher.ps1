@@ -42,40 +42,60 @@ function Show-SnipLauncher {
 
     $script:SnipLauncherChoice = $null
     $script:SnipLauncherReady = $false
+    # 选中后 Close() 会再触发一次 Deactivate；没有这个标记的话，Deactivate 会把刚选好的值清成 $null，
+    # 表现就是提交后被当成取消（2026-10-19 实机反馈）。
+    $script:SnipLauncherClosing = $false
 
     $form = New-SnipDarkForm
     $form.Text = '随手工具'
-    $form.Width = 340
-    $form.Height = 246
+    $form.Width = 360
+    $form.Height = 202
+    $form.BackColor = (Get-SnipTheme 'Canvas')
+    Set-SnipRoundedRegion -Form $form -Radius 12
     $form.KeyPreview = $true
 
     $title = New-Object System.Windows.Forms.Label
     $title.Text = '随手工具'
     $title.AutoSize = $false
-    $title.Location = New-Object System.Drawing.Point(16, 14)
-    $title.Size = New-Object System.Drawing.Size(200, 26)
-    $title.ForeColor = [System.Drawing.Color]::FromArgb(238, 238, 242)
-    $title.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 34)
-    $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 12.5, [System.Drawing.FontStyle]::Bold)
+    $title.Location = New-Object System.Drawing.Point(14, 12)
+    $title.Size = New-Object System.Drawing.Size(220, 20)
+    $title.ForeColor = (Get-SnipTheme 'Text2')
+    $title.BackColor = (Get-SnipTheme 'Canvas')
+    $title.Font = New-SnipUiFont -Size 9.5 -Style Bold
     $form.Controls.Add($title)
 
     $hint = New-Object System.Windows.Forms.Label
     $hint.Text = '↑↓ 选择 · Enter 确认 · Esc 取消'
     $hint.AutoSize = $false
-    $hint.Location = New-Object System.Drawing.Point(16, 214)
-    $hint.Size = New-Object System.Drawing.Size(308, 20)
-    $hint.ForeColor = [System.Drawing.Color]::FromArgb(148, 148, 158)
-    $hint.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 34)
-    $hint.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+    $hint.Location = New-Object System.Drawing.Point(14, 178)
+    $hint.Size = New-Object System.Drawing.Size(332, 16)
+    $hint.ForeColor = (Get-SnipTheme 'Muted')
+    $hint.BackColor = (Get-SnipTheme 'Canvas')
+    $hint.Font = New-SnipUiFont -Size 8
     $form.Controls.Add($hint)
+
+    # 主题令牌集中注入：卡片控件的默认色只是兜底，实际观感由这里决定。
+    $applyTheme = {
+        param($Card)
+        $Card.AccentColor = (Get-SnipTheme 'Accent')
+        $Card.TextColor = (Get-SnipTheme 'Text')
+        $Card.Text2Color = (Get-SnipTheme 'Text2')
+        $Card.MutedColor = (Get-SnipTheme 'Muted')
+        $Card.BorderColor = (Get-SnipTheme 'Hairline')
+        $Card.CanvasColor = (Get-SnipTheme 'Canvas')
+        $Card.RaisedColor = (Get-SnipTheme 'Raised')
+        $Card.HoverFill = (Get-SnipTheme 'Raised')
+        $Card.ActiveFill = [System.Drawing.Color]::FromArgb(24, 226, 164, 92)
+    }
 
     $captureCard = New-Object SnipChoiceCard
     $captureCard.IconId = 'capture'
     $captureCard.Title = '截图'
     $captureCard.Detail = '框选 · 标注 · 识别与翻译'
     $captureCard.KeyHint = '1'
-    $captureCard.Location = New-Object System.Drawing.Point(14, 50)
-    $captureCard.Size = New-Object System.Drawing.Size(312, 72)
+    $captureCard.Location = New-Object System.Drawing.Point(14, 40)
+    $captureCard.Size = New-Object System.Drawing.Size(332, 62)
+    & $applyTheme $captureCard
     $captureCard.Active = $true
     $form.Controls.Add($captureCard)
 
@@ -84,8 +104,9 @@ function Show-SnipLauncher {
     $clipboardCard.Title = '剪贴板'
     $clipboardCard.Detail = '最近 ' + $Days + ' 天复制过的内容'
     $clipboardCard.KeyHint = '2'
-    $clipboardCard.Location = New-Object System.Drawing.Point(14, 130)
-    $clipboardCard.Size = New-Object System.Drawing.Size(312, 72)
+    $clipboardCard.Location = New-Object System.Drawing.Point(14, 108)
+    $clipboardCard.Size = New-Object System.Drawing.Size(332, 62)
+    & $applyTheme $clipboardCard
     $form.Controls.Add($clipboardCard)
 
     $script:SnipLauncherActive = 0
@@ -108,6 +129,7 @@ function Show-SnipLauncher {
         # 参数声明成 [string] 后传 $null 会被转成空字符串，取消与"选中空项"就分不清了；
         # 这里显式还原 null，保证 Esc/失焦返回 $null（调用方据此不执行任何动作）。
         $script:SnipLauncherChoice = $(if ([string]::IsNullOrEmpty($Choice)) { $null } else { $Choice })
+        $script:SnipLauncherClosing = $true
         $target = $script:SnipLauncherForm
         if ($null -ne $target) { $target.Close() }
     }
@@ -153,21 +175,21 @@ function Show-SnipLauncher {
             } catch { }
         })
     $form.Add_Deactivate({
-            if ($script:SnipLauncherReady) {
+            if ($script:SnipLauncherReady -and -not $script:SnipLauncherClosing) {
                 $script:SnipLauncherChoice = $null
                 $target = $script:SnipLauncherForm
                 if ($null -ne $target) { $target.Close() }
             }
         })
 
-    # 位置：光标右下方 12px，贴边时翻到左上，保证整个框都在工作区内。
+    # 位置：以鼠标当前位置为中心（辉哥 2026-10-19 定：不要侧边弹出），贴边时夹进工作区。
     $cursor = [System.Windows.Forms.Cursor]::Position
     $screen = [System.Windows.Forms.Screen]::FromPoint($cursor)
     $work = $screen.WorkingArea
-    $x = $cursor.X + 12
-    $y = $cursor.Y + 12
-    if ($x + $form.Width -gt $work.Right) { $x = $cursor.X - $form.Width - 12 }
-    if ($y + $form.Height -gt $work.Bottom) { $y = $cursor.Y - $form.Height - 12 }
+    $x = $cursor.X - [int]($form.Width / 2)
+    $y = $cursor.Y - [int]($form.Height / 2)
+    if ($x + $form.Width -gt $work.Right) { $x = $work.Right - $form.Width - 8 }
+    if ($y + $form.Height -gt $work.Bottom) { $y = $work.Bottom - $form.Height - 8 }
     if ($x -lt $work.Left) { $x = $work.Left + 8 }
     if ($y -lt $work.Top) { $y = $work.Top + 8 }
     $form.Location = New-Object System.Drawing.Point($x, $y)

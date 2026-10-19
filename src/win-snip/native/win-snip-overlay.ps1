@@ -38,11 +38,11 @@ $script:SnipActionDefs = @(
 )
 
 # 配色（深色工具条，与面板风格一致）。
-$script:SnipAccent = [System.Drawing.Color]::FromArgb(45, 107, 255)
-$script:SnipTextColor = [System.Drawing.Color]::FromArgb(238, 238, 242)
+$script:SnipAccent = [System.Drawing.Color]::FromArgb(226, 164, 92)
+$script:SnipTextColor = [System.Drawing.Color]::FromArgb(239, 239, 241)
 $script:SnipMutedColor = [System.Drawing.Color]::FromArgb(122, 122, 130)
 $script:SnipHoverColor = [System.Drawing.Color]::FromArgb(62, 62, 70)
-$script:SnipToolbarBack = [System.Drawing.Color]::FromArgb(38, 38, 42)
+$script:SnipToolbarBack = [System.Drawing.Color]::FromArgb(27, 27, 31)
 
 <#
 .SYNOPSIS
@@ -328,7 +328,7 @@ function New-SnipToolbar {
                 $sep.Margin = New-Object System.Windows.Forms.Padding(3, 4, 3, 4)
                 $sep.Add_Paint({
                         param($sender, $e)
-                        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(66, 66, 74), 1)
+                        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(47, 47, 53), 1)
                         try { $e.Graphics.DrawLine($pen, 4, 2, 4, ($sender.Height - 2)) } finally { $pen.Dispose() }
                     })
                 $panel.Controls.Add($sep)

@@ -1,11 +1,12 @@
-// 功能选择框的卡片控件（由 win-snip-launcher.ps1 运行时编译加载）。
+﻿// 功能选择框的卡片控件（由 win-snip-launcher.ps1 运行时编译加载）。
 //
 // 为什么用 C# 而不是在 PowerShell 里自绘：
 //   hover / 键盘选中都需要即时重绘，PowerShell 解释执行的方法会明显掉帧
 //   （与 win-snip-ui.ps1 里 SnipToolButton 的取舍一致）。
 //
-// 图标规范沿用工具条：1.6px 圆头单线、14×14 方格内绘制，这里整体放大到 20×20。
-// 禁 emoji 当图标；图标颜色跟随文字色，选中态只改强调色描边与底色。
+// 视觉（2026-10-19 重设计，见 win-snip-theme.ps1）：
+//   未选中 = 透明底 + 1px 发丝描边；选中 = 抬升底色 + 琥珀描边；
+//   不画重阴影、不做渐变。图标沿用 1.6px 圆头单线，颜色跟随状态。
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -18,19 +19,23 @@ public class SnipChoiceCard : Control
     public string Detail = "";
     public string KeyHint = "1";
 
-    public Color AccentColor = Color.FromArgb(45, 107, 255);
-    public Color TextColor = Color.FromArgb(238, 238, 242);
-    public Color MutedColor = Color.FromArgb(148, 148, 158);
-    public Color BorderColor = Color.FromArgb(66, 66, 74);
-    public Color HoverFill = Color.FromArgb(20, 255, 255, 255);
-    public Color ActiveFill = Color.FromArgb(26, 45, 107, 255);
+    // 由调用方从主题令牌注入，避免这里再写一份色值。
+    public Color AccentColor = Color.FromArgb(226, 164, 92);
+    public Color TextColor = Color.FromArgb(239, 239, 241);
+    public Color Text2Color = Color.FromArgb(163, 163, 171);
+    public Color MutedColor = Color.FromArgb(111, 111, 120);
+    public Color BorderColor = Color.FromArgb(47, 47, 53);
+    public Color CanvasColor = Color.FromArgb(20, 20, 22);
+    public Color RaisedColor = Color.FromArgb(35, 35, 40);
+    public Color HoverFill = Color.FromArgb(28, 255, 255, 255);
+    public Color ActiveFill = Color.FromArgb(24, 226, 164, 92);
 
     private bool hover;
     private bool pressed;
     private bool active;
 
-    private const int IconSize = 20;
-    private const int PadX = 16;
+    private const int IconSize = 18;
+    private const int PadX = 14;
     private const int Radius = 10;
 
     public bool Active
@@ -43,13 +48,14 @@ public class SnipChoiceCard : Control
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
             | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-        BackColor = Color.FromArgb(38, 38, 42);
+        // 与窗体同色：圆角裁切外的四个小角不会露出异色方块。
+        BackColor = CanvasColor;
         Cursor = Cursors.Hand;
         Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
         // 不抢焦点：选择框的键盘处理挂在窗体上，卡片抢焦点会让数字键/Esc 失效。
         SetStyle(ControlStyles.Selectable, false);
         TabStop = false;
-        Height = 72;
+        Height = 62;
     }
 
     protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -67,43 +73,54 @@ public class SnipChoiceCard : Control
         Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
         using (GraphicsPath path = RoundRect(box, Radius))
         {
-            if (active) { using (SolidBrush b = new SolidBrush(ActiveFill)) { g.FillPath(b, path); } }
-            else if (hover) { using (SolidBrush b = new SolidBrush(HoverFill)) { g.FillPath(b, path); } }
+            if (active)
+            {
+                using (SolidBrush b = new SolidBrush(ActiveFill)) { g.FillPath(b, path); }
+            }
+            else if (hover)
+            {
+                using (SolidBrush b = new SolidBrush(RaisedColor)) { g.FillPath(b, path); }
+            }
             Color stroke = active ? AccentColor : BorderColor;
-            using (Pen pen = new Pen(stroke, active ? 1.5f : 1f)) { g.DrawPath(pen, path); }
+            using (Pen pen = new Pen(stroke, active ? 1.2f : 1f)) { g.DrawPath(pen, path); }
         }
 
         int offset = pressed ? 1 : 0;
+        Color iconColor = active ? AccentColor : (hover ? TextColor : Text2Color);
         int iconTop = (Height - IconSize) / 2 + offset;
-        DrawGlyph(g, IconId, PadX, iconTop, active ? TextColor : (hover ? TextColor : MutedColor));
+        DrawGlyph(g, IconId, PadX, iconTop, iconColor);
 
-        int textLeft = PadX + IconSize + 14;
-        int textWidth = Width - textLeft - 56;
-        using (Font titleFont = new Font("Microsoft YaHei UI", 11.5f, FontStyle.Bold, GraphicsUnit.Point))
-        using (Font detailFont = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point))
+        int textLeft = PadX + IconSize + 12;
+        int textWidth = Width - textLeft - 46;
+        using (Font titleFont = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold, GraphicsUnit.Point))
+        using (Font detailFont = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point))
         {
-            Rectangle titleRect = new Rectangle(textLeft, 13 + offset, textWidth, 24);
+            Rectangle titleRect = new Rectangle(textLeft, 10 + offset, textWidth, 22);
             TextRenderer.DrawText(g, Title, titleFont, titleRect, TextColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
-            Rectangle detailRect = new Rectangle(textLeft, 39 + offset, textWidth, 20);
-            TextRenderer.DrawText(g, Detail, detailFont, detailRect, MutedColor,
+            Rectangle detailRect = new Rectangle(textLeft, 32 + offset, textWidth, 18);
+            TextRenderer.DrawText(g, Detail, detailFont, detailRect, active ? Text2Color : MutedColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
         }
 
-        // 右侧键帽：提示这个功能有数字快捷键，也给出可以"盲按"的锚点。
-        int capSize = 22;
+        // 右侧键帽：提示数字快捷键，也是"可以盲按"的锚点。
+        int capSize = 20;
         int capLeft = Width - PadX - capSize;
         int capTop = (Height - capSize) / 2 + offset;
-        using (GraphicsPath capPath = RoundRect(new Rectangle(capLeft, capTop, capSize, capSize), 6))
+        using (GraphicsPath capPath = RoundRect(new Rectangle(capLeft, capTop, capSize, capSize), 4))
         {
-            using (SolidBrush fill = new SolidBrush(Color.FromArgb(26, 26, 30))) { g.FillPath(fill, capPath); }
+            using (SolidBrush fill = new SolidBrush(CanvasColor)) { g.FillPath(fill, capPath); }
             using (Pen pen = new Pen(active ? AccentColor : BorderColor, 1f)) { g.DrawPath(pen, capPath); }
         }
-        TextRenderer.DrawText(g, KeyHint,
-            new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point),
-            new Rectangle(capLeft, capTop, capSize, capSize),
-            active ? TextColor : MutedColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        using (Font capFont = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Point))
+        using (SolidBrush capBrush = new SolidBrush(active ? AccentColor : MutedColor))
+        {
+            StringFormat format = new StringFormat();
+            format.Alignment = StringAlignment.Center;
+            format.LineAlignment = StringAlignment.Center;
+            g.DrawString(KeyHint, capFont, capBrush, new RectangleF(capLeft, capTop, capSize, capSize), format);
+            format.Dispose();
+        }
     }
 
     private static GraphicsPath RoundRect(Rectangle bounds, int radius)
@@ -130,7 +147,7 @@ public class SnipChoiceCard : Control
             pen.LineJoin = LineJoin.Round;
             GraphicsState state = g.Save();
             g.TranslateTransform(left, top);
-            g.ScaleTransform(20f / 14f, 20f / 14f);
+            g.ScaleTransform(18f / 14f, 18f / 14f);
             try
             {
                 switch (id)

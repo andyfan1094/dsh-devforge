@@ -666,7 +666,7 @@ function New-SnipDarkForm {
     $form = New-Object System.Windows.Forms.Form
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-    $form.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 34)
+    $form.BackColor = [System.Drawing.Color]::FromArgb(20, 20, 22)
     $form.TopMost = $true
     $form.ShowInTaskbar = $false
     $form.Font = New-SnipTextFont -Size 9

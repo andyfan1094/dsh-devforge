@@ -25,10 +25,10 @@ public class SnipToolButton : Control
     // 是否禁用（撤销/重做在无可撤销内容时禁用）。
     public bool Disabled = false;
 
-    public Color AccentColor = Color.FromArgb(45, 107, 255);
-    public Color TextColor = Color.FromArgb(238, 238, 242);
-    public Color MutedColor = Color.FromArgb(118, 118, 126);
-    public Color HoverFill = Color.FromArgb(24, 255, 255, 255);
+    public Color AccentColor = Color.FromArgb(226, 164, 92);
+    public Color TextColor = Color.FromArgb(239, 239, 241);
+    public Color MutedColor = Color.FromArgb(111, 111, 120);
+    public Color HoverFill = Color.FromArgb(35, 35, 40);
 
     private const int IconSize = 14;
     private const int IconGap = 6;
@@ -44,7 +44,7 @@ public class SnipToolButton : Control
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
             | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         // 不用透明背景：透明需要父窗体反复重绘，浮在截图上会闪。按钮与工具条同色，圆角处看不出接缝。
-        BackColor = Color.FromArgb(38, 38, 42);
+        BackColor = Color.FromArgb(27, 27, 31);
         Cursor = Cursors.Hand;
         Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
         // 关键：不接受焦点，点完按钮键盘焦点仍留在遮罩窗体上，Esc / Ctrl+Z 才不会失效。
@@ -73,7 +73,7 @@ public class SnipToolButton : Control
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
         bool off = Disabled;
-        Color fore = Active ? Color.White : (off ? MutedColor : TextColor);
+        Color fore = Active ? Color.FromArgb(26, 20, 8) : (off ? MutedColor : TextColor);
         Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
 
         using (GraphicsPath path = RoundRect(box, Radius))
@@ -246,12 +246,12 @@ public class SnipToolButton : Control
 // 刻意不做圆角：圆角需要透明背景，而它浮在截图上会反复触发父窗体重绘导致闪烁。
 public class SnipToolbarPanel : FlowLayoutPanel
 {
-    public Color BorderColor = Color.FromArgb(66, 66, 74);
+    public Color BorderColor = Color.FromArgb(47, 47, 53);
 
     public SnipToolbarPanel()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-        BackColor = Color.FromArgb(38, 38, 42);
+        BackColor = Color.FromArgb(27, 27, 31);
     }
 
     protected override void OnPaint(PaintEventArgs e)
