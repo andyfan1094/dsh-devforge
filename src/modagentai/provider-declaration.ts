@@ -24,18 +24,20 @@ export const TIANGONG_KIMI_EFFORTS = { low: 'low', high: 'high', max: 'max' } as
 
 /**
  * 登录官网后写入的三个模型（GLM-Flash、DeepSeek V4.1 Flash、Kimi-K3）的上下文窗口。
- * 辉哥 2026-10-10 定稿：由 256K 压到 200K——上游实测虽可贴 256K，但长上下文会同时推高
- * 请求包体积与用量消耗，声明侧刻意低报，让宿主在 200K 就触发压缩。
- * 2026-10-12 补 Kimi-K3：官方原生 1M，同样按 200K 低报（辉哥选「按惯例」）。
+ * 辉哥 2026-10-19 定稿：由 200K 提到 300K。三个模型的上游容量实测均为 1M
+ * （wb2api/CodeBuddy GET /v1/models：cn:deepseek-v4.1-flash、cn:kimi-k3-1、cn:glm-5.3-flash），
+ * 并已用 30 万级真实请求端到端打通（上游直接认可 32 万~65 万 token 的输入）；
+ * 故 300K 仍属刻意低报，只保留「够用且控消耗」的额度，不声明上游满额的 1M。
+ * 历史：2026-10-10 由 256K 压到 200K（压消耗），2026-10-12 补 Kimi-K3 时同样按惯例低报。
  */
-export const TIANGONG_CONTEXT_WINDOW = 200_000
+export const TIANGONG_CONTEXT_WINDOW = 300_000
 
 /**
- * 历史版本声明过的上下文窗口（2026-09-22 起为 256K=262144）。
+ * 历史版本声明过的上下文窗口：256K=262144（2026-09-22 起）、200K=200000（2026-10-10 起）。
  * 已安装插件升级后，声明里若仍留着这些旧值，启动自愈会自动改写为 TIANGONG_CONTEXT_WINDOW；
  * 只认列在这里的历史值，用户在设置里手动改成别的容量不会被启动流程覆盖。
  */
-export const TIANGONG_LEGACY_CONTEXT_WINDOWS: readonly number[] = [262_144]
+export const TIANGONG_LEGACY_CONTEXT_WINDOWS: readonly number[] = [262_144, 200_000]
 
 /** 登录时写入的模型 id 清单（容量比对与落后判定按此逐条进行）。 */
 export const TIANGONG_DECLARED_MODEL_IDS: readonly string[] = [
@@ -86,7 +88,7 @@ export function tiangongEffortsOutdated(provider: unknown): boolean {
 }
 
 /**
- * 判断已注册声明的上下文容量是否落后（仍是 256K 历史值）：
+ * 判断已注册声明的上下文容量是否落后（仍是 256K / 200K 历史值）：
  * 登录时写入的模型逐条比对，provider 级 defaultContextWindow 也一并比对。
  * 未注册、结构异常返回 false（交给迁移/注册流程处理）；用户手动填写的其它容量不算落后。
  */
@@ -105,8 +107,8 @@ export function tiangongCapacityOutdated(provider: unknown): boolean {
 /**
  * 判断已注册的 tiangong provider 声明是否落后于插件内置声明：
  * GLM-Flash 档位落后、任一内置模型条目缺失（DeepSeek/Kimi 于 2026-09-27、2026-10-12 先后补入）、
- * DeepSeek 条目缺 image 声明，或上下文容量仍是 256K 旧值
- * （旧安装升级后需启动自愈补齐；2026-09-27 实测上游支持图像输入，2026-10-10 上下文压到 200K）。
+ * DeepSeek 条目缺 image 声明，或上下文容量仍是历史旧值（256K / 200K）
+ * （旧安装升级后需启动自愈补齐；2026-09-27 实测上游支持图像输入，2026-10-19 上下文由 200K 提到 300K）。
  * 未注册或结构异常返回 false（交给迁移/注册流程处理）。
  */
 export function tiangongDeclarationOutdated(provider: unknown, expectedIds: readonly string[] = TIANGONG_DECLARED_MODEL_IDS): boolean {
@@ -154,7 +156,7 @@ export function effortsRecordFromList(list: readonly string[]): Record<string, s
 /**
  * 防御式解析站点下发的模型目录。
  * 任何结构异常一律返回空数组——调用方据此回退内置声明，绝不因站点改版而把模型清单写坏。
- * 单项兜底：窗口缺失/非正数回退 200K；input 缺失回退 text+image；档位缺失回退 low/high/max。
+ * 单项兜底：窗口缺失/非正数回退 TIANGONG_CONTEXT_WINDOW（当前 300K）；input 缺失回退 text+image；档位缺失回退 low/high/max。
  */
 export function parseTiangongCatalog(payload: unknown): TiangongCatalogEntry[] {
   const models = (payload as { data?: { models?: unknown } } | null | undefined)?.data?.models

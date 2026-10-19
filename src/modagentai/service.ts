@@ -34,7 +34,7 @@ const TIANGONG_BUILTIN_MODELS: Record<string, unknown>[] = [{
   input: ['text', 'image'],
   reasoningEfforts: TIANGONG_REASONING_EFFORTS,
 }, {
-  // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥定稿声明 200K（不声明 1M，防长上下文高消耗）。
+  // DeepSeek V4.1 Flash：上游 deepseek-v4-1-flash-260910；上下文按辉哥 2026-10-19 定稿声明 300K（上游实为 1M，仍不满额声明以防长上下文高消耗）。
   // 2026-09-27 实测上游支持图像输入（发图识别颜色正常），input 必须带 image，否则 DSH 发送前剥图。
   id: TIANGONG_DEEPSEEK_MODEL_ID,
   name: TIANGONG_DEEPSEEK_MODEL_ID,
@@ -44,7 +44,7 @@ const TIANGONG_BUILTIN_MODELS: Record<string, unknown>[] = [{
 }, {
   // Kimi-K3（2026-10-12 辉哥要求对外提供）：站点 GATEWAY_MODEL_MAP 同名透传，
   // 再由 ark-gateway 的 workbuddy 池映射为上游 cn:kimi-k3-1。
-  // 官方原生 1M 上下文，声明侧按惯例低报 200K；图像与思考档位按「与 DeepSeek 同档」处理。
+  // 官方原生 1M 上下文，声明侧按惯例低报 300K；图像与思考档位按「与 DeepSeek 同档」处理。
   id: TIANGONG_KIMI_MODEL_ID,
   name: TIANGONG_KIMI_MODEL_ID,
   contextWindow: TIANGONG_CONTEXT_WINDOW,
@@ -57,7 +57,7 @@ const TIANGONG_BUILTIN_MODELS: Record<string, unknown>[] = [{
  * 2026-10-18 起改为 Anthropic Messages 协议（官网 /api/gw/v1/messages）：
  * 与 OpenAI 端点相比，anthropic 适配器支持 adaptive thinking 与更长的流空闲超时，
  * 长推理任务更稳；官网 OpenAI 端点保留作回退，两条协议共用同一套白名单与计费。
- * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-10 定稿 200K）；
+ * 上下文窗口取 provider-declaration 的 TIANGONG_CONTEXT_WINDOW（辉哥 2026-10-19 定稿 300K）；
  * 插件升级或官网调整模型后，由 migrateLegacyGateway 的启动自愈自动改写声明。
  */
 const TIANGONG_PROVIDER_SHELL: Record<string, unknown> = {

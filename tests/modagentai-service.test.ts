@@ -59,8 +59,11 @@ function makeCtx(providers: Record<string, unknown>, opts: { token?: string; cat
   return { service, state, siteImage }
 }
 
-/** 历史版本写入的上下文窗口（256K）；升级后应被启动自愈改写为 TIANGONG_CONTEXT_WINDOW。 */
+/** 历史版本写入的上下文窗口（256K=262144）；升级后应被启动自愈改写为 TIANGONG_CONTEXT_WINDOW。 */
 const LEGACY_CONTEXT_WINDOW = 262_144
+
+/** 上一版写入的上下文窗口（200K=200000）：2026-10-19 提到 300K 后，同样应被启动自愈改写。 */
+const PREVIOUS_CONTEXT_WINDOW = 200_000
 
 const LEGACY_TIANGONG = {
   apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
@@ -81,7 +84,7 @@ test('档位判定：旧三档落后，五档不落后，未注册不触发', ()
   assert.equal(tiangongEffortsOutdated({ models: [{ id: 'GLM-Flash', reasoningEfforts: false }] }), true)
 })
 
-test('容量判定：旧 256K 视为落后，200K 不落后，未注册不触发', () => {
+test('容量判定：旧 256K 与上一版 200K 视为落后，当前容量不落后，未注册不触发', () => {
   assert.equal(tiangongCapacityOutdated({
     models: [{ id: 'GLM-Flash', contextWindow: LEGACY_CONTEXT_WINDOW }],
   }), true, '旧 256K 应判落后')
@@ -89,16 +92,23 @@ test('容量判定：旧 256K 视为落后，200K 不落后，未注册不触发
     models: [{ id: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: LEGACY_CONTEXT_WINDOW }],
   }), true, 'DeepSeek 条目旧 256K 同样判落后')
   assert.equal(tiangongCapacityOutdated({
+    models: [{ id: 'GLM-Flash', contextWindow: PREVIOUS_CONTEXT_WINDOW }],
+  }), true, '上一版 200K 同样判落后（2026-10-19 提到 300K 后升级即自愈）')
+  assert.equal(tiangongCapacityOutdated({
     models: [{ id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW }],
     defaultContextWindow: LEGACY_CONTEXT_WINDOW,
-  }), true, 'provider 级默认容量是旧值也判落后')
+  }), true, 'provider 级默认容量是旧 256K 也判落后')
+  assert.equal(tiangongCapacityOutdated({
+    models: [{ id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW }],
+    defaultContextWindow: PREVIOUS_CONTEXT_WINDOW,
+  }), true, 'provider 级默认容量是上一版 200K 同样判落后')
   assert.equal(tiangongCapacityOutdated({
     models: [
       { id: 'GLM-Flash', contextWindow: TIANGONG_CONTEXT_WINDOW },
       { id: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW },
     ],
     defaultContextWindow: TIANGONG_CONTEXT_WINDOW,
-  }), false, '已是 200K 不落后')
+  }), false, '已是当前容量（300K）不落后')
   assert.equal(tiangongCapacityOutdated({
     models: [{ id: 'GLM-Flash', contextWindow: 150_000 }],
   }), false, '用户手动填写的其它容量不算落后（启动流程不覆盖人工设置）')
@@ -126,14 +136,14 @@ test('声明判定：五档但缺 DeepSeek V4.1 Flash 视为落后；完整声�
       { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: TIANGONG_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_KIMI_EFFORTS } },
     ],
   }
-  assert.equal(tiangongDeclarationOutdated(complete), false, '完整声明（含 image、200K 容量与 Kimi-K3）不落后')
+  assert.equal(tiangongDeclarationOutdated(complete), false, '完整声明（含 image、当前容量与 Kimi-K3）不落后')
   // 2026-10-12 新增 Kimi-K3：老账号声明里没有这一条，启动自愈必须判定落后并自动补齐。
   assert.equal(tiangongDeclarationOutdated({ models: complete.models.slice(0, 2) }), true, '缺 Kimi-K3 条目应判落后（老账号自动补齐）')
   assert.equal(tiangongDeclarationOutdated(undefined), false)
   assert.equal(tiangongDeclarationOutdated({}), false)
 })
 
-test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下文按辉哥定稿 200K）', async () => {
+test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下文按辉哥定稿 300K）', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
   try {
@@ -151,7 +161,7 @@ test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下�
     const models = (state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number; reasoningEfforts?: Record<string, string> }> }).models
     const deepseek = models.find((m) => m.id === TIANGONG_DEEPSEEK_MODEL_ID)
     assert.ok(deepseek, '应写入 DeepSeek V4.1 Flash 模型条目')
-    assert.equal(deepseek.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文 200000（200K，不声明 1M 也不贴 256K）')
+    assert.equal(deepseek.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文 300000（300K，上游实为 1M 仍刻意低报，不贴 256K 旧值）')
     assert.deepEqual(deepseek.input, ['text', 'image'], 'input 必须带 image（2026-09-27 实测上游支持看图）')
     assert.equal(deepseek.reasoningEfforts?.low, 'low')
     assert.equal(deepseek.reasoningEfforts?.high, 'high')
@@ -166,7 +176,7 @@ test('启动自愈：五档旧声明缺 DeepSeek 模型时自动补齐（上下�
   }
 })
 
-test('启动自愈：声明完整但上下文仍是旧 256K 时自动压到 200K（已安装插件升级即自动校正）', async () => {
+test('启动自愈：声明完整但上下文仍是旧 256K 时自动提到 300K（已安装插件升级即自动校正）', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
   try {
@@ -189,7 +199,44 @@ test('启动自愈：声明完整但上下文仍是旧 256K 时自动压到 200K
     const written = state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number }>; defaultContextWindow?: number }
     assert.equal(written.defaultContextWindow, TIANGONG_CONTEXT_WINDOW, 'provider 级默认容量同步改写')
     for (const model of written.models) {
-      assert.equal(model.contextWindow, TIANGONG_CONTEXT_WINDOW, model.id + ' 上下文应压到 200K')
+      assert.equal(model.contextWindow, TIANGONG_CONTEXT_WINDOW, model.id + ' 上下文应提到 300K')
+    }
+    state.mutations.length = 0
+    await service.migrateLegacyGateway()
+    assert.equal(state.mutations.length, 0, '第二轮幂等不写入')
+  } finally {
+    closeAllDb()
+    delete process.env.DSH_HOME
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('启动自愈：上一版 200K 完整声明自动提到 300K（0.5x 已安装升级即自动校正）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
+  process.env.DSH_HOME = home
+  try {
+    // 0.50.x 登录后写入的形态：协议、档位、看图与 Kimi-K3 都完整，只有容量还是 200K。
+    const previousCapacity = {
+      apiKeyEnv: 'MODAGENTAI_GW_API_KEY',
+      displayName: '天工造梦',
+      api: 'anthropic-messages',
+      baseURL: 'https://modagentai.com/api/gw',
+      models: [
+        { id: 'GLM-Flash', name: 'GLM-Flash', contextWindow: PREVIOUS_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_REASONING_EFFORTS } },
+        { id: TIANGONG_DEEPSEEK_MODEL_ID, name: TIANGONG_DEEPSEEK_MODEL_ID, contextWindow: PREVIOUS_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_DEEPSEEK_EFFORTS } },
+        { id: TIANGONG_KIMI_MODEL_ID, name: TIANGONG_KIMI_MODEL_ID, contextWindow: PREVIOUS_CONTEXT_WINDOW, input: ['text', 'image'], reasoningEfforts: { ...TIANGONG_KIMI_EFFORTS } },
+      ],
+      defaultContextWindow: PREVIOUS_CONTEXT_WINDOW,
+    }
+    const { service, state } = makeCtx({ tiangong: previousCapacity })
+    await service.migrateLegacyGateway()
+    const setMutation = state.mutations.find((m) => m.op === 'set' && m.path[1] === 'tiangong')
+    assert.ok(setMutation, '上一版 200K 声明应触发自愈刷新（老装机无需重装插件）')
+    const written = state.providers.tiangong as { models: Array<{ id: string; contextWindow?: number }>; defaultContextWindow?: number }
+    assert.equal(written.defaultContextWindow, TIANGONG_CONTEXT_WINDOW, 'provider 级默认容量同步提到 300K')
+    assert.equal(written.models.length, 3, '三个官方模型条目都应保留')
+    for (const model of written.models) {
+      assert.equal(model.contextWindow, TIANGONG_CONTEXT_WINDOW, model.id + ' 上下文应提到 300K')
     }
     state.mutations.length = 0
     await service.migrateLegacyGateway()
@@ -226,7 +273,7 @@ test('启动自愈：老账号声明（无 Kimi-K3）自动补齐 Kimi-K3 条目
     }).models
     const kimi = models.find((m) => m.id === TIANGONG_KIMI_MODEL_ID)
     assert.ok(kimi, '应写入 Kimi-K3 模型条目')
-    assert.equal(kimi.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文按惯例声明 200K')
+    assert.equal(kimi.contextWindow, TIANGONG_CONTEXT_WINDOW, '上下文按惯例声明 300K')
     assert.deepEqual(kimi.input, ['text', 'image'], 'input 必须带 image')
     assert.equal(kimi.reasoningEfforts?.low, 'low')
     assert.equal(kimi.reasoningEfforts?.high, 'high')
@@ -273,7 +320,7 @@ test('启动自愈：DeepSeek 旧声明缺 image 时自动刷新补齐看图能�
   }
 })
 
-test('启动自愈：声明已是 200K 完整版时不写入（升级过的安装不被反复改写）', async () => {
+test('启动自愈：声明已是 300K 完整版时不写入（升级过的安装不被反复改写）', async () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-devforge-modagentai-'))
   process.env.DSH_HOME = home
   try {
@@ -666,10 +713,10 @@ test('站点目录解析：缺字段逐项兜底，重复 id 只留首条', () =
     { id: 'A', contextWindow: 999 },
   ]))
   assert.deepEqual(entries.map((e) => e.id), ['A', 'B'], '重复 id 只保留首条')
-  assert.equal(entries[0]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '窗口缺失回退 200K')
+  assert.equal(entries[0]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '窗口缺失回退当前容量（300K）')
   assert.deepEqual(entries[0]?.input, ['text', 'image'], 'input 缺失回退 text+image')
   assert.deepEqual(entries[0]?.reasoningEfforts, ['low', 'high', 'max'], '档位缺失回退三档')
-  assert.equal(entries[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '非正数窗口回退 200K')
+  assert.equal(entries[1]?.contextWindow, TIANGONG_CONTEXT_WINDOW, '非正数窗口回退当前容量（300K）')
 })
 
 test('目录判定：站点新增模型或缺能力判落后，完全一致不落后', () => {
