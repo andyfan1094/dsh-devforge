@@ -28,6 +28,7 @@ import { CREDENTIALS_API } from '../credentials-routes.ts'
 import { PROJECTS_API, type AutomatchSuggestion, type ProjectDeployResult, type ProjectDescribeResult, type ProjectDetectResult, type ProjectEntry, type ProjectProbeResult, type ProjectRelocateResult, type ProjectScanResult } from '../projects/protocol.ts'
 import { WORKSPACE_API, type WorkspaceConvention } from '../workspace/convention.ts'
 import type { ActiveProfile, PluginUpdateApplyResult, PluginUpdateSitePatch, PluginUpdateSiteView, UpdateCheckItem } from '../plugin-update.ts'
+import { AUTO_CONTINUE_API, type AutoContinueSettings, type AutoContinueStats } from '../auto-continue/protocol.ts'
 import type { HarnessUpdateCheckItem } from '../harness-update.ts'
 
 /** API 错误（带 HTTP 状态）。 */
@@ -1158,6 +1159,23 @@ export class DevforgeApi {
   async getTokenUsage(signal?: AbortSignal): Promise<TokenUsageReport> {
     const data = await readJson<{ report: TokenUsageReport }>(await fetch(DEVFORGE_API.tokenUsage, { signal }))
     return data.report
+  }
+
+  /** 失败自动续跑：读设置与运行统计（面板「续跑」页）。 */
+  async getAutoContinueStatus(signal?: AbortSignal): Promise<{ settings: AutoContinueSettings; stats: AutoContinueStats }> {
+    const data = await readJson<{ settings: AutoContinueSettings; stats: AutoContinueStats }>(await fetch(AUTO_CONTINUE_API.settings, { signal, cache: 'no-store' }))
+    return { settings: data.settings, stats: data.stats }
+  }
+
+  /** 失败自动续跑：保存设置（只传要改的字段，Host 侧与当前值合并并归一化）。 */
+  async putAutoContinueSettings(patch: Partial<AutoContinueSettings>, signal?: AbortSignal): Promise<{ settings: AutoContinueSettings; stats: AutoContinueStats }> {
+    const data = await readJson<{ settings: AutoContinueSettings; stats: AutoContinueStats }>(await fetch(AUTO_CONTINUE_API.settings, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal,
+    }))
+    return { settings: data.settings, stats: data.stats }
   }
 
   async setCredential(ref: string, value: string): Promise<{ created: boolean; updated: boolean }> {

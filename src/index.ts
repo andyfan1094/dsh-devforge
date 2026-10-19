@@ -124,6 +124,9 @@ import { createDefaultInstalledReader, PluginUpdateService, PLUGIN_UPDATE_DEFAUL
 import { createTimerScope, type TimerScope } from './shutdown-timers.ts'
 import { applyHarnessUpdate, checkHarnessUpdate, createDefaultHarnessVersionReader, type HarnessUpdateCheckItem } from './harness-update.ts'
 import { DEVFORGE_SOURCE_KIND } from './session-source.ts'
+import { AutoContinueService, type AutoContinueAgent } from './auto-continue/service.ts'
+import { DEFAULT_AUTO_CONTINUE_SETTINGS, normalizeAutoContinueSettings, type AutoContinueSettings } from './auto-continue/protocol.ts'
+import { makeAutoContinueRoutes } from './auto-continue/routes.ts'
 
 /** cordis 插件名（稳定 id）。 */
 export const name = 'devforge'
@@ -1023,6 +1026,32 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   }
   ctx.effect(() => () => { if (curatorTimer !== undefined) clearInterval(curatorTimer) }, 'dsh-devforge: memory curator')
 
+  // ---- 失败自动续跑（0.62.0）：一轮模型报错后自动补一条「继续」（辉哥 2026-10-19 需求）----
+  // 触发面：turn/end 的 reason.kind==='error'（GUI 上的「本轮运行失败」）。
+  // 作用面：只本机 GUI 会话——飞书独立会话（session-feishu-*）与子代理一律跳过；
+  // 上限/清零/延迟补发/等待期复核都在 AutoContinueService 内，面板可关可调。
+  const autoContinueSettingsRead = (): AutoContinueSettings => {
+    try { return normalizeAutoContinueSettings(getSettings(getDb(), 'auto-continue.settings'), DEFAULT_AUTO_CONTINUE_SETTINGS) }
+    catch { return DEFAULT_AUTO_CONTINUE_SETTINGS }
+  }
+  const autoContinueSettingsWrite = (next: AutoContinueSettings): void => {
+    putSettings(getDb(), 'auto-continue.settings', next)
+  }
+  const autoContinue = new AutoContinueService({
+    readSettings: autoContinueSettingsRead,
+    // ctx.agents 未进本插件 Context 类型增强：按运行时可选服务读取并断言最小结构
+    // （与 fork-takeover.mjs 用 agents.get 归因 GUI 会话同一口径）。
+    resolveAgent: (sessionId) => {
+      try {
+        const agents = (ctx as unknown as { agents?: { get?: (id: string) => unknown } }).agents
+        const agent = agents?.get?.(sessionId)
+        return (agent ?? undefined) as AutoContinueAgent | undefined
+      } catch { return undefined }
+    },
+    log: (message) => ctx.logger.info(message),
+  })
+
+
   /** 旧版本面板引导用户填入的专用裁决路由（产品建议值，不是用户本意，故可安全迁移）。 */
   const LEGACY_ADVISED_PROVIDER = 'minimax-cn'
 
@@ -1183,6 +1212,12 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   ...makeModagentaiRoutes(modagentaiService),
     ...makeSiliconFlowRoutes(siliconFlowService),
     ...makeCredentialsRoutes(),
+    // 失败自动续跑（0.62.0）：面板读写设置 + 查看运行统计（补发次数/跳过原因）。
+    ...makeAutoContinueRoutes({
+      getSettings: autoContinueSettingsRead,
+      putSettings: autoContinueSettingsWrite,
+      stats: () => autoContinue.stats,
+    }),
     ...makeBackupRoutes(),
     ...makeBrowserRoutes(browserHolder),
     // 截图小工具（Windows）：面板读状态、改配置、启停助手、手动截图。
@@ -1602,6 +1637,12 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     selfRepair.attach(ctx)
     const offInject = injection.attach(ctx)
     ctx.effect(() => () => { sediment.dispose(); selfRepair.dispose(); offInject() }, 'dsh-devforge: memory')
+  })
+
+  // 失败自动续跑：与记忆层同一条 session/event 链路，独立兜底（它挂了不影响记忆，反之亦然）。
+  safeActivate(ctx, '失败自动续跑', () => {
+    const offAutoContinue = autoContinue.attach(ctx)
+    ctx.effect(() => () => { autoContinue.dispose(); offAutoContinue() }, 'dsh-devforge: auto-continue')
   })
 
   // 面板保存网关配置 → sync 热重建（sync 已定义，接通面板路由的保存触发）。
