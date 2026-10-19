@@ -256,7 +256,7 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
           </select>
           <span className={css['mutedText']}>
             走插件里已配好的模型与凭据，不用单独填 Key。实测同一张图：GLM-Flash 4.2 秒、gpt-6.1-sol 4.5 秒、
-            Kimi-K3 10.9 秒、gpt-5.6-terra 34.7 秒；DeepSeek V4.1 Flash 看不了图（返回空）。
+            Kimi-K3 10.9 秒、gpt-5.6-terra 34.7 秒；重的推理模型慢但更准。
           </span>
         </div>
 

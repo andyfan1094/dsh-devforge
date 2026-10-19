@@ -99,6 +99,43 @@ test('没有默认模型时也能挑到能看图的模型', async () => {
   assert.equal(calls.stream[0]?.['model'], 'only-vision')
 })
 
+test('能力未声明时不再按名字把 deepseek 判成看不了图', async () => {
+  // 回归：旧实现有 NO_VISION_HINTS=['deepseek']，模型清单没声明输入能力时会把
+  // deepseek 名字的模型降到最后一级，于是输给同档里更慢的模型。
+  // 2026-10-19 复测证明 DeepSeek V4.1 Flash 能准确读图，故黑名单已删：
+  // 判定只认模型自己声明的 inputModalities，名字不再是能力证据。
+  const { ctx, calls } = makeCtx({
+    providers: [{ id: 'tiangong' }],
+    models: { tiangong: [{ id: 'qwen-max' }, { id: 'DeepSeek V4.1 Flash' }] },
+  })
+  await new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) })
+  assert.equal(calls.stream[0]?.['model'], 'DeepSeek V4.1 Flash')
+})
+
+test('声明了 image 的模型优先于能力未声明的模型', async () => {
+  const { ctx, calls } = makeCtx({
+    providers: [{ id: 'tiangong' }],
+    models: {
+      tiangong: [
+        { id: 'DeepSeek V4.1 Flash', inputModalities: ['text', 'image'] },
+        { id: 'qwen-max' },
+      ],
+    },
+  })
+  await new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) })
+  assert.equal(calls.stream[0]?.['model'], 'DeepSeek V4.1 Flash')
+})
+
+test('能力未声明的模型排在明确声明不带 image 的之前', async () => {
+  // 三态排序：声明能看图(0) > 未声明(1) > 声明不含 image(2)；避免"识别成功但一片空白"。
+  const { ctx, calls } = makeCtx({
+    providers: [{ id: 'p1' }],
+    models: { p1: [{ id: 'text-only', inputModalities: ['text'] }, { id: 'mystery-model' }] },
+  })
+  await new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) })
+  assert.equal(calls.stream[0]?.['model'], 'mystery-model')
+})
+
 test('模型返回 error 结束原因时抛出可读错误', async () => {
   const { ctx } = makeCtx({
     selection: { provider: 'tiangong', model: 'm1' },

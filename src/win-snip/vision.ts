@@ -8,10 +8,14 @@
  * 2) 用 `ctx.llm.stream` 走插件里已配置的模型；
  * 3) 收集 text-delta 拼成结果。
  *
- * 速度与排版的两条硬经验（2026-10-18 逐模型实测，同一张 900×426 中文表格图）：
+ * 速度与排版的三条硬经验（2026-10-18 逐模型实测，同一张 900×426 中文表格图）：
  * - 模型差异是数量级的：GLM-Flash 4.2s、gpt-6.1-sol 4.5s、Kimi-K3 10.9s、
- *   gpt-5.6-sol 11.6s、gpt-5.6-terra 34.7s；DeepSeek V4.1 Flash 直接返回空（看不了图）。
+ *   gpt-5.6-sol 11.6s、gpt-5.6-terra 34.7s。
  *   所以默认按"快且能看图"的偏好挑，而不是撞上哪个用哪个。
+ * - 「DeepSeek V4.1 Flash 看不了图（返回空）」是 2026-10-18 的假阴性，2026-10-19 复测纠正：
+ *   网关声明该模型 input 含 image，实测 anthropic-messages 与 openai-chat 两条路都能
+ *   准确读出界面标题文字。故不再按模型名做黑名单，一律只认模型自己声明的 inputModalities；
+ *   偶发空响应按上游瞬时故障处理（提示重试或换个模型）。
  * - 让模型自己数空格对齐，列会错（少一个多一个），还常混全角空格；
  *   改成让模型只输出结构化行列（layout.ts 负责按显示宽度补齐），列必然对齐。
  */
@@ -57,12 +61,6 @@ const FAST_MODEL_HINTS: readonly string[] = [
   'fast',
   'turbo',
 ]
-
-/**
- * 明确看不了图的模型：实测返回空内容。
- * 只有用户显式指定时才尝试，自动选择时跳过，避免"识别成功但一片空白"。
- */
-const NO_VISION_HINTS: readonly string[] = ['deepseek']
 
 /** 目标语言的提示词描述。 */
 function describeTarget(target: WinSnipTranslateTarget): string {
@@ -169,12 +167,6 @@ export function modelSpeedRank(id: string): number {
   return index < 0 ? FAST_MODEL_HINTS.length + 1 : index
 }
 
-/** 判断模型是否属于"实测看不了图"那一类。 */
-function isKnownNoVision(id: string): boolean {
-  const lower = id.toLowerCase()
-  return NO_VISION_HINTS.some((hint) => lower.includes(hint))
-}
-
 /** 去掉模型可能加的 ```json 围栏。 */
 function stripFence(raw: string): string {
   const trimmed = raw.trim()
@@ -261,10 +253,13 @@ export class WinSnipVision {
     const selector = this.ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
     const configured = readModelTarget(selector?.currentSelection())
 
-    // 排序：确定能看图的 > 能力未知的 > 明确看不了图的；同档内按快模型偏好。
+    // 排序：确定能看图的 > 能力未知的 > 明确声明不带 image 的；同档内按快模型偏好。
+    // 只看模型自己声明的 inputModalities，不按模型名猜（2026-10-19 复测纠正了旧黑名单）。
     const score = (item: { target: WinSnipModelTarget; info?: LlmModelInfoLike }): number => {
       const modalities = item.info?.inputModalities
-      const vision = modalities?.includes('image') === true ? 0 : isKnownNoVision(item.target.model) ? 2 : 1
+      const vision = modalities === undefined || modalities.length === 0
+        ? 1
+        : modalities.includes('image') ? 0 : 2
       const speed = modelSpeedRank(item.target.model + ' ' + (item.info?.name ?? ''))
       // 面板当前默认模型在同一档内优先，用户选它通常是有意的。
       const sameAsDefault = configured !== undefined && configured.model === item.target.model ? 0 : 1
@@ -332,7 +327,7 @@ export class WinSnipVision {
       clearTimeout(timer)
     }
     const elapsedMs = Date.now() - started
-    if (raw.trim() === '') throw new Error('模型「' + target.model + '」没有返回内容（可能看不了图片），请在设置里换一个识别模型。')
+    if (raw.trim() === '') throw new Error('模型「' + target.model + '」没有返回内容（上游偶发空响应），请重试一次或换一个识别模型。')
 
     if (request.kind === 'ocr') {
       // 优先按结构化渲染（列一定对齐）；模型没照结构返回时退回纯文本归一化。
