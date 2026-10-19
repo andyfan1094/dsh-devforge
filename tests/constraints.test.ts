@@ -1,6 +1,7 @@
 /** 项目约束上下文注入单测：路径匹配、cwd 解析、开发信号识别、三层状态机与生命周期。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   collectToolNames,
   CONSTRAINT_SECTION_NAME,
@@ -170,4 +171,49 @@ test('约束服务：disabled 时文本函数返回空串', () => {
   enabled = true
   assert.equal(renderConstraintText('full', enabled).startsWith('【项目约束全文'), true)
   service.dispose()
+})
+
+/** 读取仓库内文件（相对本测试文件定位，避免依赖 cwd）。 */
+function readRepoFile(relative: string): string {
+  return readFileSync(new URL(relative, import.meta.url), 'utf8')
+}
+
+/**
+ * 本次改动（2026-10-19 均辉事故后补规）的针对性断言：
+ * 注入文案必须把「真实测试」界定为"验证本次改动"，并明确禁止乱测试。
+ * 断言同时覆盖摘要层与全文层——两层都常驻注入，缺一层就等于规则失效。
+ */
+test('约束文本：「真实测试」只针对本次改动，且明确禁止乱测试', () => {
+  const texts: Array<[string, string]> = [
+    ['摘要层', renderConstraintText('summary', true)],
+    ['全文层', renderConstraintText('full', true)],
+  ]
+  for (const [name, text] of texts) {
+    assert.ok(text.includes('真实测试'), `${name} 必须出现「真实测试」的界定`)
+    assert.ok(text.includes('本次改动'), `${name} 必须写清测试对象是本次改动`)
+    assert.ok(text.includes('改动前失败、改动后通过'), `${name} 必须给出可证伪的判定口径`)
+    assert.ok(text.includes('禁止乱测试'), `${name} 必须出现禁止乱测试的红线`)
+    assert.ok(text.includes('只读'), `${name} 必须写明生产只做只读核对`)
+    assert.ok(text.includes('隔离'), `${name} 必须写明测试数据与环境隔离`)
+    assert.ok(!text.includes('随手跑一遍旧用例就算'), `${name} 不得把乱试写成合规做法`)
+  }
+})
+
+/** 三处规范文档必须与注入文案同口径（约束文档第 5 节：冲突时以文档为准并同步修正注入）。 */
+test('规范文档：通用规范、交付规范与暂存约束三处口径一致', () => {
+  const documents: Array<[string, string]> = [
+    ['standards/v1/common.zh.md', readRepoFile('../standards/v1/common.zh.md')],
+    ['standards/v1/delivery.zh.md', readRepoFile('../standards/v1/delivery.zh.md')],
+    ['docs/插件暂存环境测试约束.md', readRepoFile('../docs/插件暂存环境测试约束.md')],
+  ]
+  for (const [name, text] of documents) {
+    assert.ok(text.includes('真实测试'), `${name} 必须出现「真实测试」`)
+    assert.ok(text.includes('禁止乱测试') || text.includes('禁止「乱测试」'), `${name} 必须写明禁止乱测试`)
+    assert.ok(text.includes('只读'), `${name} 必须写明生产只做只读核对`)
+    assert.ok(text.includes('本次改动'), `${name} 必须写清测试对象是本次改动`)
+  }
+  // 暂存约束文档的教训表必须留下这起事故的记录，避免只改条文不记来由
+  const constraintDoc = readRepoFile('../docs/插件暂存环境测试约束.md')
+  assert.ok(constraintDoc.includes('2026-10-19'), '暂存约束文档必须记录本次事故日期')
+  assert.ok(constraintDoc.includes('多份副本') || constraintDoc.includes('所有副本'), '必须记录"注释一处无效"的教训')
 })
