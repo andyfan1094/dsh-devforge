@@ -12,6 +12,31 @@
 .formGrid .sectionTitle, .formGrid .subtleText, .formGrid .resourceMessage { grid-column: 1 / -1; }
 .formGrid .resourceMessage { margin: 0; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.6; overflow-wrap: anywhere; }
 .fieldActions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+/* 分组卡片里的标题行跨满整行（与上面的 sectionTitle/subtleText 同一策略），
+   否则标题会被挤进第一格、和第一个字段同列。 */
+.formGrid .surfaceHeader { grid-column: 1 / -1; }
+/* 「输入框 + 就地生效按钮」成对行：按钮是给**这一个字段**用的，必须与它同排，
+   否则用户不知道按钮作用于哪个字段。输入框吃满剩余宽度，按钮不参与压缩。 */
+.formGrid .field .inlineAction { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.formGrid .field .inlineAction > input { flex: 1 1 120px; width: auto; min-width: 0; }
+.formGrid .field .inlineAction > button { flex: none; }
+/* 单列版式（字段少、含长绝对路径与长说明的页签用）：auto-fill 会切出若干 220px 窄列，
+   字段被塞进第一列、右侧空出一片，长路径截断、长说明挤成四行。固定单列即 craft/form-layout
+   的默认主轴，字段吃满卡片宽度。data-layout 是显式选择，不影响其它页签的 auto-fill。 */
+/* 内容列宽度上限：工具栏、卡片、页尾说明统一到同一栏位。卡片不满宽时，
+   工具栏里右对齐的按钮会飘到卡片右边缘之外，看着像没对齐。
+   742 = 720 内容 + 卡片左右内边距与描边（故卡片走 border-box 对齐外沿）。 */
+.tabBody[data-dsh-part="win-snip"] { --dv-page-content-w: 742px; }
+.tabBody[data-dsh-part="win-snip"] > .toolbar, .tabBody[data-dsh-part="win-snip"] > .subtleText { max-width: var(--dv-page-content-w); }
+.formGrid[data-layout="stacked"] { box-sizing: border-box; grid-template-columns: minmax(0, 1fr); max-width: var(--dv-page-content-w, 720px); }
+/* 宽度是内容提示：卡片在宽屏能到 1100px+，控件铺满会被误读成"要填很多"，
+   长说明的行宽也会超出易读区间；故给卡片本身一个内容宽度上限（约容器 2/3），
+   控件随卡片走，select 再按"最长选项完整可读"收一档。 */
+.formGrid[data-layout="stacked"] .field select { max-width: 380px; }
+/* 短值字段（如热键 Alt+A）再收窄一档：它的框不该跟"保存目录"一样长。 */
+.formGrid[data-layout="stacked"] .field[data-width="short"] { max-width: 340px; }
+/* 控件与它下方的三级说明留一点气口；仍小于字段间距 8px，保持"组内 < 组间"。 */
+.formGrid[data-layout="stacked"] .field > .mutedText { margin-top: 2px; }
 
 /* 密度体系：默认紧凑档（看板型面板，一屏多信息不拥挤）；data-density="cozy" 切舒适档。
    底线：块间距≥10px、文字距边≥8px，紧凑不等于塞满。
@@ -164,6 +189,8 @@
 .resourceMeta[data-empty="true"] .fieldIcon { opacity: .55; }
 .badge { flex: none; padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, #d0d5dd); border-radius: 999px; font-size: 11px; color: var(--dsw-alias-label-secondary, #667085); white-space: nowrap; }
 .badge[data-status="queued"] { color: var(--dsw-alias-label-secondary, #667085); }
+/* 「未运行」用三级灰：它是常态而非异常，不该跟失败/警告抢颜色（异常走 banner）。 */
+.badge[data-status="idle"] { color: var(--dsw-alias-label-tertiary, #98a2b3); }
 .badge[data-status="running"] { color: var(--dsw-alias-state-business-primary, #2563eb); border-color: var(--dsw-alias-state-business-primary, #2563eb); }
 .badge[data-status="succeeded"] { color: var(--dsw-alias-state-success-primary, #16a34a); border-color: var(--dsw-alias-state-success-primary, #16a34a); }
 .badge[data-status="failed"] { color: var(--dsw-alias-state-error-primary, #dc2626); border-color: var(--dsw-alias-state-error-primary, #dc2626); }
