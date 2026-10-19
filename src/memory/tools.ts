@@ -128,7 +128,13 @@ function render(value: MemoryToolOutput): string {
     return missing.length > 0 ? head + '\n需要补：\n- ' + missing.join('\n- ') : head
   }
   if (value.message !== undefined) return value.message
-  if (value.entry !== undefined) return '已' + (value.action === 'delete' ? '删除' : value.action === 'save' ? '写入' : '更新') + '内置长期记忆：' + value.entry.content
+  if (value.entry !== undefined) {
+    // get 是显式读取，不能落进下面「已更新/已写入/已删除」的措辞里：
+    // 读一条记忆却被告知「已更新内置长期记忆」，用户会以为自己的记忆被动了。
+    // 顺带回显短 ID 与分类，读完想接着 update/feedback 不必再找一遍。
+    if (value.action === 'get') return `[#${shortMemoryId(value.entry.id)}] [${value.entry.category}] ${value.entry.content}${value.entry.pinned === true ? '（常驻）' : ''}`
+    return '已' + (value.action === 'delete' ? '删除' : value.action === 'save' ? '写入' : '更新') + '内置长期记忆：' + value.entry.content
+  }
   if (value.entries !== undefined) {
     if (value.entries.length === 0) return '（暂无匹配的内置长期记忆）'
     // P1-6：检索结果带上四态资格，被否定与把握不足的条目必须显式标注。
