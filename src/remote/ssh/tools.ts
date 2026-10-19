@@ -11,6 +11,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SshEngine } from './engine.ts'
 import type { ClusterResult, ExecResult, SshHostSummary, TunnelInfo } from './protocol.ts'
+import { REMOTE_SOURCE_BOUNDARY } from '../shared/source-boundary.ts'
 
 /** One text content block (the only render shape these tools emit). */
 function text(value: string): ContentBlock[] {
@@ -113,6 +114,7 @@ export function sshExecTool(engine: SshEngine) {
   return defineTool({
     name: 'ssh_exec',
     description: 'Execute a shell command on a REMOTE SSH host by alias; the command runs on the remote host, never on this machine. For commands on this machine, use the local bash tool. Prefer combining independent read-only queries into one command. ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: run command on server, deploy, check server/status, service control, view logs, any remote operation.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from ssh_list.' },
@@ -158,6 +160,7 @@ export function sshUploadTool(engine: SshEngine) {
   return defineTool({
     name: 'ssh_upload',
     description: 'Transfer a file FROM this machine (the dsh host) TO a remote SSH host. Use this only when the file must be copied to the remote host. Files that stay on this machine are handled with the local file tools (read / write / edit), not ssh_upload. ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: upload file to server, deploy artifact, copy config to server.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from ssh_list.' },
@@ -195,6 +198,7 @@ export function sshDownloadTool(engine: SshEngine) {
   return defineTool({
     name: 'ssh_download',
     description: 'Copy a remote FILE from a configured SSH host to this machine (the dsh host). Use this only when the source is on the remote host; files already on this machine are read with the local file tools (read / write / edit), not ssh_download. Directory download is not supported — download files individually. ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: download file from server, fetch remote log/artifact.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from ssh_list.' },
@@ -331,6 +335,7 @@ export function sshClusterTool(engine: SshEngine) {
   return defineTool({
     name: 'ssh_cluster',
     description: 'Run one command concurrently across many SSH hosts (all hosts, or filtered by aliases / environment / tags). ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: run on all servers, batch operation, production servers, cluster command.',
     parameters: {
       command: { type: 'string', required: true, description: 'The shell command to run on every matched host.' },

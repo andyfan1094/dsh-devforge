@@ -26,6 +26,7 @@ function renderProject(entry: ProjectEntry): string {
   const parts = [
     entry.name,
     '路径:' + (entry.path || '未登记'),
+    '源码:本机(服务器只部署)',
     '仓库:' + (entry.repoUrl !== '' ? entry.repoKind + ' ' + entry.repoUrl : '未关联'),
   ]
   if (entry.repoBranch !== '') parts.push('分支:' + entry.repoBranch)
@@ -135,6 +136,7 @@ export function devforgeProjectTool(probe?: { run: ProjectProbeRunner }) {
           '项目：' + hit.name + '（id:' + hit.id + '）',
           '描述：' + (hit.description !== '' ? hit.description : '（未填写）'),
           renderProject(hit),
+          '源码位置：本机 ' + hit.path + '（唯一可编辑源；服务器只做部署目标，禁止在服务器上改源码或直接改线上文件）',
           '线上地址：' + (hit.siteUrl !== '' ? hit.siteUrl : '—'),
           '测试地址：' + ((hit.testUrl ?? '') !== '' ? hit.testUrl! : '—'),
           renderFacts(hit),

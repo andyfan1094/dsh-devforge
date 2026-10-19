@@ -11,6 +11,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { WinRmEngine } from './engine.ts'
 import type { ClusterResult, ExecResult, WinHostSummary } from './protocol.ts'
+import { REMOTE_SOURCE_BOUNDARY } from '../shared/source-boundary.ts'
 
 /** One text content block (the only render shape these tools emit). */
 function text(value: string): ContentBlock[] {
@@ -107,6 +108,7 @@ export function winrmExecTool(engine: WinRmEngine) {
   return defineTool({
     name: 'winrm_exec',
     description: 'Execute a PowerShell command on a configured Windows host by alias. The command runs under PowerShell with UTF-8 output; prefer combining independent read-only queries into one command. ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: run command on Windows server, PowerShell remote, check server/status, service control, view logs, any remote Windows operation.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from winrm_list.' },
@@ -269,6 +271,7 @@ export function winrmUploadTool(engine: WinRmEngine) {
   return defineTool({
     name: 'winrm_upload',
     description: 'Upload a local file to a configured Windows host (SMB admin share preferred, base64 WinRM chunk fallback). The local path is on THIS machine (the dsh host). ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: upload file to Windows server, deploy artifact, copy config to Windows server.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from winrm_list.' },
@@ -308,6 +311,7 @@ export function winrmDownloadTool(engine: WinRmEngine) {
   return defineTool({
     name: 'winrm_download',
     description: 'Download a remote FILE from a configured Windows host to a local path on this machine (SMB admin share preferred, base64 WinRM chunk fallback). Directory download is not supported — download files individually. ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: download file from Windows server, fetch remote log/artifact.',
     parameters: {
       alias: { type: 'string', required: true, description: 'Host alias from winrm_list.' },
@@ -347,6 +351,7 @@ export function winrmClusterTool(engine: WinRmEngine) {
   return defineTool({
     name: 'winrm_cluster',
     description: 'Run one PowerShell command concurrently across many Windows hosts (all hosts, or filtered by aliases / environment / tags). ' +
+      REMOTE_SOURCE_BOUNDARY + ' ' +
       'Triggers: run on all Windows servers, batch operation, production servers, cluster command.',
     parameters: {
       command: { type: 'string', required: true, description: 'The PowerShell command to run on every matched host.' },

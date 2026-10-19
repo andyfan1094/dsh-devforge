@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   collectToolNames,
+  CONSTRAINTS_DEFAULT_PATHS,
   CONSTRAINT_SECTION_NAME,
   CONSTRAINT_SECTION_ORDER,
   CONSTRAINT_SUMMARY_TEXT,
@@ -12,6 +13,7 @@ import {
   hasDevToolSignal,
   matchesDevPath,
   renderConstraintText,
+  renderProjectCard,
   resolveAgentCwd,
 } from '../src/constraints.ts'
 
@@ -216,4 +218,90 @@ test('规范文档：通用规范、交付规范与暂存约束三处口径一�
   const constraintDoc = readRepoFile('../docs/插件暂存环境测试约束.md')
   assert.ok(constraintDoc.includes('2026-10-19'), '暂存约束文档必须记录本次事故日期')
   assert.ok(constraintDoc.includes('多份副本') || constraintDoc.includes('所有副本'), '必须记录"注释一处无效"的教训')
+})
+
+/**
+ * 本次改动（2026-10-19 辉哥指出「模型老去服务器找/改源码」）的针对性断言：
+ * 注入文案必须写清「源码唯一真源在本机仓库，服务器只做部署目标」，
+ * 并明确禁止在服务器上编辑/覆盖源码。摘要层与全文层都要有——两层都是常驻注入。
+ */
+test('约束文本：源码只在本机仓库，服务器只做部署目标，禁止远程改源码', () => {
+  const texts: Array<[string, string]> = [
+    ['摘要层', renderConstraintText('summary', true)],
+    ['全文层', renderConstraintText('full', true)],
+  ]
+  for (const [name, text] of texts) {
+    assert.ok(text.includes('源码'), `${name} 必须写明源码位置`)
+    assert.ok(text.includes('本机'), `${name} 必须写明源码只在本机`)
+    assert.ok(text.includes('服务器'), `${name} 必须写明服务器角色`)
+    assert.ok(text.includes('部署'), `${name} 必须写明服务器只做部署`)
+    assert.ok(text.includes('禁止在服务器上'), `${name} 必须明确禁止在服务器上改源码`)
+  }
+  // 动作口径必须可执行：服务器=部署目标，修复=落回本地仓库
+  assert.ok(texts[1]![1].includes('部署目标'), '全文层必须把服务器定性为部署目标')
+  assert.ok(texts[1]![1].includes('落回本地'), '全文层必须给出「修复落回本地仓库」的动作口径')
+})
+
+test('开发路径清单：默认含 Windows 工作区，盘符路径与反斜杠分隔符同样命中', () => {
+  // 默认清单必须覆盖本机 Windows 工作区，否则全文约束在 Windows 会话永不注入（本次事故根因之一）。
+  assert.ok(
+    CONSTRAINTS_DEFAULT_PATHS.some((path) => path.replace(/\\/gu, '/').toLowerCase() === 'd:/项目'),
+    '默认开发路径清单必须包含 D:\\项目',
+  )
+  const paths = ['D:\\项目']
+  assert.equal(matchesDevPath('D:\\项目', paths), true)
+  assert.equal(matchesDevPath('D:\\项目\\projects\\dsh-devforge', paths), true)
+  assert.equal(matchesDevPath('D:\\项目\\', paths), true)
+  assert.equal(matchesDevPath('D:\\项目备份', paths), false, '目录边界：D:\\项目备份 不得命中 D:\\项目')
+  assert.equal(matchesDevPath('C:\\其他', paths), false)
+  // 反斜杠与正斜杠混写同样要认
+  assert.equal(matchesDevPath('D:/项目/projects', paths), true)
+  assert.equal(resolveAgentCwd({ cwd: 'D:\\项目\\projects' }), 'D:\\项目\\projects')
+  assert.equal(resolveAgentCwd({ meta: { cwd: 'D:/项目' } }), 'D:/项目')
+})
+
+test('项目卡：明确源码唯一位置在本机，发布服务器只是部署目标', () => {
+  const card = renderProjectCard({
+    id: 'p1', name: 'x', path: 'D:\\项目\\projects\\x', machinePaths: {}, description: '',
+    repoKind: 'cnb', repoUrl: '', repoBranch: '', siteUrl: '', deployTargets: [{ transport: 'ssh', alias: 'my' }],
+    createdAt: 0, updatedAt: 0,
+  })
+  assert.ok(card.includes('源码位置'), '项目卡必须写明源码位置')
+  assert.ok(card.includes('服务器只做部署'), '项目卡必须写明服务器只做部署')
+  assert.ok(card.includes('禁止在服务器上改源码'), '项目卡必须禁止在服务器上改源码')
+})
+
+/** 规范文档必须与注入文案同口径（约束文档：冲突时以文档为准并同步修正注入）。 */
+test('规范文档：交付规范与暂存约束必须写明源码只在本机、服务器只部署', () => {
+  const documents: Array<[string, string]> = [
+    ['standards/v1/delivery.zh.md', readRepoFile('../standards/v1/delivery.zh.md')],
+    ['docs/插件暂存环境测试约束.md', readRepoFile('../docs/插件暂存环境测试约束.md')],
+  ]
+  for (const [name, text] of documents) {
+    assert.ok(text.includes('源码'), `${name} 必须写明源码位置`)
+    assert.ok(text.includes('部署目标'), `${name} 必须写明服务器是部署目标`)
+    assert.ok(text.includes('禁止在服务器上'), `${name} 必须明确禁止在服务器上改源码`)
+  }
+})
+
+/**
+ * 远程工具描述边界（2026-10-19 追加）：模型最容易在 ssh_* / winrm_* 上「顺手改线上」，
+ * 所以边界必须写进工具描述本身，而不是只靠系统提示里的约束。四个动作（exec/upload/download/cluster）都要覆盖。
+ */
+test('远程工具描述：ssh_* 与 winrm_* 全动作声明服务器只做部署、禁止改源码', async () => {
+  const { REMOTE_SOURCE_BOUNDARY } = await import('../src/remote/shared/source-boundary.ts')
+  assert.ok(REMOTE_SOURCE_BOUNDARY.includes('禁止在此编辑'), '边界文案必须明确禁止在远程编辑源码')
+  assert.ok(REMOTE_SOURCE_BOUNDARY.includes('源码只在本地仓库改'), '边界文案必须写明源码只在本地仓库改')
+  assert.ok(REMOTE_SOURCE_BOUNDARY.includes('部署目标'), '边界文案必须把远程主机定性为部署目标')
+
+  const sources: Array<[string, string]> = [
+    ['src/remote/ssh/tools.ts', readRepoFile('../src/remote/ssh/tools.ts')],
+    ['src/remote/winrm/tools.ts', readRepoFile('../src/remote/winrm/tools.ts')],
+  ]
+  for (const [name, text] of sources) {
+    assert.ok(text.includes('REMOTE_SOURCE_BOUNDARY'), `${name} 必须引用统一边界文案`)
+    const used = text.split('REMOTE_SOURCE_BOUNDARY').length - 1
+    // import 1 处 + exec/upload/download/cluster 4 处描述
+    assert.ok(used >= 5, `${name} 必须在全部远程动作描述里引用边界文案（实际 ${used} 处）`)
+  }
 })

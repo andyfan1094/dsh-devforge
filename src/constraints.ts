@@ -24,8 +24,8 @@ export interface ConstraintsConfig {
   fullTextPaths: string[]
 }
 
-/** 默认开发仓库路径（辉哥主工作区，覆盖全部子项目）。 */
-export const CONSTRAINTS_DEFAULT_PATHS = ['/Users/andyfan/Documents/ds']
+/** 默认开发仓库路径（辉哥主工作区，覆盖全部子项目；Windows 与 macOS 两处并列）。 */
+export const CONSTRAINTS_DEFAULT_PATHS = ['D:\\项目', '/Users/andyfan/Documents/ds']
 
 /** 第一层：常驻保底摘要（所有会话可见）。 */
 export const CONSTRAINT_SUMMARY_TEXT = [
@@ -37,12 +37,21 @@ export const CONSTRAINT_SUMMARY_TEXT = [
   '5. 每次改完代码必须提交并推送 CNB（中文说明 + cnb_push + 状态复核无 ahead），与远端保持同步；只提交不推送视为交付未完成。',
   '6. 项目文档一律使用中文。',
   '7. 「真实测试」只针对本次改动：新写或更新断言并证明「改动前失败、改动后通过」（无法自动化时按可复现步骤在隔离环境人工验证）；禁止乱测试——不得在生产实例、生产数据库、生产接口上做任何写操作式验证，生产只做只读核对，测试数据与环境一律隔离。',
+  '8. 源码只在本地仓库改：源码唯一真源是本机项目目录（如 D:\\项目 下的仓库），服务器/远程主机只是部署目标，不是源码库。禁止在服务器上编辑、新建、覆盖源码文件（sed -i、tee、cat >、vim、Set-Content 等），禁止把线上目录当源码读改、禁止「直接改线上凑效果」；任何修复先落回本地源仓库 → 测试 → 中文提交推送 → 再部署。',
+  '9. 远程操作边界：ssh_exec / winrm_exec 只用于部署产物覆盖、重启服务、查看日志与配置、只读核对；在这些通道里改源码视为违规。',
   '凡涉及开发、构建、测试、交付、部署，必须先通过 devforge_standards 读取对应规范，并按 docs/插件暂存环境测试约束.md 的完整流程执行（该约束在涉及开发时会自动展开为全文注入）。',
 ].join('\n')
 
 /** 第二/三层：约束全文（命中开发仓库或检测到开发动作后注入）。 */
 export const CONSTRAINT_FULL_TEXT = [
   '【项目约束全文（dsh-devforge 注入，本会话涉及开发，必须严格遵守）】',
+  '',
+  '零、源码位置红线（最高优先级，先于任何交付流程）',
+  '1. 源码的唯一真源是本机仓库（如 D:\\项目 下的项目目录）。服务器 / 远程主机只是部署目标与运行环境，不是源码库。',
+  '2. 禁止在服务器上编辑、新建、覆盖源码文件：sed -i、tee、cat >、vim/nano、PowerShell Set-Content/Add-Content、直接改线上工作区文件，一律禁止。',
+  '3. 禁止「直接改线上凑效果」：任何修复或改动先落回本地源仓库 → 测试 → 中文提交推送 → 再发布部署；服务器上的历史改动只是部署现状，不能当源码基线。',
+  '4. 远程合法动作仅限：部署产物覆盖目标目录、重启/停止服务、查看日志与配置、只读核对（curl/健康检查/列目录）；只读核对也不得顺手改文件。',
+  '5. 发现线上与仓库不一致：先回本地仓库对比提交历史，判断是漏部署还是有人在线上手改，再决定回补或重新发布；不得直接在线上打补丁。',
   '',
   '一、交付红线',
   '1. 交付流程必须完整：源仓库测试通过 → 中文提交推远端 → 安装到 profile → 起暂存实例人工过目 → 用户明确确认 → 才允许重启生产 → 关停暂存实例。',
@@ -107,9 +116,9 @@ const DEV_TOOL_PREFIXES = ['github_', 'cnb_', 'ssh_', 'winrm_']
 /** 前缀命中但纯只读的工具不算开发动作。 */
 const DEV_TOOL_PREFIX_SKIP = new Set(['github_auth_list', 'github_auth_test', 'github_repo_list', 'github_status', 'cnb_auth_list', 'cnb_auth_test', 'cnb_repo_list', 'cnb_status', 'ssh_list', 'ssh_tunnel', 'winrm_list'])
 
-/** 规整路径：去尾部斜杠；空串返回 undefined。 */
+/** 规整路径：反斜杠统一成斜杠、去尾部斜杠；空串返回 undefined。 */
 function normalizePath(value: string): string | undefined {
-  const trimmed = value.trim().replace(/\/+$/, '')
+  const trimmed = value.trim().replace(/\\/gu, '/').replace(/\/+$/u, '')
   return trimmed.length > 0 ? trimmed : undefined
 }
 
@@ -135,12 +144,17 @@ export function matchesDevPath(cwd: string | undefined, paths: readonly string[]
   return false
 }
 
-/** 从 session 防御式解析 cwd（session.cwd 或 session.meta.cwd，须为绝对路径）。 */
+/** 是否绝对工作区路径：POSIX（/）、Windows 盘符（D:\ 或 D:/）、UNC（\\server\share）。 */
+export function isAbsoluteWorkspacePath(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith('\\\\')
+}
+
+/** 从 session 防御式解析 cwd（session.cwd 或 session.meta.cwd，须为绝对路径；Windows 盘符路径同样认）。 */
 export function resolveAgentCwd(session: unknown): string | undefined {
   if (session === null || typeof session !== 'object') return undefined
   const record = session as { cwd?: unknown; meta?: { cwd?: unknown } }
   for (const candidate of [record.cwd, record.meta?.cwd]) {
-    if (typeof candidate === 'string' && candidate.startsWith('/')) return candidate
+    if (typeof candidate === 'string' && isAbsoluteWorkspacePath(candidate)) return candidate
   }
   return undefined
 }
@@ -245,8 +259,9 @@ export function renderProjectCard(entry: import('./projects/protocol.ts').Projec
   }
   if (entry.siteUrl.trim() !== '') lines.push('- 线上地址：' + entry.siteUrl)
   if (entry.deployTargets.length > 0) {
-    lines.push('- 发布服务器：' + entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、'))
+    lines.push('- 发布服务器（部署目标，非源码）：' + entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、'))
   }
+  lines.push('- 源码位置：本机 ' + entry.path + '（唯一可编辑源；服务器只做部署，禁止在服务器上改源码或直接改线上文件）')
   lines.push('- 本机路径：' + entry.path)
   if (entry.pathExists === false) lines.push('- ⚠️ 本机路径失效：可能从其他电脑同步而来，请向用户确认本机实际路径（可重定位）。')
   const facts = entry.facts ?? []
