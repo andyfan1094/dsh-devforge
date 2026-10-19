@@ -111,6 +111,16 @@ function Show-SnipClipboardPanel {
         return
     }
 
+    # 两个文件各自编译：C# 的 using 必须位于所有类型声明之前，拼接会撞 CS1529。
+    foreach ($pair in @(@('SnipTextView', 'win-snip-textview.cs'), @('SnipListView', 'win-snip-listview.cs'))) {
+        if ($pair[0] -as [type]) { continue }
+        $p = Join-Path $PSScriptRoot $pair[1]
+        if (Test-Path $p) {
+            $source = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
+            Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition $source
+        }
+    }
+
     $state = @{
         Days        = $Days
         Entries     = @()
@@ -130,6 +140,7 @@ function Show-SnipClipboardPanel {
         NoticeUntil = [DateTime]::MinValue
         NoticeText  = ''
         LastCount   = -1
+        PreviewView = $null
     }
     $script:SnipClipboardPanelState = $state
 
@@ -207,15 +218,20 @@ function Show-SnipClipboardPanel {
     $form.Controls.Add($listPanel)
     $state.ListPanel = $listPanel
 
-    $list = New-Object System.Windows.Forms.ListBox
+    # 自绘列表：没有系统滚动条，行样式与滚动条都由控件自己画。
+    $list = New-Object SnipListView
     $list.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $list.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-    $list.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
-    $list.ItemHeight = 54
-    $list.IntegralHeight = $false
     $list.BackColor = (Get-SnipTheme 'Surface')
-    $list.ForeColor = (Get-SnipTheme 'Text')
-    $list.Font = New-SnipUiFont -Size 9.5
+    $list.SurfaceColor = (Get-SnipTheme 'Surface')
+    $list.RaisedColor = (Get-SnipTheme 'Raised')
+    $list.KindColor = (Get-SnipTheme 'Text2')
+    $list.KindSelectedColor = (Get-SnipTheme 'Text')
+    $list.MainColor = [System.Drawing.Color]::FromArgb(214, 214, 220)
+    $list.MainSelectedColor = (Get-SnipTheme 'Text')
+    $list.MetaColor = (Get-SnipTheme 'Muted')
+    $list.ThumbColor = [System.Drawing.Color]::FromArgb(74, 74, 82)
+    $list.ThumbHoverColor = [System.Drawing.Color]::FromArgb(100, 100, 110)
+    $list.ThumbActiveColor = [System.Drawing.Color]::FromArgb(124, 124, 136)
     $listPanel.Controls.Add($list)
     $state.List = $list
 
@@ -296,6 +312,7 @@ function Show-SnipClipboardPanel {
     $clearButton.BackColor = $form.BackColor
     $form.Controls.Add($clearButton)
 
+
     # ---------- 行为函数（全部走 $script 状态，避免回调取不到局部变量） ----------
 
     $updatePreview = {
@@ -312,6 +329,7 @@ function Show-SnipClipboardPanel {
             try { $st.PreviewImage.Dispose() } catch { }
             $st.PreviewImage = $null
         }
+        $st.PreviewView = $null
         if ($null -eq $entry) {
             $st.PreviewInfo.Text = '选择左侧一条记录查看内容'
             $placeholder = New-Object System.Windows.Forms.Label
@@ -363,25 +381,25 @@ function Show-SnipClipboardPanel {
             return
         }
 
-        $textBox = New-Object System.Windows.Forms.TextBox
-        $textBox.Multiline = $true
-        $textBox.ReadOnly = $true
-        $textBox.WordWrap = $true
-        $textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
-        $textBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-        $textBox.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $textBox.BackColor = [System.Drawing.Color]::FromArgb(27, 27, 31)
-        $textBox.ForeColor = [System.Drawing.Color]::FromArgb(214, 214, 220)
-        $textBox.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+        # 预览用自绘文本视图：自己换行、自己画滚动条，不依赖系统滚动条外观。
+        $view = New-Object SnipTextView
+        $view.Location = New-Object System.Drawing.Point(0, 0)
+        $view.Size = New-Object System.Drawing.Size($hostPanel.ClientSize.Width, $hostPanel.ClientSize.Height)
+        $view.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+        $view.BackColor = (Get-SnipTheme 'Surface')
+        $view.TextColor = [System.Drawing.Color]::FromArgb(214, 214, 220)
+        $view.ThumbColor = [System.Drawing.Color]::FromArgb(74, 74, 82)
+        $view.ThumbHoverColor = [System.Drawing.Color]::FromArgb(100, 100, 110)
+        $view.ThumbActiveColor = [System.Drawing.Color]::FromArgb(124, 124, 136)
         if ($kind -eq 'files') {
-            $lines = @()
-            foreach ($path in @($entry.files)) { $lines += [string]$path }
-            $textBox.Text = ($lines -join "`r`n")
+            $paths = @()
+            foreach ($path in @($entry.files)) { $paths += [string]$path }
+            $view.SetContent(($paths -join "`r`n"))
         } else {
-            $textBox.Text = [string]$entry.text
-            if ($entry.trunc -eq $true) { $st.PreviewInfo.Text = $st.PreviewInfo.Text }
+            $view.SetContent([string]$entry.text)
         }
-        $hostPanel.Controls.Add($textBox)
+        $hostPanel.Controls.Add($view)
+        $st.PreviewView = $view
     }
 
     $reload = {
@@ -409,10 +427,18 @@ function Show-SnipClipboardPanel {
         if ($null -eq $listBox) { return }
         $st.Suppress = $true
         try {
-            $listBox.BeginUpdate()
-            $listBox.Items.Clear()
-            foreach ($entry in $filtered) { [void]$listBox.Items.Add('') }
-            $listBox.EndUpdate()
+            $kindList = @()
+            $summaryList = @()
+            $metaList = @()
+            foreach ($entry in $filtered) {
+                $kindList += (Get-SnipClipboardKindLabel -Entry $entry)
+                $summaryList += (Get-SnipClipboardSummary -Entry $entry)
+                $metaText = Format-SnipClipboardTime -Iso ([string]$entry.at)
+                $app = [string]$entry.app
+                if ($app -ne '') { $metaText = $metaText + ' · ' + $app }
+                $metaList += $metaText
+            }
+            $listBox.SetRows([string[]]$kindList, [string[]]$summaryList, [string[]]$metaList)
             $keepId = [string]$st.SelectedId
             $index = -1
             if ($keepId -ne '') {
@@ -542,47 +568,6 @@ function Show-SnipClipboardPanel {
     $script:SnipClipboardPanelDeleteSelected = $deleteSelected
 
     # ---------- 事件 ----------
-    $list.Add_DrawItem({
-            param($sender, $e)
-            try {
-                $st = $script:SnipClipboardPanelState
-                if ($null -eq $st) { return }
-                $items = @($st.Filtered)
-                if ($e.Index -lt 0 -or $e.Index -ge $items.Count) { return }
-                $entry = $items[$e.Index]
-                $g = $e.Graphics
-                $selected = (($e.State -band [System.Windows.Forms.DrawItemState]::Selected) -ne 0)
-                $bg = if ($selected) { [System.Drawing.Color]::FromArgb(35, 35, 40) } else { [System.Drawing.Color]::FromArgb(27, 27, 31) }
-                $brush = New-Object System.Drawing.SolidBrush($bg)
-                try { $g.FillRectangle($brush, $e.Bounds) } finally { $brush.Dispose() }
-
-                $kindColor = if ($selected) { [System.Drawing.Color]::FromArgb(239, 239, 241) } else { [System.Drawing.Color]::FromArgb(163, 163, 171) }
-                $mainColor = if ($selected) { [System.Drawing.Color]::FromArgb(239, 239, 241) } else { [System.Drawing.Color]::FromArgb(214, 214, 220) }
-                $mutedColor = [System.Drawing.Color]::FromArgb(111, 111, 120)
-
-                $kindFont = New-Object System.Drawing.Font('Microsoft YaHei UI', 8.5)
-                $mainFont = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
-                $mutedFont = New-Object System.Drawing.Font('Microsoft YaHei UI', 8.5)
-                try {
-                    $kindRect = New-Object System.Drawing.Rectangle(($e.Bounds.X + 12), ($e.Bounds.Y + 9), 44, 18)
-                    $textFlags = [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::NoPadding
-                    [System.Windows.Forms.TextRenderer]::DrawText($g, (Get-SnipClipboardKindLabel -Entry $entry), $kindFont, $kindRect, $kindColor, $textFlags)
-                    $mainRect = New-Object System.Drawing.Rectangle(($e.Bounds.X + 58), ($e.Bounds.Y + 8), ($e.Bounds.Width - 70), 20)
-                    [System.Windows.Forms.TextRenderer]::DrawText($g, (Get-SnipClipboardSummary -Entry $entry), $mainFont, $mainRect, $mainColor, ($textFlags -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis))
-                    $timeText = Format-SnipClipboardTime -Iso ([string]$entry.at)
-                    $app = [string]$entry.app
-                    if ($app -ne '') { $timeText = $timeText + ' · ' + $app }
-                    $mutedRect = New-Object System.Drawing.Rectangle(($e.Bounds.X + 58), ($e.Bounds.Y + 30), ($e.Bounds.Width - 70), 18)
-                    [System.Windows.Forms.TextRenderer]::DrawText($g, $timeText, $mutedFont, $mutedRect, $mutedColor, ($textFlags -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis))
-                } finally {
-                    $kindFont.Dispose(); $mainFont.Dispose(); $mutedFont.Dispose()
-                }
-
-            } catch {
-                Write-SnipLog ('剪贴板列表绘制失败：' + $_.Exception.Message)
-            }
-        })
-
     $list.Add_SelectedIndexChanged({
             try {
                 $st = $script:SnipClipboardPanelState
@@ -681,7 +666,7 @@ function Show-SnipClipboardPanel {
                     return
                 }
                 if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F5) {
-                    & $script:SnipClipboardPanelReload
+                & $script:SnipClipboardPanelReload
                     $e.Handled = $true
                 }
             } catch { }
@@ -727,7 +712,7 @@ function Show-SnipClipboardPanel {
                 Update-SnipClipboardWatcher
                 $watcher = $script:SnipClipboardState
                 if ($null -ne $watcher -and [int]$watcher.Count -ne [int]$st.LastCount) {
-                    & $script:SnipClipboardPanelReload
+                & $script:SnipClipboardPanelReload
                 }
                 & $script:SnipClipboardPanelUpdateStatus
             } catch { }

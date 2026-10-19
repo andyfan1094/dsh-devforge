@@ -1,6 +1,6 @@
 # Windows 截图小工具（win-snip）
 
-> 状态：0.52.0 引入；0.63.0 增加「热键先弹功能选择框」与「剪贴板历史（默认保留 15 天）」；0.64.0 全部界面重设计为「石墨 · 琥珀」主题。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
+> 状态：0.52.0 引入；0.63.0 增加「热键先弹功能选择框」与「剪贴板历史（默认保留 15 天）」；0.64.0 全部界面重设计为「石墨 · 琥珀」主题；0.64.1 滚动条改为全自绘。仅 Windows 生效，macOS/Linux 上不注册入口、不启动进程。
 
 ## 一、它是什么
 
@@ -105,6 +105,8 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - `native/win-snip-result.ps1` — 识别/翻译结果窗
 - `native/win-snip-ui.ps1` — 工具条控件（`SnipToolButton` 自绘矢量图标按钮 + `SnipToolbarPanel` 容器）
 - `native/win-snip-theme.ps1` — 「石墨 · 琥珀」主题令牌（颜色 / 字体 / 圆角 / 圆角窗体）
+- `native/win-snip-listview.cs` — 自绘列表（行样式 + 6px 圆角滚动条，不用系统白条）
+- `native/win-snip-textview.cs` — 自绘只读文本视图（预览区换行与滚动，不用 TextBox 滚动条）
 - `native/win-snip-clipboard-store.ps1` — 剪贴板历史存储（按天 JSONL、图片落盘、去重、过期清理）
 - `native/win-snip-clipboard-watch.ps1` — 剪贴板采集（序列号轮询、文本/图片/文件、hash 去重）
 - `native/win-snip-clipboard-read.cs` — 纯 Win32 剪贴板读写（文本 / 文件 / CF_DIB 图片）
@@ -261,5 +263,8 @@ Alt+A（RegisterHotKey，助手进程常驻）
 - **图标**：1.6px 圆头单线矢量，选中时随强调色；不用 emoji。
 - **位置**：选择框以鼠标位置为中心弹出，贴边时夹进工作区。
 - **动效**：原生窗口只保留 hover / 按下 1px 位移的瞬时反馈，不做淡入淡出。
+- **滚动条**：全部自绘（6px 圆角、静止 #4A4A52、hover 提亮、拖动再亮一档）。原生 ListBox / TextBox 的
+  17px 白色系统滚动条在深色面板上极其刺眼，而且 `SetWindowTheme` 在 Windows Server / RDP 下不可靠，
+  所以列表与预览分别换成了 `SnipListView` / `SnipTextView` 两个自绘控件，彻底不依赖系统主题。
 
 token 全在 `native/win-snip-theme.ps1`，改主题只动这一处；各窗口只负责布局，不再各写一份色值。
