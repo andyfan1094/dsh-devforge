@@ -43,7 +43,7 @@ $script:SnipTextColor = [System.Drawing.Color]::FromArgb(239, 239, 241)
 $script:SnipMutedColor = [System.Drawing.Color]::FromArgb(122, 122, 130)
 $script:SnipHoverColor = [System.Drawing.Color]::FromArgb(62, 62, 70)
 $script:SnipToolbarBack = [System.Drawing.Color]::FromArgb(27, 27, 31)
-$script:SnipToolbarBorder = [System.Drawing.Color]::FromArgb(47, 47, 53)
+$script:SnipToolbarBorder = [System.Drawing.Color]::FromArgb(58, 58, 66)
 # 分组竖线比外框略亮一档：外框要"收边"，分隔线要"看得见分组"。
 $script:SnipToolbarDivider = [System.Drawing.Color]::FromArgb(62, 62, 70)
 
