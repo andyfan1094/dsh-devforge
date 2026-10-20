@@ -21,6 +21,7 @@ import { WORKSPACE_API, getConvention, saveConvention, validateConvention } from
 import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
+import { readWechatSnapshot } from './wechat/data.ts'
 
 /** 插件版本号（供面板标题展示）。 */
 const PLUGIN_VERSION: string = (createRequire(import.meta.url)('../package.json') as { version?: string }).version ?? '0.0.0'
@@ -493,6 +494,19 @@ export function makeRoutes(
         const invalid = validateConvention(body)
         if (invalid !== undefined) { writeJson(res, 400, { ok: false, error: invalid }); return }
         writeJson(res, 200, { ok: true, convention: saveConvention(body as never) })
+      },
+    },
+    {
+      kind: 'exact',
+      path: '/api/dsh-devforge/wechat/snapshot',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
+        try {
+          writeJson(res, 200, { ok: true, snapshot: readWechatSnapshot() })
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
   ]

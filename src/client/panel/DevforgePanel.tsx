@@ -21,6 +21,7 @@ import { WorkflowTab } from './WorkflowTab.tsx'
 import { McpTab } from './McpTab.tsx'
 import { DbAdminTab } from './DbAdminTab.tsx'
 import { AutoContinueTab } from './AutoContinueTab.tsx'
+import { WechatTab } from './WechatTab.tsx'
 import css from './panel.module.css'
 
 /** 面板属性。 */
@@ -34,7 +35,7 @@ export interface DevforgePanelProps {
 }
 
 /** 页签类型（'workflow' 保留用于软下线恢复；'memory' 并入 'rag'、'standards/projects/repos/remote' 并入 'dev'，均为 0.40.x 合并页签）。 */
-type Tab = 'profile' | 'browser' | 'snip' | 'codeplan' | 'rag' | 'dev' | 'workflow' | 'mcp' | 'dbadmin' | 'feishu' | 'pluginupdate' | 'skin' | 'gateway' | 'autocontinue'
+type Tab = 'profile' | 'browser' | 'snip' | 'codeplan' | 'rag' | 'dev' | 'workflow' | 'mcp' | 'dbadmin' | 'feishu' | 'pluginupdate' | 'skin' | 'gateway' | 'autocontinue' | 'wechat'
 
 /** 主面板组件。 */
 export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.Element {
@@ -147,6 +148,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         <button type="button" role="tab" aria-selected={tab === 'autocontinue'} data-active={tab === 'autocontinue' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="失败自动续跑：一轮模型报错后自动补发一条「继续」并开启新一轮" onClick={() => { setTab('autocontinue') }}><IconUpdate />续跑</button>
         <button type="button" role="tab" aria-selected={tab === 'gateway'} data-active={tab === 'gateway' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="远程访问网关：员工浏览器凭密码访问本机 DSH Web（0.41.0）" onClick={() => { setTab('gateway') }}><IconProject />远程访问</button>
         <button type="button" role="tab" aria-selected={tab === 'feishu'} data-active={tab === 'feishu' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('feishu') }}><IconFeishu />飞书</button>
+<button type="button" role="tab" aria-selected={tab === 'wechat'} data-active={tab === 'wechat' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title="微信消息：读取 wx-auto 落盘的 SQLite（联系人 / 群 / 消息 / 会话）" onClick={() => { setTab('wechat') }}><IconFeishu />微信</button>
         <button type="button" role="tab" aria-selected={tab === 'pluginupdate'} data-active={tab === 'pluginupdate' ? '' : undefined} data-dsh-part="tab" className={css['tab']} title={updateDot ? '插件或 DSH 本体有可用更新' : undefined} onClick={() => { setTab('pluginupdate') }}><IconUpdate />插件更新{updateDot && <span className={css['tabDot']} aria-hidden="true" />}</button>
         {skin !== undefined && <button type="button" role="tab" aria-selected={tab === 'skin'} data-active={tab === 'skin' ? '' : undefined} data-dsh-part="tab" className={css['tab']} onClick={() => { setTab('skin') }}><IconSkin />皮肤</button>}
         <span className={css['toolbarSpacer']} />
@@ -174,6 +176,7 @@ export function DevforgePanel({ api, skin, onBack }: DevforgePanelProps): JSX.El
         {tab === 'dbadmin' && <DbAdminTab api={api} />}
 
         {tab === 'feishu' && <FeishuTab api={api} />}
+        {tab === 'wechat' && <WechatTab />}
 
         {tab === 'pluginupdate' && <PluginUpdateTab api={api} state={updateState} onRefresh={() => { void refreshUpdates() }} />}
 
