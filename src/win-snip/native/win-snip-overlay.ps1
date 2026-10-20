@@ -43,6 +43,9 @@ $script:SnipTextColor = [System.Drawing.Color]::FromArgb(239, 239, 241)
 $script:SnipMutedColor = [System.Drawing.Color]::FromArgb(122, 122, 130)
 $script:SnipHoverColor = [System.Drawing.Color]::FromArgb(62, 62, 70)
 $script:SnipToolbarBack = [System.Drawing.Color]::FromArgb(27, 27, 31)
+$script:SnipToolbarBorder = [System.Drawing.Color]::FromArgb(47, 47, 53)
+# 分组竖线比外框略亮一档：外框要"收边"，分隔线要"看得见分组"。
+$script:SnipToolbarDivider = [System.Drawing.Color]::FromArgb(62, 62, 70)
 
 <#
 .SYNOPSIS
@@ -307,8 +310,10 @@ function New-SnipToolbar {
     $panel.AutoSize = $false
     $panel.WrapContents = $false
     $panel.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-    $panel.Padding = New-Object System.Windows.Forms.Padding(6, 5, 6, 5)
+    $panel.Padding = New-Object System.Windows.Forms.Padding(4, 3, 4, 3)
     $panel.Margin = New-Object System.Windows.Forms.Padding(0)
+    $panel.BackColor = $script:SnipToolbarBack
+    $panel.BorderColor = $script:SnipToolbarBorder
     $panel.Visible = $false
     $panel.Tag = 'toolbar'
 
@@ -323,23 +328,32 @@ function New-SnipToolbar {
         foreach ($item in $group) {
             if ($item.Id -eq 'sep') {
                 $sep = New-Object System.Windows.Forms.Panel
-                $sep.Size = New-Object System.Drawing.Size(9, 22)
+                # 1px 竖线：比原来 9px 的"占位块"更轻，分组靠留白而不是靠粗线。
+                $sep.Size = New-Object System.Drawing.Size(1, 16)
                 $sep.BackColor = $script:SnipToolbarBack
-                $sep.Margin = New-Object System.Windows.Forms.Padding(3, 4, 3, 4)
+                $sep.Margin = New-Object System.Windows.Forms.Padding(4, 7, 4, 7)
                 $sep.Add_Paint({
                         param($sender, $e)
-                        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(47, 47, 53), 1)
-                        try { $e.Graphics.DrawLine($pen, 4, 2, 4, ($sender.Height - 2)) } finally { $pen.Dispose() }
+                        $pen = New-Object System.Drawing.Pen($script:SnipToolbarDivider, 1)
+                        # 落在 0.5px 上才是锐利的 1px 线；画在整数坐标会被抗锯齿抹成两像素浅灰。
+                        try { $e.Graphics.DrawLine($pen, 0.5, 1, 0.5, ($sender.Height - 2)) } finally { $pen.Dispose() }
                     })
                 $panel.Controls.Add($sep)
                 continue
             }
             $button = New-Object SnipToolButton
-            $button.Text = [string]$item.Label
+            # 纯图标按钮：中文名与快捷键交给悬停提示；AccessibleName 让读屏与自动化仍能识别。
+            $button.Text = ''
             $button.IconId = [string]$item.Icon
             $button.Tag = [string]$item.Id
+            $button.AccessibleName = [string]$item.Label
+            if ($null -ne $item.Tip) { $button.AccessibleDescription = [string]$item.Tip }
+            # 复制是离开截图时的主操作（Enter），图标常驻琥珀色，其余按钮保持中性。
+            $button.Primary = ($item.Id -eq 'copy')
+            # 关闭会直接丢弃这次截图，悬停转危险色给出预警。
+            $button.DangerOnHover = ($item.Id -eq 'close')
             $button.Margin = New-Object System.Windows.Forms.Padding(1, 0, 1, 0)
-            $button.Size = $button.GetPreferredSize([System.Drawing.Size]::Empty)
+            $button.Size = New-Object System.Drawing.Size(30, 30)
             $button.Add_Click({
                     param($sender, $e)
                     Invoke-SnipToolbarAction -State $script:SnipEditor -Id ([string]$sender.Tag)
@@ -384,12 +398,15 @@ function Update-SnipToolbar {
     $clientHeight = $form.ClientSize.Height
     # 显式累加：不依赖 FlowLayoutPanel 的 AutoSize（它在未完成布局时会算出 87 这种错误宽度）
     $panelWidth = $panel.Padding.Horizontal
-    $panelHeight = 30 + $panel.Padding.Vertical
+    $panelHeight = 0
     foreach ($child in $panel.Controls) {
         $panelWidth += $child.Width + $child.Margin.Horizontal
-        $panelHeight = [Math]::Max($panelHeight, $child.Height + $child.Margin.Vertical + $panel.Padding.Vertical)
+        $panelHeight = [Math]::Max($panelHeight, $child.Height + $child.Margin.Vertical)
     }
+    $panelHeight += $panel.Padding.Vertical
     $panel.Size = New-Object System.Drawing.Size([int]$panelWidth, [int]$panelHeight)
+    # 尺寸变了要重建圆角 Region，否则圆角会按上一次的尺寸裁切。
+    $panel.ApplyCornerRegion()
     $sel = $State.Sel
 
     # 优先贴选区下方；下方放不下放上方；都放不下贴窗口底边。
@@ -843,6 +860,18 @@ function Show-SnipOverlay {
             if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::S) {
                 Invoke-SnipToolbarAction -State $s -Id 'save'
                 return
+            }
+            # 工具字母快捷键：工具条改成纯图标后，键盘切换比找按钮更快（提示里承诺的字母就是这套）。
+            if (-not $e.Control -and -not $e.Alt -and $s.Phase -eq 'edit') {
+                $toolKeys = @{
+                    'R' = 'tool-rect'; 'E' = 'tool-ellipse'; 'A' = 'tool-arrow'; 'P' = 'tool-pen'
+                    'T' = 'tool-text'; 'M' = 'tool-mosaic'; 'N' = 'tool-number'
+                }
+                $pressed = $e.KeyCode.ToString()
+                if ($toolKeys.ContainsKey($pressed)) {
+                    Invoke-SnipToolbarAction -State $s -Id $toolKeys[$pressed]
+                    return
+                }
             }
             if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter -and $s.Phase -eq 'edit') {
                 Invoke-SnipToolbarAction -State $s -Id 'copy'

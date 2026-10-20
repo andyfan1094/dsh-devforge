@@ -7,6 +7,13 @@
 # 图标规范（遵循设计资产 craft/anti-ai-slop）：
 #   禁止 emoji 当功能图标；统一 1.6px 圆头单线描边矢量图标，颜色跟随文字色。
 #   所有图标都画在 14×14 的方格内，用相对坐标，便于统一缩放与对齐。
+#
+# 2026-10-20 改版（辉哥：工具条再美化点、再小点）：
+#   1. 由「图标 + 中文文字」改成**纯图标**，28×28 的方形按钮，整体宽度从约 1145px 降到约 515px；
+#      文字说明改由 ToolTip 承担（中文名 + 快捷键），按钮同时设置 AccessibleName，读屏与自动化仍认得出。
+#   2. 选中态不再整块填满琥珀色（太重、抢注意力），改成「琥珀 16% 底 + 1px 琥珀描边 + 琥珀图标」。
+#   3. 悬停统一成白色 11% 底（与选择框卡片同一语汇），按下再亮一档；关闭按钮悬停转危险色。
+#   4. 工具条容器做 10px 圆角 + 发丝描边（Region 硬裁切），浮在截图上像一个独立胶囊，不再是一块方板。
 
 if (-not ('SnipToolButton' -as [type])) {
     Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
@@ -15,24 +22,60 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
-// 截图工具条上的单个按钮：矢量图标 + 文字，带 hover / 选中 / 禁用三态。
+// 圆角矩形路径：两个控件类共用，避免各写一份。
+internal static class SnipUiGeometry
+{
+    public static GraphicsPath RoundRect(Rectangle bounds, int radius)
+    {
+        int d = Math.Max(1, radius * 2);
+        if (d > bounds.Width) { d = bounds.Width; }
+        if (d > bounds.Height) { d = bounds.Height; }
+        GraphicsPath path = new GraphicsPath();
+        if (d <= 1 || bounds.Width <= 1 || bounds.Height <= 1)
+        {
+            path.AddRectangle(bounds);
+            return path;
+        }
+        path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+        path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+        path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+// 截图工具条上的单个按钮：只有矢量图标，带 hover / 选中 / 禁用三态。
 public class SnipToolButton : Control
 {
     // 图标标识，对应 DrawGlyph 里的分支。
     public string IconId = "";
-    // 是否为当前选中的绘图工具（选中态用强调色填充）。
+    // 是否为当前选中的绘图工具（选中态用琥珀底 + 琥珀描边强调）。
     public bool Active = false;
     // 是否禁用（撤销/重做在无可撤销内容时禁用）。
     public bool Disabled = false;
+    // 主操作（复制）：图标常驻琥珀色，但不用底色，避免和"工具选中"混淆。
+    public bool Primary = false;
+    // 悬停时转危险色（关闭按钮：这一步会退出编辑）。
+    public bool DangerOnHover = false;
 
     public Color AccentColor = Color.FromArgb(226, 164, 92);
     public Color TextColor = Color.FromArgb(239, 239, 241);
     public Color MutedColor = Color.FromArgb(111, 111, 120);
-    public Color HoverFill = Color.FromArgb(35, 35, 40);
+    public Color DangerColor = Color.FromArgb(224, 106, 91);
+    public Color Surface = Color.FromArgb(27, 27, 31);
 
-    private const int IconSize = 14;
-    private const int IconGap = 6;
-    private const int PadX = 9;
+    // 状态底色：与选择框卡片同一套语汇（白色低透明度叠加，随底色自然分层）。
+    private static readonly Color HoverFill = Color.FromArgb(28, 255, 255, 255);
+    private static readonly Color PressFill = Color.FromArgb(46, 255, 255, 255);
+    private static readonly Color ActiveFill = Color.FromArgb(41, 226, 164, 92);
+    private static readonly Color ActiveEdge = Color.FromArgb(120, 226, 164, 92);
+    private static readonly Color PrimaryFill = Color.FromArgb(24, 226, 164, 92);
+    private static readonly Color DangerFill = Color.FromArgb(34, 224, 106, 91);
+
+    private const int IconSize = 17;
+    // 图标坐标都以这个方格为基准，按 IconSize 等比缩放。
+    private const float GlyphBase = 14f;
     private const int Radius = 7;
     private const float StrokeWidth = 1.6f;
 
@@ -44,20 +87,19 @@ public class SnipToolButton : Control
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
             | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         // 不用透明背景：透明需要父窗体反复重绘，浮在截图上会闪。按钮与工具条同色，圆角处看不出接缝。
-        BackColor = Color.FromArgb(27, 27, 31);
+        BackColor = Surface;
         Cursor = Cursors.Hand;
-        Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
         // 关键：不接受焦点，点完按钮键盘焦点仍留在遮罩窗体上，Esc / Ctrl+Z 才不会失效。
         SetStyle(ControlStyles.Selectable, false);
         TabStop = false;
+        Width = 30;
         Height = 30;
     }
 
-    // 宽度按文字实际宽度计算，图标和文字一起算进内边距。
+    // 纯图标按钮：宽度只由图标与内边距决定。
     public override Size GetPreferredSize(Size proposed)
     {
-        int textWidth = TextRenderer.MeasureText(Text, Font).Width;
-        return new Size(PadX * 2 + IconSize + IconGap + textWidth, 30);
+        return new Size(30, 30);
     }
 
     protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -73,64 +115,57 @@ public class SnipToolButton : Control
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
         bool off = Disabled;
-        Color fore = Active ? Color.FromArgb(26, 20, 8) : (off ? MutedColor : TextColor);
-        Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
+        bool danger = DangerOnHover && hover && !off;
+        Color fore;
+        if (off) { fore = MutedColor; }
+        else if (danger) { fore = DangerColor; }
+        else if (Active || Primary) { fore = AccentColor; }
+        else { fore = TextColor; }
 
-        using (GraphicsPath path = RoundRect(box, Radius))
+        Color fill = Color.Empty;
+        if (Active) { fill = ActiveFill; }
+        else if (off) { fill = Color.Empty; }
+        else if (danger) { fill = pressed ? Color.FromArgb(52, 224, 106, 91) : DangerFill; }
+        else if (hover) { fill = pressed ? PressFill : (Primary ? PrimaryFill : HoverFill); }
+
+        Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (GraphicsPath path = SnipUiGeometry.RoundRect(box, Radius))
         {
+            if (fill != Color.Empty)
+            {
+                using (SolidBrush brush = new SolidBrush(fill)) { g.FillPath(brush, path); }
+            }
             if (Active)
             {
-                using (SolidBrush brush = new SolidBrush(AccentColor)) { g.FillPath(brush, path); }
-            }
-            else if (hover && !off)
-            {
-                using (SolidBrush brush = new SolidBrush(HoverFill)) { g.FillPath(brush, path); }
+                using (Pen pen = new Pen(ActiveEdge, 1f)) { g.DrawPath(pen, path); }
             }
         }
 
         // 按下时整体下沉 1px，给一个能感觉到的点击反馈。
         int offset = pressed ? 1 : 0;
-        int iconTop = (Height - IconSize) / 2 + offset;
-        DrawGlyph(g, IconId, PadX, iconTop, fore);
-
-        int textLeft = PadX + IconSize + IconGap;
-        Rectangle textRect = new Rectangle(textLeft, offset, Width - textLeft - PadX, Height);
-        TextRenderer.DrawText(g, Text, Font, textRect, fore,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter
-            | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+        int left = (Width - IconSize) / 2 + offset;
+        int top = (Height - IconSize) / 2 + offset;
+        DrawGlyph(g, IconId, left, top, fore);
     }
 
-    // 圆角矩形路径（半径自动收敛，避免小尺寸算出非法弧）。
-    private static GraphicsPath RoundRect(Rectangle bounds, int radius)
-    {
-        int d = Math.Max(1, radius * 2);
-        if (d > bounds.Width) { d = bounds.Width; }
-        if (d > bounds.Height) { d = bounds.Height; }
-        GraphicsPath path = new GraphicsPath();
-        path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
-        path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
-        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
-        path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-
-    // 画图标：所有坐标都在 14×14 方格内。
+    // 画图标：所有坐标都在 14×14 方格内，按 IconSize 等比缩放；线宽反向补偿，视觉粗细恒定。
     private static void DrawGlyph(Graphics g, string id, int left, int top, Color fore)
     {
-        using (Pen pen = new Pen(fore, StrokeWidth))
+        float scale = IconSize / GlyphBase;
+        using (Pen pen = new Pen(fore, StrokeWidth / scale))
         {
             pen.StartCap = LineCap.Round;
             pen.EndCap = LineCap.Round;
             pen.LineJoin = LineJoin.Round;
             GraphicsState state = g.Save();
             g.TranslateTransform(left, top);
+            g.ScaleTransform(scale, scale);
             try
             {
                 switch (id)
                 {
                     case "rect":
-                        using (GraphicsPath p = RoundRect(new Rectangle(2, 3, 10, 8), 2)) { g.DrawPath(pen, p); }
+                        using (GraphicsPath p = SnipUiGeometry.RoundRect(new Rectangle(2, 3, 10, 8), 2)) { g.DrawPath(pen, p); }
                         break;
                     case "ellipse":
                         g.DrawEllipse(pen, 1.8f, 3.2f, 10.4f, 7.6f);
@@ -201,12 +236,11 @@ public class SnipToolButton : Control
                         g.DrawRectangle(pen, 5.6f, 5.6f, 7.4f, 7.4f);
                         break;
                     case "save":
-                        g.DrawLine(pen, 2.6f, 8.6f, 2.6f, 11.6f);
-                        g.DrawLine(pen, 2.6f, 11.6f, 11.4f, 11.6f);
-                        g.DrawLine(pen, 11.4f, 11.6f, 11.4f, 8.6f);
-                        g.DrawLine(pen, 7f, 2.4f, 7f, 8.4f);
-                        g.DrawLine(pen, 5.2f, 6.6f, 7f, 8.4f);
-                        g.DrawLine(pen, 8.8f, 6.6f, 7f, 8.4f);
+                        // 软盘：外框 + 上方写保护滑片 + 下方标签。比"下箭头 + 托盘"更像"保存"，
+                        // 后者在工具条里会被读成"下载/导出"。
+                        using (GraphicsPath p = SnipUiGeometry.RoundRect(new Rectangle(2, 2, 10, 10), 2)) { g.DrawPath(pen, p); }
+                        g.DrawRectangle(pen, 4.6f, 2.2f, 4.8f, 3.6f);
+                        g.DrawRectangle(pen, 4.2f, 8.4f, 5.6f, 3.4f);
                         break;
                     case "pin":
                         g.DrawRectangle(pen, 4.6f, 2.4f, 4.8f, 3.4f);
@@ -242,11 +276,13 @@ public class SnipToolButton : Control
     }
 }
 
-// 工具条容器：不透明深色面板 + 1px 内描边。
-// 刻意不做圆角：圆角需要透明背景，而它浮在截图上会反复触发父窗体重绘导致闪烁。
+// 工具条容器：胶囊形深色面板 + 1px 发丝描边。
+// 圆角靠 Region 硬裁切实现：面板本身绘制不透明圆角底与描边，四角之外露出截图，
+// 观感上是一个浮在截图上的独立胶囊，仍然是子控件（不需要透明背景，不会反复触发父窗体重绘）。
 public class SnipToolbarPanel : FlowLayoutPanel
 {
     public Color BorderColor = Color.FromArgb(47, 47, 53);
+    public int CornerRadius = 10;
 
     public SnipToolbarPanel()
     {
@@ -256,10 +292,40 @@ public class SnipToolbarPanel : FlowLayoutPanel
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
-        using (Pen pen = new Pen(BorderColor, 1f))
+        // 不调用 base.OnPaint：默认实现会先铺满一个直角矩形底，圆角会被它填掉。
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (GraphicsPath path = SnipUiGeometry.RoundRect(box, CornerRadius))
         {
-            e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            using (SolidBrush brush = new SolidBrush(BackColor)) { g.FillPath(brush, path); }
+            using (Pen pen = new Pen(BorderColor, 1f)) { g.DrawPath(pen, path); }
+        }
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        ApplyCornerRegion();
+    }
+
+    // 按当前尺寸重建圆角 Region；Region 半径比绘制半径大 1px，避免裁切锯齿啃掉描边。
+    public void ApplyCornerRegion()
+    {
+        try
+        {
+            if (Width <= 2 || Height <= 2) { return; }
+            Rectangle rect = new Rectangle(0, 0, Width, Height);
+            using (GraphicsPath path = SnipUiGeometry.RoundRect(rect, CornerRadius + 1))
+            {
+                Region old = Region;
+                Region = new Region(path);
+                if (old != null) { old.Dispose(); }
+            }
+        }
+        catch
+        {
+            // 裁切失败只是回到直角，不影响功能。
         }
     }
 }
