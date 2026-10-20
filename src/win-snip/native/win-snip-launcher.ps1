@@ -51,8 +51,6 @@ function Show-SnipLauncher {
     $form.Width = 360
     $form.Height = 202
     $form.BackColor = (Get-SnipTheme 'Canvas')
-    Set-SnipRoundedRegion -Form $form -Radius 12
-    Enable-SnipWindowShadow -Form $form
     Add-SnipWindowBorder -Form $form -Radius 12
     $form.KeyPreview = $true
 
@@ -172,9 +170,13 @@ function Show-SnipLauncher {
         })
     $form.Add_Shown({
             try {
+                # Region 必须在窗口真正显示、拿到最终尺寸之后再切：写死 360x202 时，
+                # 一旦系统缩放把窗口放大，Region 会只覆盖左上角，其余部分"透"出桌面。
+                Set-SnipRoundedRegion -Form $form -Radius 12
+                Write-SnipLog ('选择框显示：位置=' + $form.Left + ',' + $form.Top + ' 尺寸=' + $form.Width + 'x' + $form.Height + ' 客户区=' + $form.ClientSize.Width + 'x' + $form.ClientSize.Height + ' 光标=' + [System.Windows.Forms.Cursor]::Position.X + ',' + [System.Windows.Forms.Cursor]::Position.Y + ' 底色=' + (Get-SnipTheme 'Canvas').ToArgb())
                 [void]$script:SnipLauncherForm.Activate()
                 if ($null -ne $script:SnipLauncherArmTimer) { $script:SnipLauncherArmTimer.Start() }
-            } catch { }
+            } catch { Write-SnipLog ('选择框显示失败：' + $_.Exception.Message) }
         })
     $form.Add_Deactivate({
             if ($script:SnipLauncherReady -and -not $script:SnipLauncherClosing) {
@@ -196,7 +198,9 @@ function Show-SnipLauncher {
     if ($y -lt $work.Top) { $y = $work.Top + 8 }
     $form.Location = New-Object System.Drawing.Point($x, $y)
 
+    Write-SnipLog ('选择框请求：位置=' + $x + ',' + $y + ' 尺寸=' + $form.Width + 'x' + $form.Height + ' 工作区=' + $work.X + ',' + $work.Y + ' ' + $work.Width + 'x' + $work.Height)
     [void]$form.ShowDialog()
+    Write-SnipLog ('选择框结束：结果=' + $script:SnipLauncherChoice + ' 尺寸=' + $form.Width + 'x' + $form.Height)
     $choice = $script:SnipLauncherChoice
     $form.Dispose()
     # 清掉脚本作用域引用：下一次弹出必须从干净状态开始，也避免窗体对象被脚本变量钉住。

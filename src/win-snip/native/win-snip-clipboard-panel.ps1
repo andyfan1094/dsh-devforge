@@ -150,8 +150,6 @@ function Show-SnipClipboardPanel {
     $form.Height = 560
     $form.KeyPreview = $true
     $form.BackColor = (Get-SnipTheme 'Canvas')
-    Set-SnipRoundedRegion -Form $form -Radius 12
-    Enable-SnipWindowShadow -Form $form
     Add-SnipWindowBorder -Form $form -Radius 12
     $state.Form = $form
 
@@ -729,6 +727,8 @@ function Show-SnipClipboardPanel {
 
     $form.Add_Shown({
             try {
+                Set-SnipRoundedRegion -Form $form -Radius 12
+                Write-SnipLog ('剪贴板面板显示：位置=' + $form.Left + ',' + $form.Top + ' 尺寸=' + $form.Width + 'x' + $form.Height + ' 客户区=' + $form.ClientSize.Width + 'x' + $form.ClientSize.Height)
                 & $script:SnipClipboardPanelReload
                 & $script:SnipClipboardPanelUpdateStatus
                 $script:SnipClipboardPanelTimer.Start()

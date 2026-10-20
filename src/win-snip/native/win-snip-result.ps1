@@ -1,4 +1,4 @@
-# win-snip-result.ps1 —— 识别 / 翻译结果窗
+﻿# win-snip-result.ps1 —— 识别 / 翻译结果窗
 #
 # 设计定位（Design Read）
 #   深色工具型结果检视窗，面向重度桌面用户；
@@ -8,10 +8,10 @@
 # 三条硬规则
 #   1. 窗口尺寸由内容算出来：多一行就高一行，少一行就矮一行，
 #      不用"最小高度"把差别糊住（上一版的病根：MinimumSize 与卡片最小高把 4 行和 8 行都顶到 320）。
-#   2. 颜色只从 $script:SnipTheme 取，不写死 RGB。
+#   2. 颜色只从 $script:SnipResultTheme 取，不写死 RGB。
 #   3. 正文等宽且不换行，缩进与表格列才不塌。
 
-$script:SnipTheme = @{
+$script:SnipResultTheme = @{
     Window      = [System.Drawing.Color]::FromArgb(25, 27, 33)     # 窗口底
     Header      = [System.Drawing.Color]::FromArgb(32, 35, 43)     # 标题栏，亮一档
     Surface     = [System.Drawing.Color]::FromArgb(18, 20, 25)     # 内容面，暗一档（内凹）
@@ -119,7 +119,7 @@ function Measure-SnipTextBlock {
 function New-SnipFlatButton {
     param([string]$Text, [bool]$Accent = $false, [int]$Width = 88, [int]$Height = 34)
 
-    $t = $script:SnipTheme
+    $t = $script:SnipResultTheme
     $button = New-Object System.Windows.Forms.Panel
     $button.Size = New-Object System.Drawing.Size($Width, $Height)
     $button.Cursor = [System.Windows.Forms.Cursors]::Hand
@@ -176,7 +176,7 @@ function Show-SnipResult {
         [int]$ElapsedMs = 0
     )
 
-    $t = $script:SnipTheme
+    $t = $script:SnipResultTheme
 
     if (-not ('SnipResizeWindow' -as [type])) {
         $chromePath = Join-Path $PSScriptRoot 'win-snip-chrome.cs'
@@ -284,7 +284,7 @@ function Show-SnipResult {
     $form.Add_Paint({
             param($sender, $e)
             $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-            $theme = $script:SnipTheme
+            $theme = $script:SnipResultTheme
             $pen = New-Object System.Drawing.Pen($theme.WindowLine, 1)
             try { $e.Graphics.DrawRectangle($pen, 0, 0, ($sender.Width - 1), ($sender.Height - 1)) } finally { $pen.Dispose() }
             $gloss = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(28, 255, 255, 255), 1)
@@ -297,7 +297,7 @@ function Show-SnipResult {
     $header.BackColor = $t.Header
     $header.Add_Paint({
             param($sender, $e)
-            $theme = $script:SnipTheme
+            $theme = $script:SnipResultTheme
             $pen = New-Object System.Drawing.Pen($theme.Hairline, 1)
             try { $e.Graphics.DrawLine($pen, 0, ($sender.Height - 1), $sender.Width, ($sender.Height - 1)) } finally { $pen.Dispose() }
         })
@@ -385,7 +385,7 @@ function Show-SnipResult {
         $card.Tag = @{ Thumb = $false; Ratio = 0.0; Progress = 0.0 }
         $card.Add_Paint({
                 param($sender, $e)
-                $theme = $script:SnipTheme
+                $theme = $script:SnipResultTheme
                 $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
                 $pen = New-Object System.Drawing.Pen($theme.SurfaceLine, 1)
                 try { $e.Graphics.DrawRectangle($pen, 0, 0, ($sender.Width - 1), ($sender.Height - 1)) } finally { $pen.Dispose() }
@@ -432,7 +432,7 @@ function Show-SnipResult {
     $footer.BackColor = $t.Header
     $footer.Add_Paint({
             param($sender, $e)
-            $theme = $script:SnipTheme
+            $theme = $script:SnipResultTheme
             $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
             $pen = New-Object System.Drawing.Pen($theme.Hairline, 1)
             try { $e.Graphics.DrawLine($pen, 0, 0, $sender.Width, 0) } finally { $pen.Dispose() }
