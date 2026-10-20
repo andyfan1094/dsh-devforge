@@ -58,6 +58,7 @@ export function WechatTab() {
   const [selected, setSelected] = useState('')
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [busyService, setBusyService] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(async (silent = false) => {
@@ -130,6 +131,27 @@ export function WechatTab() {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
   }, [messages.length])
 
+  /** 手动启停插件托管的 wx-auto 控制台。 */
+  const controlService = useCallback(async (action: 'start' | 'stop') => {
+    setBusyService(true)
+    setNotice(action === 'start' ? '正在启动控制台…' : '正在停止…')
+    try {
+      const res = await fetch('/api/dsh-devforge/wechat/service', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const data = (await res.json()) as { ok: boolean; message?: string; error?: string }
+      setNotice(data.message ?? data.error ?? (data.ok ? '完成' : '操作失败'))
+      window.setTimeout(() => void load(true), 800)
+    } catch (e) {
+      setNotice('操作失败：' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusyService(false)
+      window.setTimeout(() => setNotice(''), 5000)
+    }
+  }, [load])
+
   return (
     <div>
       {/* 顶部：状态 + 刷新 */}
@@ -138,10 +160,31 @@ export function WechatTab() {
         <strong>{snapshot?.online ? '控制台在线' : '控制台离线'}</strong>
         <span className={css['mutedText']}>
           {snapshot?.online
-            ? `微信进程 ${snapshot.wechatPid ?? '—'} · 联系人 ${snapshot.stats.contacts} · 群 ${snapshot.stats.groups} · 消息 ${snapshot.stats.messages}`
-            : 'wx-auto 控制台（127.0.0.1:8765）未运行，数据为最近一次写入的库内容'}
+            ? `插件托管 · 微信进程 ${snapshot.wechatPid ?? '—'} · 联系人 ${snapshot.stats.contacts} · 群 ${snapshot.stats.groups} · 消息 ${snapshot.stats.messages}`
+            : '插件内置托管未运行：点「启动控制台」由插件拉起，或检查微信客户端是否已登录'}
         </span>
         <span className={css['toolbarSpacer']} />
+        {!snapshot?.online && (
+          <button
+            type="button"
+            className={css['primaryButton']}
+            onClick={() => void controlService('start')}
+            disabled={busyService}
+          >
+            {busyService ? '启动中…' : '启动控制台'}
+          </button>
+        )}
+        {snapshot?.online && (
+          <button
+            type="button"
+            className={css['ghostButton']}
+            onClick={() => void controlService('stop')}
+            disabled={busyService}
+            title="只停插件托管的子进程，外部启动的控制台不受影响"
+          >
+            停止托管
+          </button>
+        )}
         <button type="button" className={css['ghostButton']} onClick={() => void load()} disabled={loading}>
           {loading ? '读取中…' : '刷新'}
         </button>

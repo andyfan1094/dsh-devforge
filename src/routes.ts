@@ -22,6 +22,7 @@ import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 import { probeWxAuto, readWechatSnapshot } from './wechat/data.ts'
+import { isRunning as isWxAutoRunning, lastStartError as wxAutoLastError, launchedAt as wxAutoLaunchedAt, pid as wxAutoPid, startWxAuto, stopWxAuto } from './wechat/service.ts'
 
 /** 插件版本号（供面板标题展示）。 */
 const PLUGIN_VERSION: string = (createRequire(import.meta.url)('../package.json') as { version?: string }).version ?? '0.0.0'
@@ -535,6 +536,38 @@ export function makeRoutes(
         } catch (error) {
           writeJson(res, 502, { ok: false, error: 'wx-auto 控制台未运行或发送失败：' + (error instanceof Error ? error.message : String(error)) })
         }
+      },
+    },
+    {
+      // 控制台托管：启动/停止插件内置运行的 wx-auto 子进程。
+      kind: 'exact',
+      path: '/api/dsh-devforge/wechat/service',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method === 'GET') {
+          writeJson(res, 200, {
+            ok: true,
+            service: {
+              managed: isWxAutoRunning(),
+              pid: wxAutoPid(),
+              launchedAt: wxAutoLaunchedAt(),
+              lastError: wxAutoLastError(),
+            },
+          })
+          return
+        }
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'GET/POST only' }); return }
+        const body = await readJsonBody(req)
+        const action = body && typeof body.action === 'string' ? body.action : ''
+        if (action === 'start') {
+          writeJson(res, 200, await startWxAuto())
+          return
+        }
+        if (action === 'stop') {
+          writeJson(res, 200, stopWxAuto())
+          return
+        }
+        writeJson(res, 400, { ok: false, error: 'action 只能是 start / stop' })
       },
     },
   ]

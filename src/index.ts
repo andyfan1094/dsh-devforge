@@ -75,6 +75,7 @@ import { DouyinLiveService } from './douyin-live/service.ts'
 import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
 import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
 import { douyinLiveStore } from './douyin-live/store.ts'
+import { disposeWxAuto, startWxAuto } from './wechat/service.ts'
 import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
 import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -1730,6 +1731,15 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     // 否则卸载后 Alt+A 仍被占着、用户只能去任务管理器结束进程。
     try { winSnipActivation?.dispose() } catch { /* 卸载失败不阻塞 Host 退出 */ }
   }, 'dsh-devforge: lifecycle')
+
+  // 微信控制台内置托管：插件激活即拉起 wx-auto（Python 服务），卸载时收掉子进程。
+  // 这样面板里的「控制台离线」只会在微信客户端没开时出现，而不是服务忘了启动。
+  safeActivate(ctx, '微信控制台托管', () => {
+    void startWxAuto().then((result) => {
+      if (!result.ok) console.warn('[dsh-devforge] wx-auto 启动失败：', result.message)
+    })
+    ctx.effect(() => () => { disposeWxAuto() }, 'dsh-devforge: wechat-console')
+  })
 
   // 导出围栏工具供测试（非公开 API）
   void isLoopbackRequest
