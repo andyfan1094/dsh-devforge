@@ -14,6 +14,8 @@ import {
   matchesDevPath,
   renderConstraintText,
   renderProjectCard,
+  renderProjectOverview,
+  projectsUnderCwd,
   resolveAgentCwd,
 } from '../src/constraints.ts'
 
@@ -269,6 +271,45 @@ test('项目卡：明确源码唯一位置在本机，发布服务器只是部�
   assert.ok(card.includes('源码位置'), '项目卡必须写明源码位置')
   assert.ok(card.includes('服务器只做部署'), '项目卡必须写明服务器只做部署')
   assert.ok(card.includes('禁止在服务器上改源码'), '项目卡必须禁止在服务器上改源码')
+})
+
+/**
+ * 0.65.0 断点：项目卡此前只渲染已有字段，缺失的线上/测试地址、发布服务器
+ * 完全不出现，模型以为资料齐全，于是永远不会去补。现在必须显式列出缺口与动作。
+ */
+test('项目卡：显式列出资料缺口并给出 probe/update 动作与短码', () => {
+  const card = renderProjectCard({
+    id: 'abcdef12-3456-7890-abcd-ef1234567890', name: '缺口项目', path: 'D:\\项目\\projects\\gap', machinePaths: {}, description: '',
+    repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', testUrl: '', deployTargets: [],
+    createdAt: 0, updatedAt: 0,
+  })
+  assert.match(card, /资料缺口/u, '必须显式标出资料缺口')
+  assert.match(card, /★仓库地址\/★线上地址\/★发布服务器/u, '核心缺口要带 ★ 分级')
+  assert.match(card, /id 短码 abcdef12/u, '要给出短码，模型才能直接 update/probe')
+  assert.match(card, /action=probe/u, '必须给出探测动作')
+  assert.match(card, /action=update/u, '必须给出回填动作')
+  assert.match(card, /禁止编造地址或服务器别名/u, '必须禁止编造')
+  assert.match(card, /部署 \/ 上线 \/ 换端口 \/ 新增站点完成后，必须 action=update 回填/u, '部署完成必须回填')
+})
+
+/** 辉哥常在 D:\\项目 根目录开会话：此时项目卡不命中，必须改注入项目索引，否则模型对全部项目一无所知。 */
+test('工作区项目索引：cwd 为父目录时列出下级项目、标缺口、带维护规则', () => {
+  const entries = [
+    { id: 'aaaaaaaa-1111', name: '甲', path: 'D:\\项目\\projects\\a', machinePaths: {}, description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', testUrl: '', deployTargets: [], createdAt: 0, updatedAt: 0 },
+    { id: 'bbbbbbbb-2222', name: '乙', path: 'D:/项目/projects/b', machinePaths: {}, description: '已有资料', repoKind: 'cnb', repoUrl: 'https://cnb.cool/o/b.git', repoBranch: 'main', siteUrl: 'https://b.example.com', testUrl: 'https://test.b.example.com', deployTargets: [{ transport: 'ssh', alias: 'my' }], createdAt: 0, updatedAt: 0 },
+    { id: 'cccccccc-3333', name: '丙', path: 'D:\\其他\\c', machinePaths: {}, description: '', repoKind: 'none', repoUrl: '', repoBranch: '', siteUrl: '', testUrl: '', deployTargets: [], createdAt: 0, updatedAt: 0 },
+  ]
+  const under = projectsUnderCwd('D:\\项目', entries as never)
+  assert.deepEqual(under.map((entry) => entry.name), ['甲', '乙'], '只列 cwd 之下的登记项目（父目录边界不能串到 D:\\其他）')
+
+  const overview = renderProjectOverview('D:\\项目', under)
+  assert.match(overview, /工作区项目索引/u)
+  assert.match(overview, /id:aaaaaaaa/u, '索引必须带短码')
+  assert.match(overview, /待补:★仓库地址\/★线上地址\/★发布服务器/u, '缺资料的项目要标缺口')
+  assert.match(overview, /乙/u)
+  assert.match(overview, /action=resolve/u, '必须告诉模型先 resolve 拿详情')
+  assert.match(overview, /action=update/u)
+  assert.ok(!overview.includes('丙'), '不在 cwd 之下的项目不得出现')
 })
 
 /** 规范文档必须与注入文案同口径（约束文档：冲突时以文档为准并同步修正注入）。 */

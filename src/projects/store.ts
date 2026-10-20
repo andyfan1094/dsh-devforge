@@ -147,6 +147,8 @@ export function listProjects(): ProjectEntry[] {
       repoUrl: typeof parsed.repoUrl === 'string' ? parsed.repoUrl : '',
       repoBranch: typeof parsed.repoBranch === 'string' ? parsed.repoBranch : '',
       siteUrl: typeof parsed.siteUrl === 'string' ? parsed.siteUrl : '',
+      // testUrl 曾被漏读：探测/面板写入库后读回恒为 undefined，界面永远显示「测试地址：未绑定」。
+      testUrl: typeof parsed.testUrl === 'string' ? parsed.testUrl : '',
       deployTargets: Array.isArray(parsed.deployTargets) ? parsed.deployTargets as DeployTarget[] : [],
       deployCommand: typeof parsed.deployCommand === 'string' ? parsed.deployCommand : undefined,
       lastCommitAt: typeof parsed.lastCommitAt === 'number' ? parsed.lastCommitAt : undefined,
@@ -229,6 +231,169 @@ export function appendProjectFact(id: string, text: string, source: 'agent' | 'u
   const next = [...facts, { text: trimmed, at: Date.now(), source }].slice(-PROJECT_FACTS_LIMIT)
   saveProject({ id, facts: next })
   return { ok: true, message: '已记录项目事实（' + existing.name + '，共 ' + next.length + ' 条）：' + trimmed }
+}
+
+/** 可被工具/面板更新的结构化字段（update 动作的载荷形状）。 */
+export interface ProjectFieldPatch {
+  name?: string
+  description?: string
+  repoUrl?: string
+  repoBranch?: string
+  siteUrl?: string
+  testUrl?: string
+  deployTargets?: Array<DeployTarget | string>
+  deployCommand?: string
+}
+
+/** 字段中文名（工具消息、项目卡与缺失清单共用一份，避免各处措辞漂移）。 */
+export const PROJECT_FIELD_LABELS = {
+  name: '项目名',
+  description: '项目描述',
+  repoUrl: '仓库地址',
+  repoBranch: '分支',
+  siteUrl: '线上地址',
+  testUrl: '测试地址',
+  deployTargets: '发布服务器',
+  deployCommand: '发布命令',
+} as const
+
+export type ProjectFieldKey = keyof typeof PROJECT_FIELD_LABELS
+
+/** 项目资料缺口（core=交付必需，optional=有则更好）。 */
+export interface ProjectMissingField {
+  key: ProjectFieldKey
+  label: string
+  level: 'core' | 'optional'
+}
+
+/**
+ * 列出项目仍有空白的结构化字段。
+ * 目的：让项目卡与工具输出能明确指出「还缺什么、用什么动作补」，
+ * 而不是只渲染已有字段、让模型以为资料已完整（0.65.0 前正是这个断点）。
+ */
+export function projectMissingFields(entry: ProjectEntry): ProjectMissingField[] {
+  const missing: ProjectMissingField[] = []
+  if (entry.repoUrl.trim() === '') missing.push({ key: 'repoUrl', label: PROJECT_FIELD_LABELS.repoUrl, level: 'core' })
+  if (entry.siteUrl.trim() === '') missing.push({ key: 'siteUrl', label: PROJECT_FIELD_LABELS.siteUrl, level: 'core' })
+  if (entry.deployTargets.length === 0) missing.push({ key: 'deployTargets', label: PROJECT_FIELD_LABELS.deployTargets, level: 'core' })
+  if ((entry.testUrl ?? '').trim() === '') missing.push({ key: 'testUrl', label: PROJECT_FIELD_LABELS.testUrl, level: 'optional' })
+  if (entry.description.trim() === '') missing.push({ key: 'description', label: PROJECT_FIELD_LABELS.description, level: 'optional' })
+  return missing
+}
+
+/** 地址字段归一化：空串=清空，非空必须是 http(s) 完整地址（去掉末尾斜杠）。 */
+function normalizeHttpUrl(value: string): { ok: true; value: string } | { ok: false; error: string } {
+  const trimmed = value.trim()
+  if (trimmed === '') return { ok: true, value: '' }
+  if (!/^https?:\/\/[^\s/]+/iu.test(trimmed)) {
+    return { ok: false, error: '必须是 http(s):// 开头的完整地址；要清空该字段请传空字符串' }
+  }
+  return { ok: true, value: trimmed.replace(/\/+$/u, '') }
+}
+
+/** 发布服务器入参归一化：支持 "ssh:my"、"winrm:13@D:\\WWW\\x" 简写与 {transport,alias,remotePath} 对象。 */
+export function normalizeDeployTargetInput(value: unknown): { ok: true; targets: DeployTarget[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) return { ok: false, error: 'deployTargets 必须是数组，元素形如 "ssh:my" 或 {transport:"ssh",alias:"my",remotePath:"/opt/x"}' }
+  const targets: DeployTarget[] = []
+  for (const item of value) {
+    if (typeof item === 'string') {
+      const match = item.trim().match(/^(ssh|winrm)\s*[:：]\s*([^\s@]+)(?:@(\S+))?$/iu)
+      if (match === null) {
+        return { ok: false, error: '发布服务器字符串必须是 "ssh:别名" / "winrm:别名"（可加 @远程路径），收到：' + item }
+      }
+      const target: DeployTarget = { transport: match[1].toLowerCase() as 'ssh' | 'winrm', alias: match[2] }
+      const remotePath = match[3]?.trim() ?? ''
+      if (remotePath !== '') target.remotePath = remotePath
+      targets.push(target)
+      continue
+    }
+    if (typeof item === 'object' && item !== null) {
+      const record = item as Record<string, unknown>
+      if (record.transport !== 'ssh' && record.transport !== 'winrm') return { ok: false, error: '发布服务器 transport 只能是 ssh 或 winrm' }
+      if (typeof record.alias !== 'string' || record.alias.trim() === '') return { ok: false, error: '发布服务器 alias 必须是非空字符串' }
+      const target: DeployTarget = { transport: record.transport, alias: record.alias.trim() }
+      if (typeof record.remotePath === 'string' && record.remotePath.trim() !== '') target.remotePath = record.remotePath.trim()
+      targets.push(target)
+      continue
+    }
+    return { ok: false, error: '发布服务器元素必须是字符串或对象' }
+  }
+  const seen = new Set<string>()
+  return {
+    ok: true,
+    targets: targets.filter((target) => {
+      const key = target.transport + ':' + target.alias
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }),
+  }
+}
+
+/** 更新结果（changed 为实际发生变化的字段中文名）。 */
+export interface ProjectUpdateResult {
+  ok: boolean
+  message: string
+  changed?: string[]
+}
+
+/**
+ * 部分更新项目的结构化字段（devforge_project 的 update 动作）：
+ * - 传了才改，未传一律保留旧值；空字符串表示清空该字段（地址/命令/分支）；
+ * - 只记录真正发生变化的字段，未变化的重复写入不产生噪音；
+ * - 地址必须 http(s) 完整地址；发布服务器支持 "ssh:my" 简写。
+ */
+export function updateProjectFields(id: string, patch: ProjectFieldPatch): ProjectUpdateResult {
+  const existing = getProject(id)
+  if (existing === undefined) return { ok: false, message: '项目不存在：' + id }
+  const next: Record<string, unknown> = { id }
+  const changed: string[] = []
+
+  if (patch.name !== undefined) {
+    const name = patch.name.trim()
+    if (name === '') return { ok: false, message: 'name 不能为空字符串（项目名不允许清空）' }
+    if (name !== existing.name) { next.name = name; changed.push(PROJECT_FIELD_LABELS.name) }
+  }
+  if (patch.description !== undefined) {
+    const description = patch.description.trim()
+    if (description !== existing.description) { next.description = description; changed.push(PROJECT_FIELD_LABELS.description) }
+  }
+  if (patch.repoBranch !== undefined) {
+    const repoBranch = patch.repoBranch.trim()
+    if (repoBranch !== existing.repoBranch) { next.repoBranch = repoBranch; changed.push(PROJECT_FIELD_LABELS.repoBranch) }
+  }
+  if (patch.repoUrl !== undefined) {
+    const repoUrl = patch.repoUrl.trim()
+    if (repoUrl !== existing.repoUrl) {
+      next.repoUrl = repoUrl
+      next.repoKind = repoUrl === '' ? 'none' : classifyRepoKind(repoUrl)
+      changed.push(PROJECT_FIELD_LABELS.repoUrl)
+    }
+  }
+  for (const key of ['siteUrl', 'testUrl'] as const) {
+    const raw = patch[key]
+    if (raw === undefined) continue
+    const normalized = normalizeHttpUrl(raw)
+    if (!normalized.ok) return { ok: false, message: PROJECT_FIELD_LABELS[key] + ' 不合法：' + normalized.error }
+    if (normalized.value !== (existing[key] ?? '')) { next[key] = normalized.value; changed.push(PROJECT_FIELD_LABELS[key]) }
+  }
+  if (patch.deployTargets !== undefined) {
+    const normalized = normalizeDeployTargetInput(patch.deployTargets)
+    if (!normalized.ok) return { ok: false, message: normalized.error }
+    const before = JSON.stringify(existing.deployTargets)
+    const after = JSON.stringify(normalized.targets)
+    if (before !== after) { next.deployTargets = normalized.targets; changed.push(PROJECT_FIELD_LABELS.deployTargets) }
+  }
+  if (patch.deployCommand !== undefined) {
+    const deployCommand = patch.deployCommand.trim()
+    if (deployCommand !== (existing.deployCommand ?? '')) { next.deployCommand = deployCommand; changed.push(PROJECT_FIELD_LABELS.deployCommand) }
+  }
+
+  if (changed.length === 0) {
+    return { ok: true, message: '项目「' + existing.name + '」资料无变化（提交的值与现值一致）。', changed: [] }
+  }
+  saveProject(next)
+  return { ok: true, message: '已更新项目「' + existing.name + '」：' + changed.join('、') + '。', changed }
 }
 
 /** 删除一条项目事实（按文本匹配；面板维护用）。 */

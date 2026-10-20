@@ -13,6 +13,8 @@
  *   agent.session.events 扫描工具调用（防御式读取，形状未知时优雅降级为仅摘要层）。
  */
 
+import { projectMissingFields } from './projects/store.ts'
+
 /** 注入级别：常驻摘要 / 约束全文。 */
 export type ConstraintLevel = 'summary' | 'full'
 
@@ -226,6 +228,11 @@ export interface InjectionDataSources {
   getConventionText?: () => string
   /** 项目关联知识手册索引（按登记项目过滤；返回注入文本块，空串=无关联手册）。 */
   getProjectKnowledge?: (entry: import('./projects/protocol.ts').ProjectEntry) => string
+  /**
+   * 会话命中单个项目时请求一次自动资料补全（0.65.0）。
+   * 插件侧自行节流并异步执行（只读探测），绝不阻塞系统提示装配；实现方必须吞掉全部异常。
+   */
+  requestAutoFill?: (entry: import('./projects/protocol.ts').ProjectEntry) => void
 }
 
 /**
@@ -247,23 +254,53 @@ export function matchProjectByCwd(cwd: string | undefined, entries: readonly imp
   return undefined
 }
 
-/** 渲染当前项目卡（未登记描述等字段留空省略；事实最近在前最多 10 条）。 */
+/**
+ * 项目资料维护规则（0.65.0 新增）。
+ * 动机：项目卡此前只渲染已有字段，缺失字段完全不出现，模型以为资料齐全；
+ * 且工具没有写结构化字段的动作，模型只能把地址写进 fact——登记表因此长期「未绑定」。
+ * 这里把「缺什么、用什么动作补、什么时候必须回填」写成可执行指令。
+ */
+const PROJECT_MAINTENANCE_RULES = [
+  '- 资料维护（必须遵守）：',
+  '  · 上面列出的「资料缺口」是本会话要主动补的：缺地址/发布服务器时先 devforge_project action=probe（id 用短码，只读探测）自动绑定；探测不到再向辉哥确认后 action=update 回填。',
+  '  · 会话中确认的线上/测试地址、发布服务器、发布命令、仓库、关键路径、数据库位置，必须用 action=update 写入结构化字段（不要只记 fact，更不要只记在对话里）；细节补充用 action=note。',
+  '  · 禁止编造地址或服务器别名：没有探测证据或辉哥明确确认就不填。',
+  '  · 部署 / 上线 / 换端口 / 新增站点完成后，必须 action=update 回填线上地址、测试地址与发布服务器（含远程路径），否则下次会话又是「未绑定」。',
+]
+
+/** 项目短码（前 8 位）。 */
+function projectShortId(id: string): string {
+  return id.slice(0, 8)
+}
+
+/** 缺失字段紧凑描述：core 标 ★。 */
+function renderMissingInline(entry: import('./projects/protocol.ts').ProjectEntry): string {
+  const missing = projectMissingFields(entry)
+  return missing.map((field) => (field.level === 'core' ? '★' : '') + field.label).join('/')
+}
+
+/** 渲染当前项目卡（含资料缺口与主动补全指令；事实最近在前最多 10 条）。 */
 export function renderProjectCard(entry: import('./projects/protocol.ts').ProjectEntry): string {
   const lines = [
     '【当前项目（dsh-devforge 注入）】',
-    '- 项目：' + entry.name,
+    '- 项目：' + entry.name + '（id 短码 ' + projectShortId(entry.id) + '，note/update/probe 都用它定位）',
   ]
   if (entry.description.trim() !== '') lines.push('- 描述：' + entry.description)
   if (entry.repoUrl !== '') {
     lines.push('- 仓库：' + entry.repoKind + ' ' + entry.repoUrl + (entry.repoBranch !== '' ? ' · ' + entry.repoBranch : ''))
   }
   if (entry.siteUrl.trim() !== '') lines.push('- 线上地址：' + entry.siteUrl)
+  if ((entry.testUrl ?? '').trim() !== '') lines.push('- 测试地址：' + entry.testUrl)
   if (entry.deployTargets.length > 0) {
-    lines.push('- 发布服务器（部署目标，非源码）：' + entry.deployTargets.map((target) => target.transport + ':' + target.alias).join('、'))
+    lines.push('- 发布服务器（部署目标，非源码）：' + entry.deployTargets.map((target) => target.transport + ':' + target.alias + (target.remotePath !== undefined ? '（' + target.remotePath + '）' : '')).join('、'))
   }
+  if ((entry.deployCommand ?? '') !== '') lines.push('- 发布命令：' + entry.deployCommand)
   lines.push('- 源码位置：本机 ' + entry.path + '（唯一可编辑源；服务器只做部署，禁止在服务器上改源码或直接改线上文件）')
   lines.push('- 本机路径：' + entry.path)
   if (entry.pathExists === false) lines.push('- ⚠️ 本机路径失效：可能从其他电脑同步而来，请向用户确认本机实际路径（可重定位）。')
+  const missing = renderMissingInline(entry)
+  if (missing !== '') lines.push('- 资料缺口（★=交付必需，·=有则更好）：' + missing + ' —— 见下方维护规则，本会话要主动补齐')
+  lines.push(...PROJECT_MAINTENANCE_RULES)
   const facts = entry.facts ?? []
   if (facts.length > 0) {
     lines.push('- 项目事实（此前会话沉淀，最近在前）：')
@@ -271,7 +308,52 @@ export function renderProjectCard(entry: import('./projects/protocol.ts').Projec
       lines.push('  · ' + new Date(fact.at).toISOString().slice(0, 10) + '：' + fact.text)
     }
   }
-  lines.push('- 项目记忆习惯：会话中确认的项目事实（数据库位置、发布方式、关键路径、部署流程、踩过的坑），随时用 devforge_project 工具的 note 动作记录（action=note + id 或 keyword + text）；下次会话自动带上，项目越用越懂。')
+  lines.push('- 项目记忆习惯：会话中确认的项目事实（数据库位置、发布方式、关键路径、部署流程、踩过的坑），随时用 devforge_project 工具的 note 动作记录（action=note + id 或 keyword + text）；结构化资料用 update 动作。下次会话自动带上，项目越用越懂。')
+  return lines.join('\n')
+}
+
+/** cwd 之下（不含自身）的登记项目：用于「从工作区根开会话」时给出项目索引。 */
+export function projectsUnderCwd(cwd: string | undefined, entries: readonly import('./projects/protocol.ts').ProjectEntry[]): import('./projects/protocol.ts').ProjectEntry[] {
+  const base = normalizePath(cwd ?? '')
+  if (base === undefined) return []
+  return entries
+    .filter((entry) => {
+      const target = normalizePath(entry.path)
+      return target !== undefined && target !== base && target.startsWith(base + '/')
+    })
+    .sort((a, b) => (normalizePath(a.path) ?? '').localeCompare(normalizePath(b.path) ?? ''))
+}
+
+/** 总览最多列出的项目数（超出折叠，避免工作区根会话被项目清单刷屏）。 */
+const PROJECT_OVERVIEW_LIMIT = 24
+
+/**
+ * 渲染「工作区项目索引」：cwd 未命中单个项目、但位于多个登记项目的父目录时注入。
+ * 解决 0.65.0 前的断点：辉哥常在 D:\项目 根目录开会话，项目卡不注入，
+ * 模型对全部项目资料一无所知，自然永远不会去更新它们。
+ */
+export function renderProjectOverview(cwd: string, entries: readonly import('./projects/protocol.ts').ProjectEntry[]): string {
+  if (entries.length === 0) return ''
+  const shown = entries.slice(0, PROJECT_OVERVIEW_LIMIT)
+  const lines = [
+    '【工作区项目索引（dsh-devforge 注入）】',
+    '当前目录 ' + cwd + ' 下有 ' + String(entries.length) + ' 个登记项目。涉及其中任何一个时，先用 devforge_project action=resolve（keyword=项目名）拿详情（含 id 短码与资料缺口），不要凭印象猜路径或地址。',
+    ...shown.map((entry) => {
+      const parts = [
+        entry.name,
+        'id:' + projectShortId(entry.id),
+        '路径:' + entry.path,
+        '仓库:' + (entry.repoUrl !== '' ? entry.repoKind : '未关联'),
+        '线上:' + (entry.siteUrl !== '' ? entry.siteUrl : '—'),
+      ]
+      if (entry.deployTargets.length > 0) parts.push('发布:' + entry.deployTargets.map((target) => target.transport + ':' + target.alias).join(','))
+      const missing = renderMissingInline(entry)
+      if (missing !== '') parts.push('待补:' + missing)
+      return '- ' + parts.join(' | ')
+    }),
+    ...(entries.length > shown.length ? ['- …另有 ' + String(entries.length - shown.length) + ' 个项目未展开，用 action=list 查看全部。'] : []),
+    ...PROJECT_MAINTENANCE_RULES,
+  ]
   return lines.join('\n')
 }
 
@@ -395,10 +477,19 @@ export class ConstraintInjectionService {
       const project = matchProjectByCwd(cwd, this.sources.getProjects?.() ?? [])
       if (project !== undefined) {
         blocks.push(renderProjectCard(project))
+        // 自动资料补全（0.65.0）：会话确实落在该项目时，异步探测一次并把地址/发布服务器写回，
+        // 不依赖模型自觉。实现方必须自行节流与吞异常（见 index.ts 的 requestProjectAutoFill）。
+        try { this.sources.requestAutoFill?.(project) } catch { /* 自动补全失败不影响注入 */ }
         // 项目知识手册索引（0.34.19）：解决「知识在库里但模型不知道去查」的召回断线——
         // 每次会话必达告知本项目有哪些权威手册，关键操作前先读再干，禁止凭印象自由发挥。
         const knowledge = this.sources.getProjectKnowledge?.(project) ?? ''
         if (knowledge !== '') blocks.push(knowledge)
+      } else if (cwd !== undefined) {
+        // 工作区根（如 D:\项目）开会话时项目卡不命中：改注入项目索引，
+        // 否则模型对全部登记项目一无所知，永远不会主动更新它们的资料。
+        const under = projectsUnderCwd(cwd, this.sources.getProjects?.() ?? [])
+        const overview = under.length > 0 ? renderProjectOverview(cwd, under) : ''
+        if (overview !== '') blocks.push(overview)
       }
     } catch { /* 数据源异常时仅注入约束本体 */ }
     return blocks.filter((block) => block !== '').join('\n\n')

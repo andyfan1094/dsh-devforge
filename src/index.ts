@@ -111,7 +111,7 @@ import { runProjectDeploy } from './projects/deploy.ts'
 import { runProjectProbe } from './projects/probe.ts'
 import { devforgeWorkspaceTool } from './workspace/tools.ts'
 import { getConvention, renderConventionSummary } from './workspace/convention.ts'
-import { listProjects } from './projects/store.ts'
+import { listProjects, projectMissingFields } from './projects/store.ts'
 import { startProjectAutoRegister } from './projects/auto-register.ts'
 import type { ProjectEntry } from './projects/protocol.ts'
 import { CONSTRAINTS_DEFAULT_PATHS, ConstraintInjectionService, type ConstraintsConfig } from './constraints.ts'
@@ -1144,6 +1144,32 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     ]
     return runProjectProbe(entry, { ssh: remoteActivation?.sshEngine, winrm: remoteActivation?.winrmEngine }, allHosts)
   }
+  // 项目资料自动补全（0.65.0）：会话落在某项目时，由插件自己完成「缺什么就探测什么」，
+  // 不再依赖模型主动。三道闸门：只补缺交付必需字段（或测试地址）的项目、同一项目 6 小时一次、
+  // 全局同时只跑一个探测；全程异步只读，失败只留日志，绝不影响系统提示装配。
+  const projectAutoFillAt = new Map<string, number>()
+  let projectAutoFillRunning = false
+  const requestProjectAutoFill = (entry: ProjectEntry): void => {
+    if (projectAutoFillRunning) return
+    const missing = projectMissingFields(entry)
+    if (!missing.some((field) => field.level === 'core' || field.key === 'testUrl')) return
+    const last = projectAutoFillAt.get(entry.id) ?? 0
+    if (Date.now() - last < 6 * 60 * 60 * 1000) return
+    projectAutoFillAt.set(entry.id, Date.now())
+    projectAutoFillRunning = true
+    void (async () => {
+      try {
+        const result = await runProjectProbeById(entry.id)
+        if (result.ok && result.applied.length > 0) {
+          ctx.logger.info('[dsh-devforge] 项目资料自动补全（%s）：%s', entry.name, result.applied.join('；'))
+        }
+      } catch (error) {
+        ctx.logger.debug?.('[dsh-devforge] 项目资料自动补全跳过（%s）：%s', entry.name, error instanceof Error ? error.message : String(error))
+      } finally {
+        projectAutoFillRunning = false
+      }
+    })()
+  }
   // 截图小工具（Windows）：快捷键由原生助手用 RegisterHotKey 独占注册，与 Web 层无关；
   // 这里只负责装载能力与路由。是否真正常驻由 store.db 的 win-snip.settings.enabled 决定
   // （默认关，用户面板开启后才拉起），避免装完就抢走 Alt+A。
@@ -1369,6 +1395,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
         // 项目知识手册索引缓存（0.34.19）：RAG 文档名 + 记忆条目首行标题，按项目名或记忆作用域匹配。
         let knowledgeCache: { at: number; value: Array<{ title: string; description: string; projectId?: string }> } | undefined
         const sources = {
+          requestAutoFill: requestProjectAutoFill,
           getProjects: () => {
             if (projectsCache === undefined || Date.now() - projectsCache.at > 5000) {
               projectsCache = { at: Date.now(), value: listProjects() }
