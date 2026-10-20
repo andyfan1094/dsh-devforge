@@ -25,6 +25,8 @@ declare module '@deepseek-ai/dsh-llm/message' {
     'dsh-devforge': { kind: 'dsh-devforge' } & ContextFormed
     /** 天工造梦内置的飞书桥（与本体区分生产者身份，便于按来源展示）。 */
     'dsh-feishu': { kind: 'dsh-feishu' } & ContextFormed
+    /** 天工造梦内置的企业微信智能机器人桥。 */
+    'dsh-wecom': { kind: 'dsh-wecom' } & ContextFormed
   }
 }
 
@@ -33,6 +35,9 @@ export const DEVFORGE_SOURCE_KIND = 'dsh-devforge' as const
 
 /** 天工造梦内置飞书桥的消息生产者标识。 */
 export const FEISHU_SOURCE_KIND = 'dsh-feishu' as const
+
+/** 天工造梦内置企微桥的消息生产者标识。 */
+export const WECOM_SOURCE_KIND = 'dsh-wecom' as const
 
 /** 迁移前缀：宿主把 v3 的 `{ kind: 'plugin', plugin: X }` 重写成 `plugin:X` 形态的 kind。 */
 const LEGACY_PLUGIN_PREFIX = 'plugin:'
@@ -66,7 +71,7 @@ export function isDevforgeSource(source: unknown): boolean {
   return sourceBelongsTo(source, [DEVFORGE_SOURCE_KIND])
 }
 
-/** 是否为本插件**家族**（本体 + 内置飞书桥）产生的消息。 */
+/** 是否为本插件**家族**（本体 + 内置飞书桥/企微桥）产生的消息。 */
 export function isDevforgeFamilySource(source: unknown): boolean {
-  return sourceBelongsTo(source, [DEVFORGE_SOURCE_KIND, FEISHU_SOURCE_KIND])
+  return sourceBelongsTo(source, [DEVFORGE_SOURCE_KIND, FEISHU_SOURCE_KIND, WECOM_SOURCE_KIND])
 }

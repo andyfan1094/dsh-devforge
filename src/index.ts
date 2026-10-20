@@ -25,6 +25,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { DEFAULT_FORGE_AGENT_PRESET, ForgeEngine, type ForgeHostServices } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.ts'
+import { createWecomCapability, type WecomCapability, type WecomCapabilityConfig } from './wecom/index.mjs'
 import { sweepOnDesktopStartup } from './orphan-sweep.ts'
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
@@ -197,6 +198,8 @@ export interface Config {
   cnb?: CnbCapabilityConfig
   /** 飞书能力（兼容接管）子配置；bootstrap 字段与旧 dsh-feishu patch 行一致。 */
   feishu?: FeishuCapabilityConfig
+  /** 企业微信智能机器人长连接桥子配置（凭据落 ~/.dsh/dsh-wecom.json 或环境变量）。 */
+  wecom?: WecomCapabilityConfig
   /** 智谱 Coding Plan 官方模型与额度能力。 */
   zhipu?: ZhipuCapabilityConfig & { mcpTools?: boolean }
   /** MiniMax Coding Plan 官方模型与工具能力。 */
@@ -249,6 +252,15 @@ export const Config = z.object({
   feishu: z.object({
     enabled: z.boolean().default(true).description('飞书能力（兼容接管）开关；启用前必须停用旧 dsh-feishu'),
   }).description('飞书配置'),
+  wecom: z.object({
+    enabled: z.boolean().default(false).description('企业微信智能机器人长连接桥（默认关；需先填 BotID/Secret）'),
+    botId: z.string().default('').description('智能机器人 BotID'),
+    secret: z.string().default('').description('长连接 Secret（建议改用环境变量 DSH_WECOM_SECRET）'),
+    cwd: z.string().default('').description('企微会话使用的 Agent 工作目录，空表示宿主当前目录'),
+    agentPreset: z.string().default('cordis').description('企微会话使用的 Agent 预设'),
+    botName: z.string().default('').description('机器人显示名，用于剥离群聊 @ 前缀'),
+    welcomeText: z.string().default('').description('进入会话时的欢迎语，空表示不发'),
+  }).description('企业微信智能机器人配置'),
   zhipu: z.object({
     enabled: z.boolean().default(true).description('智谱 Coding Plan 模型与官方额度看板'),
     apiKeyEnv: z.string().default('ZAI_CODING_CN_API_KEY').description('智谱受管凭据引用'),
@@ -488,6 +500,15 @@ export function apply(ctx: Context, config?: Config): void {
       github: { enabled: value.github?.enabled ?? false },
       cnb: { enabled: value.cnb?.enabled ?? false },
       feishu: { enabled: value.feishu?.enabled ?? false },
+      wecom: {
+        enabled: value.wecom?.enabled === true,
+        botId: value.wecom?.botId ?? '',
+        secret: value.wecom?.secret ?? '',
+        cwd: value.wecom?.cwd ?? '',
+        agentPreset: value.wecom?.agentPreset ?? 'cordis',
+        botName: value.wecom?.botName ?? '',
+        welcomeText: value.wecom?.welcomeText ?? '',
+      },
       zhipu: {
         enabled: value.zhipu?.enabled ?? true,
         apiKeyEnv: value.zhipu?.apiKeyEnv ?? 'ZAI_CODING_CN_API_KEY',
@@ -1299,6 +1320,9 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
   let disposeGithub: (() => void) | undefined
   let disposeCnb: (() => void) | undefined
   let disposeFeishu: (() => void) | undefined
+  /** 企微桥实例句柄：dispose 是异步的（等 WebSocket close），此处只触发不 await。 */
+  let wecomCapability: WecomCapability | undefined
+  let disposeWecom: (() => void) | undefined
   let disposeZhipuMcp: (() => void) | undefined
   let disposeMiniMaxTools: (() => void) | undefined
   let disposeMiniMaxHubTools: (() => void) | undefined
@@ -1330,6 +1354,7 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     disposeGithub?.(); disposeGithub = undefined
     disposeCnb?.(); disposeCnb = undefined
     disposeFeishu?.(); disposeFeishu = undefined
+    disposeWecom?.(); disposeWecom = undefined; wecomCapability = undefined
     disposeZhipuMcp?.(); disposeZhipuMcp = undefined
     disposeMiniMaxTools?.(); disposeMiniMaxTools = undefined
     disposeMiniMaxHubTools?.(); disposeMiniMaxHubTools = undefined
@@ -1575,6 +1600,12 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
     safeActivate(ctx, 'CNB 托管', () => { disposeCnb = activateCnb(ctx, resolve().cnb ?? { enabled: false }).dispose })
     // 飞书兼容接管：单 WSClient 铁律——切换期间旧 dsh-feishu 必须先禁用再启用这里。
     safeActivate(ctx, '飞书桥', () => { disposeFeishu = activateFeishu(ctx, resolve().feishu ?? { enabled: false }).dispose })
+    // 企业微信智能机器人长连接桥：默认关；新实例会在建连前先等旧实例关干净，避免互踢。
+    safeActivate(ctx, '企微桥', () => {
+      const capability = createWecomCapability(ctx, resolve().wecom ?? { enabled: false })
+      wecomCapability = capability
+      disposeWecom = () => { void capability.dispose() }
+    })
     // MCP 服务器接入：按 store.db 配置对齐官方桥 fiber（关闭即全部卸载；reconcile 幂等，热更新不打断在用连接）。
     safeActivate(ctx, 'MCP 服务器接入', () => { mcpService.activateHandle() })
     // 凭据双向同步（0.39.0）：启动对账（反向补缺 + 正向镜像）+ 15 分钟定时巡检（正向）；
