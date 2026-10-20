@@ -25,6 +25,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { DEFAULT_FORGE_AGENT_PRESET, ForgeEngine, type ForgeHostServices } from './forge.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { activateFeishu, type FeishuCapabilityConfig } from './feishu/activate.ts'
+import { sweepOnDesktopStartup } from './orphan-sweep.ts'
 import { activateGithub, type GithubCapabilityConfig } from './github/activate.ts'
 import { activateCnb, type CnbCapabilityConfig } from './cnb/activate.ts'
 import { activateRemote, type RemoteConfig } from './remote/activate.ts'
@@ -553,6 +554,18 @@ export function apply(ctx: Context, config?: Config): void {
   // 设计资产库（0.42.0）：与规范库同构，但内容面向视觉与体验（craft/standards/skills/systems/templates/prompts）。
   const design = new DesignStore(join(pluginRoot, 'design'))
   const restartManager = new DshWebRestartManager()
+  // 0.64.3 孤儿宿主守卫：桌面壳退出/重启会把它拉起的宿主留在后台（父进程已消失），
+  // 旧宿主继续持有飞书长连接 → 同一 appId 多路长连接抢事件、设置只在一个实例生效。
+  // 在飞书桥激活前先清掉上一代遗留的孤儿；父进程存活的实例一律不碰（见 orphan-sweep.ts）。
+  try {
+    const swept = sweepOnDesktopStartup()
+    if (swept.killed.length > 0) console.info('[dsh-devforge] 已清理孤儿宿主：' + swept.killed.join('、'))
+    // 30 秒后再扫一次：覆盖「旧宿主在壳退出之后才变成孤儿」的时间窗。
+    const followUpSweep = setTimeout(() => { sweepOnDesktopStartup() }, 30_000)
+    followUpSweep.unref?.()
+  } catch (error) {
+    console.warn('[dsh-devforge] 孤儿宿主守卫失败：' + (error instanceof Error ? error.message : String(error)))
+  }
   // 第一阶段只读桥接旧 SSH/WinRM store；不搬运、不回写任何凭据。
   const remoteRegistry = new LegacyRemoteRegistry()
   const engine = new ForgeEngine(ctx, ctx as unknown as ForgeHostServices, standards, join(pluginRoot, '.devforge'), () => resolve().forgeAgentPreset)
