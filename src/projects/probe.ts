@@ -58,22 +58,37 @@ function escapeRegExp(value: string): string {
 }
 
 /**
+ * 工作区布局通用段黑名单（0.65.0）：项目常放在 D:\项目\projects\dsh-plugins\<项目> 这类
+ * 分层目录里，路径段 projects/plugins 对每台机器都成立、毫无辨识度，一旦当关键词就会
+ * 把服务器上所有同类目录误判成该项目站点（实测 dsh-devforge 探测出关键词
+ * 「devforge/projects/plugins」，正是这个噪音）。这里只保留真正有项目特征的词。
+ */
+const PROJECT_KEYWORD_STOPWORDS = new Set([
+  'projects', 'project', 'plugins', 'plugin', 'packages', 'package',
+  'workspace', 'workspaces', 'build', 'dist', 'source', 'sources',
+])
+
+/**
  * 从项目名与路径目录名提取探测关键词：
- * 小写分词取长度 ≥5 的段（过短易误报），并对常见技术后缀做归并
+ * 小写分词取长度 ≥5 的段（过短易误报），剔除工作区布局通用段，并对常见技术后缀做归并
  * （modagentai-site → modagentai；HecnyExpressWebApi → hecnyexpress + hecny）。
+ * 项目名本身必定参与（路径段可被黑名单滤掉，但项目名不滤——项目名是强特征）。
  */
 export function projectKeywords(entry: Pick<ProjectEntry, 'name' | 'path'>): string[] {
   const raw = [entry.name, ...entry.path.split(/[\\/]+/)].filter((part) => part !== '')
   const tokens = new Set<string>()
   for (const part of raw) {
+    const fromName = part === entry.name
     for (const token of part.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/)) {
-      if (token.length >= 5) tokens.add(token)
+      if (token.length < 5) continue
+      if (!fromName && PROJECT_KEYWORD_STOPWORDS.has(token)) continue
+      tokens.add(token)
     }
   }
   // 归并去后缀：x-site / x-web / x-api / x-server / x-app / x-gateway / x-service → x
   for (const token of [...tokens]) {
     const stem = token.replace(/(site|web|api|server|app|gateway|service|backend|frontend)$/, '')
-    if (stem.length >= 5) tokens.add(stem)
+    if (stem.length >= 5 && !PROJECT_KEYWORD_STOPWORDS.has(stem)) tokens.add(stem)
   }
   return [...tokens].sort((a, b) => b.length - a.length).slice(0, 6)
 }

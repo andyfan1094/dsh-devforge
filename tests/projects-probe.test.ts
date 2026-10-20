@@ -41,6 +41,18 @@ test('关键词提取：目录名与项目名分词、去常见后缀、短词�
   assert.ok(projectKeywords(mkEntry({ name: 'ab', path: '/x/ab' })).length === 0, '过短词全滤掉')
 })
 
+/**
+ * 0.65.0：项目普遍放在 D:\项目\projects\dsh-plugins\<项目> 下，路径段 projects/plugins
+ * 对每台机器都成立。实测它们被当成关键词后，探测结果只会是噪音（真实服务器上
+ * 任意同名目录都会命中），必须从关键词里剔除。
+ */
+test('关键词剔除工作区布局通用段：projects/plugins 不进关键词，项目名强特征保留', () => {
+  const words = projectKeywords(mkEntry({ name: 'dsh-devforge', path: 'D:\\项目\\projects\\dsh-plugins\\dsh-devforge' }))
+  assert.ok(words.includes('devforge'), '项目名核心词必须保留，实际：' + words.join(','))
+  assert.ok(!words.includes('projects'), 'projects 是布局通用段，不得当关键词')
+  assert.ok(!words.includes('plugins'), 'plugins 是布局通用段，不得当关键词')
+})
+
 test('探测命令组装：ssh 带 grep 模式与正则转义，winrm 固定 IIS 清单', () => {
   const cmd = buildSshProbeCommand(['modagentai', 'my.app'])
   assert.ok(cmd.includes('modagentai|my\\.app'), '正则特殊字符须转义：' + cmd)
