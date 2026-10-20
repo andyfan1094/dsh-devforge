@@ -205,10 +205,8 @@ export function apply(ctx, config = {}) {
   const conversations = new Map()
   const creating = new Map()
   const welcomedChats = new Set()
-  // 运行中收到的普通消息排队（0.66.1）：飞书卡片原地更新不产生新消息也不提醒，
-  // 旧行为把它们 steer 进当前轮写回同一张卡，手机端表现为「发了消息看不到回复」，
-  // 且 steer 落空时整轮输出没有卡片承载。排队后每条消息在上一轮结束时逐条
-  // followup，各开一张新卡片。
+  // 插话失败降级队列（0.66.2）：运行中的消息默认直接插话并即时翻页，只有 steer
+  // 抛错（会话已销毁/状态已变）时才落到这里排队，等空闲边界再 followup，绝不静默丢消息。
   const pendingTurns = createPendingTurns()
   let configurationRevision = 0
   let reconfigurationRequests = 0
@@ -847,7 +845,7 @@ export function apply(ctx, config = {}) {
     return ['独立飞书会话：' + entry.sessionId, '状态：' + String(entry.agent.status ?? 'unknown'), '工作目录：' + resolved.cwd, '实际配置：' + actual].join('\n')
   }
 
-  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会排队，本轮结束后按顺序逐条处理，每条都会单独开一张新卡片回复（发 ! 开头可立即插入当前任务）；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会��任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会立即插入当前任务，并在对话最下方刷一张新卡片继续回答；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会��任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
 
   /** 给指定路由键对应的飞书会话发互动卡片；失败抛错由调用方兜底为文字回复。 */
   const sendCardTo = (key, card) => {
@@ -1032,16 +1030,29 @@ export function apply(ctx, config = {}) {
     const agent = conversation.agent
     const wasRunning = agent.status === 'running'
     const isSteer = envelope.text.startsWith('!')
-    // 投递决策见 inbound-strategy.mjs：空闲 followup；运行中「!」显式插话才 steer；
-    // 运行中的普通消息排队，等本轮结束后逐条 followup，各开一张新卡片（见 0.66.1 说明）。
+    // 辉哥定案（0.66.2）：不要排队，运行中的消息直接插话，并在插话后立刻给卡片
+    // 刷一张最新的到对话最下方——飞书会把新卡片当新消息推送，手机端一眼能看到。
+    // 策略见 inbound-strategy.mjs。
     const delivery = inboundDeliveryOf({ wasRunning, isSteer })
     const reuseLiveCard = delivery === DELIVERY.STEER && tracker.hasActive(agent.id)
-    const ticket = delivery === DELIVERY.QUEUE || reuseLiveCard ? null : tracker.register(agent.id, key, {
+    const ticket = reuseLiveCard ? null : tracker.register(agent.id, key, {
       waitForTurnStart: false,
       provider: conversation.selection.provider,
       model: conversation.selection.model,
       effort: conversation.selection.reasoningEffort ?? '',
     })
+    // 插话兜底：steer 若恰好落在 turn/end 边界，当前 entry 会被收尾移除，随后被
+    // steer 唤醒的新轮次就没有卡片承载。预注册一张「等待下一轮」的卡片接住它；
+    // 若插话被当前轮吸收，这张卡不会被提升（无输出不开卡），由 tracker 的
+    // 过期清理回收。
+    const interjectFallback = reuseLiveCard
+      ? tracker.register(agent.id, key, {
+        waitForTurnStart: true,
+        provider: conversation.selection.provider,
+        model: conversation.selection.model,
+        effort: conversation.selection.reasoningEffort ?? '',
+      })
+      : null
     try {
       const text = isSteer ? envelope.text.slice(1).trim() : envelope.text
       if (text === '') { ticket?.cancel(); return }
@@ -1066,22 +1077,25 @@ export function apply(ctx, config = {}) {
       }
       ensureSessionTitle(conversation, hasImages && imageText === '' ? '图片' : imageText, bot)
       // 通道提示只在开启新一轮的消息上注入；插话发生在当前轮次内部，轮次首条消息
-      // 已带提示，重复注入只会增加噪音。排队消息在真正开轮时（flushPendingTurns）注入。
-      if (delivery === DELIVERY.QUEUE) {
-        const slot = pendingTurns.push(key, { text: promptText, imageRefs, receivedAt: Date.now() })
-        await replyFrom(slot.position === 1
-          ? '已收到，当前任务还在处理中；这条消息已排队（第 1 位），本轮结束后立即处理，回复会发在新卡片上。'
-          : '又收到一条，已排队（第 ' + slot.position + ' 位）；本轮结束后按顺序处理，每条都会单独回复。')
-        // 入队瞬间 agent 可能刚好空闲（状态与消息到达交错）：补一次推进，避免等不到边界事件。
-        schedulePendingFlush(conversation.sessionId)
-        return
-      }
+      // 已带提示，重复注入只会增加噪音。降级排队消息在真正开轮时（flushPendingTurns）注入。
       const hintText = delivery === DELIVERY.STEER ? promptText : withFeishuChannelHint(promptText)
       const payload = buildUserMessage(hintText, imageRefs)
       if (delivery === DELIVERY.STEER) {
-        agent.steer(payload)
-        // 插话被吸收进当前轮时，续写会落回同一张卡（飞书不提醒）；翻页让回答出现在新卡片上。
-        if (reuseLiveCard) void tracker.rolloverChat(key, { status: '已收到你的插话，继续处理' })
+        try {
+          agent.steer(payload)
+        } catch (steerError) {
+          // 插话失败（会话已销毁/状态已变）时降级排队，绝不静默丢消息。
+          interjectFallback?.cancel()
+          ticket?.cancel()
+          const detail = steerError instanceof Error ? steerError.message : String(steerError)
+          warn('Feishu interject steer failed; queueing as fallback: ' + detail)
+          const slot = pendingTurns.push(key, { text: promptText, imageRefs, receivedAt: Date.now() })
+          await replyFrom('当前任务状态已变化，这条消息已排队（第 ' + slot.position + ' 位），本轮结束后立即处理。')
+          schedulePendingFlush(conversation.sessionId)
+          return
+        }
+        // 辉哥定案：插话后立刻翻页——旧卡就地收尾，续写落到对话最下方的新卡片上。
+        if (reuseLiveCard) void tracker.rolloverChat(key, { status: '已收到你的新消息，继续处理' })
       } else {
         agent.followup(payload)
       }
@@ -1095,7 +1109,7 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /** 把某个会话排队中的消息在下一个空闲边界投递出去（队首一条，一次一个轮次）。 */
+  /** 插话失败降级队列的推进：空闲边界把队首一条 followup 出去（一次一个轮次）。 */
   const flushPendingTurns = async (sessionId) => {
     const sid = String(sessionId ?? '')
     if (sid === '') return false

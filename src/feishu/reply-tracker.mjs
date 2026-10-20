@@ -174,6 +174,9 @@ export function createReplyTracker({
   }
 
   const STREAM_ROLLOVER_MS = 9 * 60 * 1000
+  // 插话兜底注册的「等待下一轮」卡片若始终没被提升（插话被当前轮吸收），就成了
+  // 僵尸 entry：不开卡、也不该无限累积。超过该阈值在 turn/end 时回收。
+  const STALE_WAITING_MS = 10 * 60 * 1000
 
   const rolloverStream = async (entry, renderOptions = {}) => {
     const previous = entry.stream
@@ -189,6 +192,7 @@ export function createReplyTracker({
     entry.streamPromise = null
     entry.streamFailed = false
     entry.cardStartedAt = now()
+    entry.rolledOver = true
   }
 
   const updateStream = (entry) => {
@@ -248,6 +252,9 @@ export function createReplyTracker({
   }
 
   const finalizeEntry = (entry, text) => {
+    // 翻页后本轮没有任何新输出：旧卡已就地收尾（例如「已收到你的新消息，继续处理」），
+    // 再开一张空卡只会制造噪音。返回 false 表示没有可呈现的新内容。
+    if (entry.rolledOver === true && entry.stream === undefined && String(text ?? '').trim() === '') return Promise.resolve(false)
     const snapshot = snapshotFor(entry, { final: true, text })
     return enqueue(entry, async () => {
       const stream = await streamFor(entry, snapshot)
@@ -312,6 +319,7 @@ export function createReplyTracker({
         stream: undefined,
         streamPromise: null,
         streamFailed: false,
+        rolledOver: false,
         heartbeat: null,
         heartbeatRunning: false,
         chain: Promise.resolve(),
@@ -456,9 +464,17 @@ export function createReplyTracker({
       if (index < 0) return false
       const [entry] = queue.splice(index, 1)
       stopHeartbeat(entry)
+      // 回收从未被提升的插话兜底 entry（详见 STALE_WAITING_MS 注释）。
+      const staleBefore = now() - STALE_WAITING_MS
+      for (let cursor = queue.length - 1; cursor >= 0; cursor -= 1) {
+        const waiting = queue[cursor]
+        if (waiting.ready === false && waiting.registeredAt < staleBefore) queue.splice(cursor, 1)
+      }
       if (queue.length === 0) pending.delete(sid)
       const reason = event?.data?.reason?.kind
       const answer = lastAssistantText(session) || entry.answer
+      // 翻页后本轮没有任何新输出（例如插话后立即收尾）：旧卡已就地收尾，不再开空卡。
+      if (entry.rolledOver === true && entry.stream === undefined && answer === '') return true
       const fallback = reason === 'error'
         ? 'Agent 执行失败，请查看 DSH Web 日志。'
         : reason === 'aborted' || reason === 'interrupted'
