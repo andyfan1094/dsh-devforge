@@ -8,7 +8,9 @@ import { homedir } from 'node:os'
 import { basename, dirname, extname, join, resolve as resolvePath } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createFeishuClient, buildImagePrompt, withFeishuChannelHint } from './feishu-client.mjs'
+import { DELIVERY, inboundDeliveryOf } from './inbound-strategy.mjs'
 import { allowedPathOf, sendFile, sendImage, updateCard } from './outbound.mjs'
+import { createPendingTurns } from './pending-turns.mjs'
 import { buildUserMessage, createReplyTracker } from './reply-tracker.mjs'
 import { createQuestionAnswerer } from './questions.mjs'
 import { legacySelectionIdentity, selectionIdentity, withGeneration } from './session-identity.mjs'
@@ -203,6 +205,11 @@ export function apply(ctx, config = {}) {
   const conversations = new Map()
   const creating = new Map()
   const welcomedChats = new Set()
+  // 运行中收到的普通消息排队（0.66.1）：飞书卡片原地更新不产生新消息也不提醒，
+  // 旧行为把它们 steer 进当前轮写回同一张卡，手机端表现为「发了消息看不到回复」，
+  // 且 steer 落空时整轮输出没有卡片承载。排队后每条消息在上一轮结束时逐条
+  // followup，各开一张新卡片。
+  const pendingTurns = createPendingTurns()
   let configurationRevision = 0
   let reconfigurationRequests = 0
   let updateChain = Promise.resolve()
@@ -840,7 +847,7 @@ export function apply(ctx, config = {}) {
     return ['独立飞书会话：' + entry.sessionId, '状态：' + String(entry.agent.status ?? 'unknown'), '工作目录：' + resolved.cwd, '实际配置：' + actual].join('\n')
   }
 
-  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会直接插入当前任务继续处理；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会��任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
+  const HELP_FALLBACK_TEXT = '直接发消息即可进入独立飞书会话；回答进行中再发消息会排队，本轮结束后按顺序逐条处理，每条都会单独开一张新卡片回复（发 ! 开头可立即插入当前任务）；/new 开一个不带历史的新会话；/status 查看本飞书会话；/model 切换模型与思考强度；/stop 停止本会��任务（排队中的消息一并取消）；/help 发送互动帮助卡片；生成文件或图片后可直接让 Agent 调用 dsh_feishu_send_file / dsh_feishu_send_image 发给你。'
 
   /** 给指定路由键对应的飞书会话发互动卡片；失败抛错由调用方兜底为文字回复。 */
   const sendCardTo = (key, card) => {
@@ -893,7 +900,10 @@ export function apply(ctx, config = {}) {
         // catch 块暴毙后 finally 把初始值 null 写进 turn/end，GUI 前端读 reason.kind 直接崩溃。
         entry.agent.cancel({ kind: 'user' })
         void tracker.cancelAgent(entry.agent.id, entry.agent.session)
-        return running ? '已停止当前独立飞书会话的任务。' : '当前没有正在运行的飞书任务。'
+        // 排队消息随停止一起取消：否则空闲边界会把它们逐条投出去，用户以为「停止没生效」。
+        const dropped = pendingTurns.clear(convKeyOf(bot.id, envelope.chatId))
+        const suffix = dropped > 0 ? '（已取消排队中的 ' + dropped + ' 条消息）' : ''
+        return (running ? '已停止当前独立飞书会话的任务。' : '当前没有正在运行的飞书任务。') + suffix
       }
       catch { return '停止失败，请稍后重试。' }
     }
@@ -929,7 +939,9 @@ export function apply(ctx, config = {}) {
       // 同上：cause 必须是 { kind: 'user' }，字符串 cause 会产生 reason:null 的毒 turn/end 事件。
       entry.agent.cancel({ kind: 'user' })
       void tracker.cancelAgent(entry.agent.id, entry.agent.session)
-      await sendByKey(key, running ? '已停止当前任务，正在收尾回复卡片。' : '当前没有正在运行的飞书任务。')
+      const dropped = pendingTurns.clear(key)
+      const suffix = dropped > 0 ? '（已取消排队中的 ' + dropped + ' 条消息）' : ''
+      await sendByKey(key, (running ? '已停止当前任务，正在收尾回复卡片。' : '当前没有正在运行的飞书任务。') + suffix)
     } catch {
       await sendByKey(key, '停止失败，请稍后重试。')
     }
@@ -1020,11 +1032,11 @@ export function apply(ctx, config = {}) {
     const agent = conversation.agent
     const wasRunning = agent.status === 'running'
     const isSteer = envelope.text.startsWith('!')
-    // Mid-run messages are inserted into the current turn instead of queueing
-    // a follow-up turn; they share the already-streaming reply card.
-    const deliverAsSteer = wasRunning
-    const reuseLiveCard = deliverAsSteer && tracker.hasActive(agent.id)
-    const ticket = reuseLiveCard ? null : tracker.register(agent.id, key, {
+    // 投递决策见 inbound-strategy.mjs：空闲 followup；运行中「!」显式插话才 steer；
+    // 运行中的普通消息排队，等本轮结束后逐条 followup，各开一张新卡片（见 0.66.1 说明）。
+    const delivery = inboundDeliveryOf({ wasRunning, isSteer })
+    const reuseLiveCard = delivery === DELIVERY.STEER && tracker.hasActive(agent.id)
+    const ticket = delivery === DELIVERY.QUEUE || reuseLiveCard ? null : tracker.register(agent.id, key, {
       waitForTurnStart: false,
       provider: conversation.selection.provider,
       model: conversation.selection.model,
@@ -1053,11 +1065,26 @@ export function apply(ctx, config = {}) {
         }
       }
       ensureSessionTitle(conversation, hasImages && imageText === '' ? '图片' : imageText, bot)
-      // 通道提示只在开启新一轮的消息上注入；运行中插队（含「!」显式插话）发生在
-      // 当前轮次内部，轮次首条消息已带提示，重复注入只会增加噪音。
-      const hintText = (deliverAsSteer || isSteer) ? promptText : withFeishuChannelHint(promptText)
+      // 通道提示只在开启新一轮的消息上注入；插话发生在当前轮次内部，轮次首条消息
+      // 已带提示，重复注入只会增加噪音。排队消息在真正开轮时（flushPendingTurns）注入。
+      if (delivery === DELIVERY.QUEUE) {
+        const slot = pendingTurns.push(key, { text: promptText, imageRefs, receivedAt: Date.now() })
+        await replyFrom(slot.position === 1
+          ? '已收到，当前任务还在处理中；这条消息已排队（第 1 位），本轮结束后立即处理，回复会发在新卡片上。'
+          : '又收到一条，已排队（第 ' + slot.position + ' 位）；本轮结束后按顺序处理，每条都会单独回复。')
+        // 入队瞬间 agent 可能刚好空闲（状态与消息到达交错）：补一次推进，避免等不到边界事件。
+        schedulePendingFlush(conversation.sessionId)
+        return
+      }
+      const hintText = delivery === DELIVERY.STEER ? promptText : withFeishuChannelHint(promptText)
       const payload = buildUserMessage(hintText, imageRefs)
-      if (deliverAsSteer || isSteer) agent.steer(payload); else agent.followup(payload)
+      if (delivery === DELIVERY.STEER) {
+        agent.steer(payload)
+        // 插话被吸收进当前轮时，续写会落回同一张卡（飞书不提醒）；翻页让回答出现在新卡片上。
+        if (reuseLiveCard) void tracker.rolloverChat(key, { status: '已收到你的插话，继续处理' })
+      } else {
+        agent.followup(payload)
+      }
       if (resolved.ack) {
         const reacted = typeof channel.react === 'function' ? await channel.react(envelope.messageId, resolved.ackReaction) : false
         if (!reacted) await replyFrom('已收到，正在处理。')
@@ -1068,7 +1095,55 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /** 把某个会话排队中的消息在下一个空闲边界投递出去（队首一条，一次一个轮次）。 */
+  const flushPendingTurns = async (sessionId) => {
+    const sid = String(sessionId ?? '')
+    if (sid === '') return false
+    if (closing || reconfiguring) return false
+    let found = null
+    for (const [key, entry] of conversations) {
+      if (entry.sessionId === sid) { found = { key, entry }; break }
+    }
+    if (found === null) return false
+    const { key, entry } = found
+    if (pendingTurns.size(key) === 0) return false
+    // 还在跑就等下一个边界：插话/续跑都可能让 agent 保持 running。
+    if (entry.agent.status === 'running') return false
+    const item = pendingTurns.shift(key)
+    if (item === undefined) return false
+    const ticket = tracker.register(entry.agent.id, key, {
+      waitForTurnStart: false,
+      provider: entry.selection.provider,
+      model: entry.selection.model,
+      effort: entry.selection.reasoningEffort ?? '',
+    })
+    try {
+      // 排队消息是新轮次的首条消息：通道提示在这里补上，模型才知道自己仍在飞书通道。
+      entry.agent.followup(buildUserMessage(withFeishuChannelHint(item.text), item.imageRefs))
+      info('queued Feishu message delivered key=' + key + ' remaining=' + pendingTurns.size(key))
+      return true
+    } catch (error) {
+      ticket.cancel()
+      pendingTurns.unshift(key, item)
+      const detail = error instanceof Error ? error.message : String(error)
+      warn('queued Feishu message delivery failed key=' + key + ': ' + detail)
+      await sendByKey(key, '排队消息投递失败：' + detail + '；本条会保留并在下次空闲时重试，也可以直接重发。')
+      return false
+    }
+  }
+
+  /** 延后一次队列推进：状态切换与事件派发之间存在短窗口，留一拍再判断。 */
+  const schedulePendingFlush = (sessionId, delayMs = 0) => {
+    try {
+      const timer = setTimeout(() => { void flushPendingTurns(sessionId) }, Math.max(0, delayMs))
+      timer?.unref?.()
+    } catch {}
+  }
+
   async function stopBridgeAndSessions() {
+    // 桥重建（配置更新）会让会话句柄全部失效：排队消息无法再投递，清空并留痕。
+    const queued = pendingTurns.clearAll()
+    if (queued > 0) warn('bridge restart; dropped ' + queued + ' queued Feishu message(s)')
     tracker.dispose()
     // 桥重启（配置更新）只取消挂起提问，绝不能 dispose 答题器：startBridge 只重建 bridge、
     // 不重建答题器实例，一旦 dispose 就永久 closed，之后所有卡片提问都在入口被拒
@@ -1458,8 +1533,21 @@ export function apply(ctx, config = {}) {
     if (entries.length === 0) return null
     return entries.find((entry) => entry.agent.status === 'running') ?? entries[entries.length - 1]
   }
-  try { disposers.push(ctx.on('session/event', (session, event) => { void tracker.observeSessionEvent(session, event) })) } catch {}
+  try {
+    disposers.push(ctx.on('session/event', (session, event) => {
+      void tracker.observeSessionEvent(session, event)
+      // turn/end 兜底推进排队消息：状态切换与事件派发之间有短窗口，留一拍再判断。
+      if (event?.type === 'turn/end') schedulePendingFlush(session?.id, 200)
+    }))
+  } catch {}
   try { disposers.push(ctx.on('session/event', (session, event) => { void completionNotifier.observe(session, event) })) } catch {}
+  // 排队消息主推进通道：agent 真正空闲是唯一不会与 running 状态打架的边界。
+  try {
+    disposers.push(ctx.on('agent/status', (payload) => {
+      if (payload?.status !== 'idle') return
+      schedulePendingFlush(payload?.agent?.session?.id ?? payload?.agent?.id, 0)
+    }))
+  } catch {}
   // 飞书答题器挂上宿主 user-questions waterfall：飞书会话由卡片认领，其余放行。
   // 注册失败绝不静默：0.38.4 的教训是 try/catch 空吞让整条链路无声失效，
   // 这里失败要同时进 ctx 日志与答题器落盘日志，认领全 miss 时可据此归因。
@@ -1480,7 +1568,12 @@ export function apply(ctx, config = {}) {
     disposers.push(ctx.on('agent/disposed', (payload) => {
       const agent = payload?.agent ?? payload
       const sid = String(agent?.id ?? agent?.session?.id ?? '')
-      for (const [chatId, entry] of conversations) if (entry.agent.id === sid) conversations.delete(chatId)
+      for (const [chatId, entry] of conversations) {
+        if (entry.agent.id !== sid) continue
+        conversations.delete(chatId)
+        const dropped = pendingTurns.clear(chatId)
+        if (dropped > 0) warn('agent disposed; dropped ' + dropped + ' queued Feishu message(s) key=' + chatId)
+      }
       questionAnswerer.forgetAgent(sid)
       void tracker.observeAgentDisposed(sid)
       void completionNotifier.observeAgentDisposed(agent?.session ?? sid)
