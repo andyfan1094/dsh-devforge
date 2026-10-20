@@ -537,6 +537,60 @@ function Invoke-SnipToolbarAction {
 
 <#
 .SYNOPSIS
+    给遮罩窗体挂键盘绑定：Esc / 撤销重做 / 复制保存 / 工具字母快捷键。
+.DESCRIPTION
+    单独成函数有两个原因：
+      1. 快捷键是真实交互里最容易被改坏的一环，独立后才能被自测脚本直接覆盖
+         （0.65.1 之前悬停提示里写了 R/E/A/P/T/M/N，代码里其实没有实现）。
+      2. 处理器里一律通过 $script:SnipEditor 取状态：事件回调执行时函数局部变量可能已经取不到
+         （2026-10-18 钉图窗崩溃就是这个原因），所以这里不依赖外部局部变量。
+#>
+function Add-SnipKeyBindings {
+    param([Parameter(Mandatory = $true)]$Form)
+    $Form.Add_KeyDown({
+            param($sender, $e)
+            $s = $script:SnipEditor
+            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+                if ($null -eq $s.Pending) { $sender.Close() }
+                return
+            }
+            if ($null -ne $s.Pending) { return }
+            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::Z) {
+                Invoke-SnipToolbarAction -State $s -Id 'undo'
+                return
+            }
+            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::Y) {
+                Invoke-SnipToolbarAction -State $s -Id 'redo'
+                return
+            }
+            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::C) {
+                Invoke-SnipToolbarAction -State $s -Id 'copy'
+                return
+            }
+            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::S) {
+                Invoke-SnipToolbarAction -State $s -Id 'save'
+                return
+            }
+            # 工具字母快捷键：工具条改成纯图标后，键盘切换比找按钮更快（提示里承诺的字母就是这套）。
+            if (-not $e.Control -and -not $e.Alt -and $s.Phase -eq 'edit') {
+                $toolKeys = @{
+                    'R' = 'tool-rect'; 'E' = 'tool-ellipse'; 'A' = 'tool-arrow'; 'P' = 'tool-pen'
+                    'T' = 'tool-text'; 'M' = 'tool-mosaic'; 'N' = 'tool-number'
+                }
+                $pressed = $e.KeyCode.ToString()
+                if ($toolKeys.ContainsKey($pressed)) {
+                    Invoke-SnipToolbarAction -State $s -Id $toolKeys[$pressed]
+                    return
+                }
+            }
+            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter -and $s.Phase -eq 'edit') {
+                Invoke-SnipToolbarAction -State $s -Id 'copy'
+            }
+        })
+}
+
+<#
+.SYNOPSIS
     显示框选遮罩并进入就地编辑，阻塞到用户结束。
 .PARAMETER Bitmap
     整屏截图（虚拟桌面）。
@@ -837,46 +891,7 @@ function Show-SnipOverlay {
             }
         })
 
-    $form.Add_KeyDown({
-            param($sender, $e)
-            $s = $script:SnipEditor
-            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
-                if ($null -eq $s.Pending) { $sender.Close() }
-                return
-            }
-            if ($null -ne $s.Pending) { return }
-            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::Z) {
-                Invoke-SnipToolbarAction -State $s -Id 'undo'
-                return
-            }
-            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::Y) {
-                Invoke-SnipToolbarAction -State $s -Id 'redo'
-                return
-            }
-            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::C) {
-                Invoke-SnipToolbarAction -State $s -Id 'copy'
-                return
-            }
-            if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::S) {
-                Invoke-SnipToolbarAction -State $s -Id 'save'
-                return
-            }
-            # 工具字母快捷键：工具条改成纯图标后，键盘切换比找按钮更快（提示里承诺的字母就是这套）。
-            if (-not $e.Control -and -not $e.Alt -and $s.Phase -eq 'edit') {
-                $toolKeys = @{
-                    'R' = 'tool-rect'; 'E' = 'tool-ellipse'; 'A' = 'tool-arrow'; 'P' = 'tool-pen'
-                    'T' = 'tool-text'; 'M' = 'tool-mosaic'; 'N' = 'tool-number'
-                }
-                $pressed = $e.KeyCode.ToString()
-                if ($toolKeys.ContainsKey($pressed)) {
-                    Invoke-SnipToolbarAction -State $s -Id $toolKeys[$pressed]
-                    return
-                }
-            }
-            if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter -and $s.Phase -eq 'edit') {
-                Invoke-SnipToolbarAction -State $s -Id 'copy'
-            }
-        })
+    Add-SnipKeyBindings -Form $form
 
     # 识别/翻译结果异步取回（定时器轮询响应文件，避免嵌套消息循环）
     $timer = New-Object System.Windows.Forms.Timer
