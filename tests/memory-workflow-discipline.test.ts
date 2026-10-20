@@ -24,6 +24,19 @@ test('记忆工作流：闭环三步齐全（先查记忆 → 再核事实 → �
   assert.ok(MEMORY_WORKFLOW_TEXT.includes('可变事实'))
 })
 
+test('记忆工作流：看不懂用户的问题必须先查记忆再继续（0.64.4）', () => {
+  // 辉哥诉求：模型看不懂用户的问题时，不许猜着答、也不许空手反问，必须先看记忆相关内容。
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('看不懂用户的问题时'))
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('禁止猜着回答'))
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('空手反问'))
+  // 检索记忆是强制前置动作，且要写明兜底：确实查不到才向用户澄清。
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('检索不到相关记忆'))
+  // 顺序门禁：这条必须排在「再核事实」之前——先查记忆，再动实时工具。
+  const gateIndex = MEMORY_WORKFLOW_TEXT.indexOf('看不懂用户的问题时')
+  const verifyIndex = MEMORY_WORKFLOW_TEXT.indexOf('再核事实')
+  assert.ok(gateIndex >= 0 && verifyIndex >= 0 && gateIndex < verifyIndex, '看不懂门禁必须位于再核事实之前')
+})
+
 test('记忆工作流：只承诺插件真实具备的工具能力', () => {
   assert.ok(MEMORY_WORKFLOW_TEXT.includes('rag_search'))
   assert.ok(MEMORY_WORKFLOW_TEXT.includes('memory_manage'))
