@@ -24,17 +24,27 @@ test('记忆工作流：闭环三步齐全（先查记忆 → 再核事实 → �
   assert.ok(MEMORY_WORKFLOW_TEXT.includes('可变事实'))
 })
 
-test('记忆工作流：看不懂用户的问题必须先查记忆再继续（0.64.4）', () => {
-  // 辉哥诉求：模型看不懂用户的问题时，不许猜着答、也不许空手反问，必须先看记忆相关内容。
-  assert.ok(MEMORY_WORKFLOW_TEXT.includes('看不懂用户的问题时'))
-  assert.ok(MEMORY_WORKFLOW_TEXT.includes('禁止猜着回答'))
+test('记忆工作流：必须先了解记忆，再来看问题（0.66.0 强化）', () => {
+  // 辉哥诉求（2026-10-20）：不是「看不懂才查」，而是任何问题到手都先把记忆里的
+  // 相关内容了解清楚——这件事是什么、词指哪件事、既有约定与上次怎么做的——了解好了
+  // 再回头理解并回答；只搜标题不算了解，命中后必须读正文。
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('先了解记忆'))
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('了解好了'))
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('读明白'))
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('读正文'))
+  // 兜底口径不许退化成「问用户」：确实查不到才澄清。
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('禁止没翻记忆就猜着回答'))
   assert.ok(MEMORY_WORKFLOW_TEXT.includes('空手反问'))
-  // 检索记忆是强制前置动作，且要写明兜底：确实查不到才向用户澄清。
-  assert.ok(MEMORY_WORKFLOW_TEXT.includes('检索不到相关记忆'))
-  // 顺序门禁：这条必须排在「再核事实」之前——先查记忆，再动实时工具。
-  const gateIndex = MEMORY_WORKFLOW_TEXT.indexOf('看不懂用户的问题时')
+  assert.ok(MEMORY_WORKFLOW_TEXT.includes('检索不到任何相关记忆'))
+  // 旧弱表述必须被替换掉：只写「检索相关记忆，带着命中的依据再继续」，
+  // 模型会扫一眼标题就当已了解，这正是被否掉的口径。
+  assert.ok(!MEMORY_WORKFLOW_TEXT.includes('带着命中的依据再继续'))
+  // 顺序门禁：「先了解记忆」必须排在「再来看问题」之前，且整条位于「再核事实」之前。
+  const learnIndex = MEMORY_WORKFLOW_TEXT.indexOf('先了解记忆')
+  const lookIndex = MEMORY_WORKFLOW_TEXT.indexOf('再来看问题')
   const verifyIndex = MEMORY_WORKFLOW_TEXT.indexOf('再核事实')
-  assert.ok(gateIndex >= 0 && verifyIndex >= 0 && gateIndex < verifyIndex, '看不懂门禁必须位于再核事实之前')
+  assert.ok(learnIndex >= 0 && lookIndex >= 0 && learnIndex < lookIndex, '先了解记忆必须位于再来看问题之前')
+  assert.ok(learnIndex < verifyIndex, '了解记忆门禁必须位于再核事实之前')
 })
 
 test('记忆工作流：只承诺插件真实具备的工具能力', () => {
