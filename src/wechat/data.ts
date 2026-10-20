@@ -43,12 +43,31 @@ export interface WechatSnapshot {
   ok: boolean
   dbPath: string
   dbExists: boolean
+  /** wx-auto 控制台（127.0.0.1:8765）是否在运行。 */
+  online: boolean
+  /** 微信进程主 PID（探活失败时为空）。 */
+  wechatPid: number | null
   error?: string
   stats: { contacts: number; groups: number; messages: number }
   contacts: WechatContact[]
   groups: WechatGroup[]
   messages: WechatMessage[]
   sessions: Array<{ session: string; name: string; lastText: string; lastTs: number; isGroup: boolean }>
+}
+
+/** wx-auto 控制台地址。 */
+export const WX_AUTO_API = 'http://127.0.0.1:8765'
+
+/** 探测 wx-auto 控制台是否在跑；超时按离线处理。 */
+export async function probeWxAuto(): Promise<{ online: boolean; wechatPid: number | null }> {
+  try {
+    const res = await fetch(WX_AUTO_API + '/api/status', { signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return { online: false, wechatPid: null }
+    const data = (await res.json()) as { online?: boolean; pid?: number | null }
+    return { online: Boolean(data.online), wechatPid: typeof data.pid === 'number' ? data.pid : null }
+  } catch {
+    return { online: false, wechatPid: null }
+  }
 }
 
 function resolveDbPath(dbPath?: string): string {
@@ -61,6 +80,8 @@ function emptySnapshot(dbPath: string, dbExists: boolean, error?: string): Wecha
     ok: false,
     dbPath,
     dbExists,
+    online: false,
+    wechatPid: null,
     error,
     stats: { contacts: 0, groups: 0, messages: 0 },
     contacts: [],
@@ -123,6 +144,8 @@ export function readWechatSnapshot(dbPath?: string, limit = 300): WechatSnapshot
       ok: true,
       dbPath: path,
       dbExists: true,
+      online: false,
+      wechatPid: null,
       stats: { contacts: contacts.length, groups: groups.length, messages: withNames.length },
       contacts,
       groups,

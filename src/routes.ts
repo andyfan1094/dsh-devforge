@@ -21,7 +21,7 @@ import { WORKSPACE_API, getConvention, saveConvention, validateConvention } from
 import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
-import { readWechatSnapshot } from './wechat/data.ts'
+import { probeWxAuto, readWechatSnapshot } from './wechat/data.ts'
 
 /** 插件版本号（供面板标题展示）。 */
 const PLUGIN_VERSION: string = (createRequire(import.meta.url)('../package.json') as { version?: string }).version ?? '0.0.0'
@@ -503,9 +503,37 @@ export function makeRoutes(
         if (!guard(req, res)) return
         if (req.method !== 'GET') { writeJson(res, 405, { ok: false, error: 'GET only' }); return }
         try {
-          writeJson(res, 200, { ok: true, snapshot: readWechatSnapshot() })
+          const probe = await probeWxAuto()
+          const snapshot = { ...readWechatSnapshot(), ...probe }
+          writeJson(res, 200, { ok: true, snapshot })
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      // 发送代理：面板与 wx-auto（127.0.0.1:8765）跨端口，这里同源转发。
+      kind: 'exact',
+      path: '/api/dsh-devforge/wechat/send',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'POST only' }); return }
+        const body = await readJsonBody(req)
+        if (!body || typeof body.text !== 'string' || body.text.trim() === '') {
+          writeJson(res, 400, { ok: false, error: 'text 必填' })
+          return
+        }
+        try {
+          const upstream = await fetch('http://127.0.0.1:8765/api/send', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: body.text, session: typeof body.session === 'string' ? body.session : '' }),
+            signal: AbortSignal.timeout(30_000),
+          })
+          const text = await upstream.text()
+          writeJson(res, upstream.status, { ok: upstream.ok, result: text })
+        } catch (error) {
+          writeJson(res, 502, { ok: false, error: 'wx-auto 控制台未运行或发送失败：' + (error instanceof Error ? error.message : String(error)) })
         }
       },
     },
