@@ -50,7 +50,9 @@ export class WecomClient {
     this.logger = options.logger ?? {}
     this.heartbeatMs = Number(options.heartbeatMs) > 0 ? Number(options.heartbeatMs) : HEARTBEAT_MS
     this.ackTimeoutMs = Number(options.ackTimeoutMs) > 0 ? Number(options.ackTimeoutMs) : ACK_TIMEOUT_MS
-    this.url = String(options.url ?? WECOM_WS_URL)
+    // 空串要回退官方地址：环境变量未设置时传进来的是空串，不能让 URL 变空。
+    const overrideUrl = String(options.url ?? '').trim()
+    this.url = overrideUrl === '' ? WECOM_WS_URL : overrideUrl
     this.WebSocketImpl = options.WebSocketImpl ?? null
 
     /** @type {any} 当前底层连接 */

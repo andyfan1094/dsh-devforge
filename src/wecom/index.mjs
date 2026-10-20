@@ -80,6 +80,8 @@ export function createWecomCapability(ctx, config = {}) {
       client = new WecomClient({
         botId: resolved.botId,
         secret: resolved.secret,
+        // 仅排障/暂存联调用：指向本地模拟服务端；生产不设该变量即走官方地址。
+        url: String(process.env.DSH_WECOM_WS_URL ?? '').trim(),
         logger: { info, warn, error: warn },
         onMessage: (body, reqId) => {
           // 白名单：配置了 allowUserIds 就只认列表内的成员，其余静默丢弃并留日志。
