@@ -174,12 +174,14 @@ export class WechatBot {
         cwd: 'D:/项目',
         agentOptions: {},
       })
-      this.pending.set(sessionId, { sessionId, target: msg.session, createdAt: Date.now() })
+      this.pending.set(sessionId, { sessionId, target: msg.sessionName || msg.session, createdAt: Date.now() })
       const prompt = msg.senderName !== '' ? `${msg.senderName} 说：${msg.text}` : msg.text
       handle.agent.followup(prompt)
       this.state.lastActivity = Date.now()
+      console.log('[wechat-bot] 已派活', sessionId, '-> 发送目标:', msg.sessionName || msg.session)
     } catch (error) {
       this.state.lastError = error instanceof Error ? error.message : String(error)
+      console.error('[wechat-bot] 派活失败:', this.state.lastError)
     }
   }
 
