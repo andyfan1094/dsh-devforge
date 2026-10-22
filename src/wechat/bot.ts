@@ -12,6 +12,19 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { appendFileSync } from 'node:fs'
+
+/** 诊断日志文件（桌面版看不到 stdout，落文件最可靠）。 */
+const LOG_FILE = 'D:/项目/tmp/wechat-bot.log'
+
+/** 写一行诊断日志；失败不影响主流程。 */
+function log(message: string): void {
+  try {
+    appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${message}\n`, 'utf-8')
+  } catch {
+    /* 忽略 */
+  }
+}
 
 /** 控制台地址。 */
 const WX_API = 'http://127.0.0.1:8765'
@@ -62,6 +75,8 @@ export class WechatBot {
   private offSession: (() => void) | undefined
   /** /api/messages 的增量游标。 */
   private cursor = 0
+  /** sessionId → 会话句柄（同 ID 不能重复 create，必须复用）。 */
+  private handles = new Map<string, { agent: { followup(text: string): void }; dispose(): void }>()
 
   constructor(ctx: Context) {
     this.ctx = ctx
@@ -81,6 +96,7 @@ export class WechatBot {
       this.onSessionEvent(session, event)
     })
     this.timer = setInterval(() => { void this.tick() }, POLL_MS)
+    log('bot.start: 已启用，轮询间隔 ' + POLL_MS + 'ms')
     void this.tick()
   }
 
@@ -110,6 +126,7 @@ export class WechatBot {
       const data = (await res.json()) as { total?: number; messages?: Array<Record<string, unknown>> }
       const list = Array.isArray(data.messages) ? data.messages : []
       if (typeof data.total === 'number') this.cursor = data.total
+      if (list.length > 0) log(`tick: 拉取 ${list.length} 条新消息（cursor=${this.cursor}）`)
       for (const raw of list) {
         const msg = this.normalize(raw)
         if (msg === null) continue
@@ -117,10 +134,12 @@ export class WechatBot {
         if (this.seen.has(key)) continue
         this.seen.add(key)
         if (!this.shouldReply(msg)) continue
+        log(`tick: 命中待回复 —— ${msg.sessionName}(${msg.session}) :: ${msg.text.slice(0, 40)}`)
         void this.reply(msg)
       }
     } catch (error) {
       this.state.lastError = error instanceof Error ? error.message : String(error)
+      log('tick 异常: ' + this.state.lastError)
     }
   }
 
@@ -158,30 +177,45 @@ export class WechatBot {
     return true
   }
 
-  /** 建会话 + 派活 + 等回复。 */
+  /** 建会话 + 派活 + 等回复。会话句柄按 sessionId 缓存复用（同 ID 不能重复 create）。 */
   private async reply(msg: BotMessage): Promise<void> {
     const agents = this.ctx.get('agents') as {
       create?: (options: Record<string, unknown>) => Promise<{ agent: { followup(text: string): void }; dispose(): void }>
+      resume?: (sessionId: string) => Promise<{ agent: { followup(text: string): void }; dispose(): void }>
     } | undefined
     if (!agents?.create) {
       this.state.lastError = '宿主未提供 agents 服务，无法回复'
+      log('reply: 宿主没有 agents.create')
       return
     }
     const sessionId = 'wechat-' + msg.sender.replace(/[^A-Za-z0-9_@.-]/g, '_')
     try {
-      const handle = await agents.create({
-        sessionId,
-        cwd: 'D:/项目',
-        agentOptions: {},
-      })
+      let handle = this.handles.get(sessionId)
+      if (handle === undefined) {
+        try {
+          handle = await agents.create({ sessionId, cwd: 'D:/项目', agentOptions: {} })
+          log(`reply: 新建会话 ${sessionId}`)
+        } catch (createError) {
+          // 会话已存在（上一轮建过/宿主里还活着）：尝试 resume 复用
+          const message = createError instanceof Error ? createError.message : String(createError)
+          if (message.includes('already exists') && agents.resume) {
+            handle = await agents.resume(sessionId)
+            log(`reply: 复用已有会话 ${sessionId}`)
+          } else {
+            throw createError
+          }
+        }
+        this.handles.set(sessionId, handle)
+      }
       this.pending.set(sessionId, { sessionId, target: msg.sessionName || msg.session, createdAt: Date.now() })
       const prompt = msg.senderName !== '' ? `${msg.senderName} 说：${msg.text}` : msg.text
       handle.agent.followup(prompt)
       this.state.lastActivity = Date.now()
-      console.log('[wechat-bot] 已派活', sessionId, '-> 发送目标:', msg.sessionName || msg.session)
+      log(`reply: 已派活 ${sessionId} -> 发送目标 ${msg.sessionName || msg.session}`)
     } catch (error) {
       this.state.lastError = error instanceof Error ? error.message : String(error)
       console.error('[wechat-bot] 派活失败:', this.state.lastError)
+      log('reply 派活失败: ' + this.state.lastError)
     }
   }
 
@@ -191,9 +225,11 @@ export class WechatBot {
     const info = session as { id?: unknown }
     const sessionId = typeof info?.id === 'string' ? info.id : ''
     const p = this.pending.get(sessionId)
+    // 只记我们派过活的会话，避免刷别的会话日志
     if (p === undefined) return
     if (Date.now() - p.createdAt > REPLY_TIMEOUT_MS) {
       this.pending.delete(sessionId)
+      log(`回复超时: ${sessionId}`)
       return
     }
     const data = event.data as { message?: { content?: unknown } } | undefined
@@ -205,6 +241,7 @@ export class WechatBot {
       .join('\n')
       .trim()
     if (text === '') return
+    log(`收到模型回复: ${sessionId} -> ${text.slice(0, 60)}`)
     this.pending.delete(sessionId)
     void this.send(p.target, text)
   }
@@ -212,20 +249,25 @@ export class WechatBot {
   /** 调 wx-auto 发回微信。 */
   private async send(target: string, text: string): Promise<void> {
     try {
+      log(`send: 发往 ${target} :: ${text.slice(0, 40)}`)
       const res = await fetch(WX_API + '/api/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text, session: target }),
         signal: AbortSignal.timeout(60_000),
       })
-      if (!res.ok) {
-        this.state.lastError = '发送失败：HTTP ' + res.status
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+      if (!res.ok || body.ok === false) {
+        this.state.lastError = '发送失败：' + (body.error ?? 'HTTP ' + res.status)
+        log('send 失败: ' + this.state.lastError)
         return
       }
       this.state.replied += 1
       this.state.lastActivity = Date.now()
+      log('send 成功，累计已回复 ' + this.state.replied)
     } catch (error) {
       this.state.lastError = error instanceof Error ? error.message : String(error)
+      log('send 异常: ' + this.state.lastError)
     }
   }
 }
