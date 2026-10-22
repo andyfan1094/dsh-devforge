@@ -28,6 +28,10 @@ export const DEFAULT_WIN_SNIP_SETTINGS: WinSnipSettings = {
   ocrModel: '',
   // 热键先弹功能选择框：默认开，保留"直达截图"作为可选项。
   hotkeyMenu: true,
+  // 选区翻译默认开：这是辉哥 2026-10-22 要的"选中文字按热键直接翻译"。
+  translateSelection: true,
+  // Ctrl+C 兜底默认开：微信、终端这类不给 UIA 选区的窗口只能靠它。
+  selectionCopyFallback: true,
   // 剪贴板历史默认记录：用户既然装了截图工具，复制内容能回溯是低风险的高价值能力。
   clipboardEnabled: true,
   clipboardDays: 15,
@@ -92,6 +96,8 @@ export function readWinSnipSettings(): WinSnipSettings {
     ocrModel: typeof stored.ocrModel === 'string' ? stored.ocrModel.trim().slice(0, 120) : DEFAULT_WIN_SNIP_SETTINGS.ocrModel,
     // 老库没有这三个字段：一律取默认（新功能默认开），不能当成"用户关了"。
     hotkeyMenu: stored.hotkeyMenu !== false,
+    translateSelection: stored.translateSelection !== false,
+    selectionCopyFallback: stored.selectionCopyFallback !== false,
     clipboardEnabled: stored.clipboardEnabled !== false,
     // 天数允许夹取：历史版本/手工改库给出的 0 或 999 都收敛到 1–90。
     clipboardDays: clampClipboardDays(stored.clipboardDays, DEFAULT_WIN_SNIP_SETTINGS.clipboardDays),
@@ -128,6 +134,8 @@ export function mergeWinSnipSettings(current: WinSnipSettings, patch: WinSnipSet
   }
   // 新开关与前两个布尔字段同语义：只接受真正的布尔值，脏值忽略并保留原值。
   if (typeof patch.hotkeyMenu === 'boolean') next.hotkeyMenu = patch.hotkeyMenu
+  if (typeof patch.translateSelection === 'boolean') next.translateSelection = patch.translateSelection
+  if (typeof patch.selectionCopyFallback === 'boolean') next.selectionCopyFallback = patch.selectionCopyFallback
   if (typeof patch.clipboardEnabled === 'boolean') next.clipboardEnabled = patch.clipboardEnabled
   if (patch.clipboardDays !== undefined) {
     // 越界夹取到 1–90（0→1、999→90）；非数字保持原值，别把 NaN 落库。

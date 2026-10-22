@@ -1,5 +1,5 @@
 /**
- * 截图小工具设置页：开关、热键、保存目录、模型通道与翻译方向。
+ * 「小工具」设置页（Windows 截图 + 剪贴板历史）：开关、热键、保存目录、模型通道与翻译方向。
  *
  * 交互约定：所有改动点一下即存（保存由 Host 落库并即时重启原生助手），
  * 不做"改完再点保存"，避免用户以为已经生效其实没生效。
@@ -134,9 +134,9 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       {/* 页头：标题 + 状态徽章同排。助手在不在跑是进页最该先知道的事实，
           放在这里就不必滚到页尾、也不必把开关和进程状态来回对照。 */}
       <div className={css['toolbar']}>
-        <strong className={css['panelTitle']}>截图小工具</strong>
+        <strong className={css['panelTitle']}>小工具</strong>
         <span className={css['badge']} data-status={running ? 'running' : 'idle'}>{running ? '运行中' : '未运行'}</span>
-        <span className={css['sectionHint']}>Windows 全局热键截图与标注</span>
+        <span className={css['sectionHint']}>Windows 全局热键截图与标注 · 剪贴板历史</span>
         {busyText !== '' && <span className={css['sectionHint']}>{busyText}</span>}
         <button type="button" className={css['ghostButton']} disabled={loading} onClick={() => { void refresh() }}>刷新</button>
         <button
@@ -338,6 +338,36 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
             {TARGETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
         </div>
+
+        {/* 选区翻译（0.67.0，辉哥 2026-10-22 需求）：选中文字按热键直接翻译。
+            两个开关叠在一起才有意义：关掉兜底时，UIA 读不到选区的窗口（微信/终端）会退回老行为。 */}
+        <div className={css['fieldActions']}>
+          <label className={css['checkLabel']}>
+            <input
+              type="checkbox"
+              checked={settings?.translateSelection === true}
+              disabled={busy !== '' || settings === null}
+              onChange={(event) => { save({ translateSelection: event.target.checked }) }}
+            />
+            选中文字后按热键直接翻译（没有选区时照旧弹选择框 / 截图）
+          </label>
+        </div>
+
+        <div className={css['fieldActions']}>
+          <label className={css['checkLabel']}>
+            <input
+              type="checkbox"
+              checked={settings?.selectionCopyFallback === true}
+              disabled={busy !== '' || settings === null}
+              onChange={(event) => { save({ selectionCopyFallback: event.target.checked }) }}
+            />
+            读不到系统选区时用 Ctrl+C 兜底
+          </label>
+          <span className={css['mutedText']}>
+            兜底会临时读写剪贴板取选中文字、取完还原原内容；资源管理器里选中文件时自动跳过，
+            以免把文件复制进剪贴板。关掉后只有系统能报告选区的窗口（浏览器 / Office / 多数编辑器）才生效。
+          </span>
+        </div>
       </div>
 
       {/* 卡片四 · 剪贴板历史：开关、保留天数与"存在哪/多少条/最后一条何时"同卡。
@@ -403,7 +433,7 @@ export function WinSnipTab({ api }: { api: DevforgeApi }): JSX.Element {
       <p className={css['subtleText']}>
         用法：按 {settings?.hotkey ?? 'Alt+A'} → 选择「截图」或「剪贴板」→
         截图走框选与标注（矩形/箭头/文字/马赛克，或「识别」「翻译」走模型视觉、「钉图」钉在最上层）；
-        剪贴板历史可搜索，回车复制回剪贴板，Delete 删除。
+        剪贴板历史可搜索，回车 / 双击 / 「复制」复制回剪贴板后窗口自动关闭，Delete 删除。
       </p>
     </section>
   )

@@ -199,3 +199,39 @@ test('识别结果按原排版返回：行数与列对齐都不被压平', async
   const result = await new WinSnipVision(ctx as never).run({ kind: 'ocr', imageBytes: new Uint8Array([1]) })
   assert.equal(result.text, layout, '空格与换行必须原样保留')
 })
+test('选区翻译：只发文字不发图片，原文原样回传、译文来自模型', async () => {
+  const { ctx, calls } = makeCtx({
+    selection: { provider: 'tiangong', model: 'm1' },
+    chunks: [
+      { type: 'text-delta', text: 'Hello world' },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ],
+  })
+  const result = await new WinSnipVision(ctx as never).translateText({ text: '你好，世界', targetLang: 'en' })
+
+  // 选区翻译不登记任何附件：这条路不该碰附件服务。
+  assert.equal(calls.saved.length, 0)
+  assert.equal(result.text, '你好，世界')
+  assert.equal(result.translation, 'Hello world')
+  assert.equal(result.model, 'm1')
+  const content = ((calls.stream[0]?.['messages'] as Array<Record<string, unknown>>)[0]?.['content']) as Array<Record<string, unknown>>
+  assert.equal(content.length, 2, '提示词与正文各占一条 text block')
+  assert.equal(content[0]?.['type'], 'text')
+  assert.equal(content[1]?.['type'], 'text')
+  assert.equal(content[1]?.['text'], '你好，世界')
+  assert.equal(String(content[0]?.['text']).includes('英文'), true, '提示词要带上目标语言')
+})
+
+test('选区翻译：空选区直接报错，不浪费一次模型调用', async () => {
+  const { ctx, calls } = makeCtx({ selection: { provider: 'tiangong', model: 'm1' } })
+  await assert.rejects(() => new WinSnipVision(ctx as never).translateText({ text: '   \n  ' }), /没有可翻译的文字/)
+  assert.equal(calls.stream.length, 0)
+})
+
+test('选区翻译：模型返回空内容时报可读错误，而不是给一个空结果窗', async () => {
+  const { ctx } = makeCtx({
+    selection: { provider: 'tiangong', model: 'm1' },
+    chunks: [{ type: 'finish', reason: { kind: 'stop' } }],
+  })
+  await assert.rejects(() => new WinSnipVision(ctx as never).translateText({ text: 'abc' }), /没有返回内容/)
+})

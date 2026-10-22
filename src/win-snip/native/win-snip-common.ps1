@@ -317,6 +317,42 @@ function New-SnipVisionRequest {
 
 <#
 .SYNOPSIS
+    提交一条"纯文本翻译"请求（鼠标选区翻译用）。
+.DESCRIPTION
+    与 New-SnipVisionRequest 的区别：不落任何图片，只有一段文字。
+    宿主按 kind=translateText 分流，走的是同一条 responses/<id>.json 回程，
+    所以等待与结果解析逻辑可以共用。
+.PARAMETER Text
+    待翻译文本（调用方已清洗并截断到 12000 字以内）。
+.PARAMETER TargetLang
+    翻译目标语言；留空表示由宿主按面板配置决定。
+.OUTPUTS
+    hashtable：ok / id / responsePath / error
+#>
+function New-SnipTextVisionRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [string]$TargetLang = ''
+    )
+    $baseDir = [string]$global:SnipStats.BaseDir
+    $requests = Join-Path $baseDir 'requests'
+    $responses = Join-Path $baseDir 'responses'
+    Ensure-SnipDir $requests
+    Ensure-SnipDir $responses
+    $id = [Guid]::NewGuid().ToString('N')
+    try {
+        $payload = [ordered]@{ id = $id; kind = 'translateText'; text = $Text }
+        if ($TargetLang -ne '') { $payload['targetLang'] = $TargetLang }
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText((Join-Path $requests ($id + '.json')), ($payload | ConvertTo-Json -Compress), $utf8)
+    } catch {
+        return @{ ok = $false; error = ('提交翻译请求失败：' + $_.Exception.Message) }
+    }
+    return @{ ok = $true; id = $id; responsePath = (Join-Path $responses ($id + '.json')) }
+}
+
+<#
+.SYNOPSIS
     读取宿主回写的识别/翻译结果。
 .DESCRIPTION
     文件不存在或尚不可解析时返回 $null（调用方下一轮再试）。

@@ -8,10 +8,10 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve as resolvePath, sep } from 'node:path'
 import type { WinSnipHeartbeat, WinSnipSettings, WinSnipStatus, WinSnipVisionRequest, WinSnipVisionResponse } from './protocol.ts'
-import { isWinSnipSupported, parseHotkey } from './protocol.ts'
+import { isWinSnipSupported, parseHotkey, WIN_SNIP_TEXT_LIMIT } from './protocol.ts'
 import { ensureWinSnipPaths, resolveNativeScript, winSnipPaths, type WinSnipPaths } from './paths.ts'
 import { resolveSaveDir, clampClipboardDays } from './store.ts'
-import type { WinSnipVision } from './vision.ts'
+import type { WinSnipVision, WinSnipVisionResult } from './vision.ts'
 
 /** 轮询请求队列的间隔（毫秒）。 */
 const POLL_INTERVAL_MS = 200
@@ -103,6 +103,12 @@ export class WinSnipAssistant {
       '-HotkeyMenu', settings.hotkeyMenu ? '1' : '0',
       '-ClipboardEnabled', settings.clipboardEnabled ? '1' : '0',
       '-ClipboardDays', String(clampClipboardDays(settings.clipboardDays)),
+      // 选区翻译（2026-10-22）：热键先翻译鼠标选中的文字，没选区才回到选择框/截图。
+      '-SelectionTranslate', settings.translateSelection ? '1' : '0',
+      // UIA 读不到选区时是否允许用 Ctrl+C 兜底（原生侧会跳过资源管理器那几类窗口）。
+      '-SelectionCopyFallback', settings.selectionCopyFallback ? '1' : '0',
+      // 翻译方向由面板配置决定：原生侧不带这个参数就只能靠宿主的默认值。
+      '-TranslateTarget', settings.translateTarget,
     ]
     try {
       this.child = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore' })
@@ -299,19 +305,30 @@ export class WinSnipAssistant {
     }
     const responsePath = join(paths.responses, id + '.json')
     try {
-      const imagePath = this.assertInsideRequests(paths, request.imagePath)
-      if (request.kind !== 'ocr' && request.kind !== 'translate') throw new Error('未知的处理类型。')
-      // 直接走 DSH 的模型服务：把图片字节登记为附件后交给当前默认模型，
-      // 用户不需要为识别/翻译单独配置任何 Key。
-      const imageBytes = readFileSync(imagePath)
+      if (request.kind !== 'ocr' && request.kind !== 'translate' && request.kind !== 'translateText') {
+        throw new Error('未知的处理类型。')
+      }
       const settings = this.deps.settings()
-      const result = await this.deps.vision.run({
-        kind: request.kind,
-        imageBytes,
-        ...(request.targetLang !== undefined ? { targetLang: request.targetLang } : {}),
-        // 面板里指定的识别模型；留空则自动挑"快且能看图"的模型。
-        ...(settings.ocrModel !== '' ? { model: settings.ocrModel } : {}),
-      })
+      // 翻译方向：原生侧显式给了就用它，没给就落回面板配置（老助手不带这个字段）。
+      const targetLang = request.targetLang ?? settings.translateTarget
+      // 面板里指定的识别模型；留空则自动挑"快且能看图"的模型。
+      const modelPick = settings.ocrModel !== '' ? { model: settings.ocrModel } : {}
+      let result: WinSnipVisionResult
+      if (request.kind === 'translateText') {
+        // 选区翻译：只有一段文字，没有图片，也不需要附件服务。
+        const text = typeof request.text === 'string' ? request.text : ''
+        if (text.trim() === '') throw new Error('请求缺少待翻译的文本。')
+        if (text.length > WIN_SNIP_TEXT_LIMIT) {
+          throw new Error('选区太长（' + String(text.length) + ' 字），上限 ' + String(WIN_SNIP_TEXT_LIMIT) + ' 字，请分段翻译。')
+        }
+        result = await this.deps.vision.translateText({ text, targetLang, ...modelPick })
+      } else {
+        // 截图识别/翻译：把图片字节登记为附件后交给当前默认模型，
+        // 用户不需要为识别/翻译单独配置任何 Key。
+        const imagePath = this.assertInsideRequests(paths, request.imagePath)
+        const imageBytes = readFileSync(imagePath)
+        result = await this.deps.vision.run({ kind: request.kind, imageBytes, targetLang, ...modelPick })
+      }
       const response: WinSnipVisionResponse = {
         id,
         ok: true,

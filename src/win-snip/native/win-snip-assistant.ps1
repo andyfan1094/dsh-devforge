@@ -14,6 +14,12 @@ param(
     [string]$CopyOnFinish = '1',
     # 热键后先弹功能选择框（1）还是直接截图（0）；由宿主按面板配置传入。
     [string]$HotkeyMenu = '1',
+    # 热键优先翻译鼠标选中的文字（1/0）：有选区就翻译，没选区才走选择框/截图。
+    [string]$SelectionTranslate = '1',
+    # UIA 读不到选区时是否允许用 Ctrl+C 兜底（1/0）。
+    [string]$SelectionCopyFallback = '1',
+    # 翻译目标语言（auto / zh / en），随文本翻译请求带给宿主。
+    [string]$TranslateTarget = 'auto',
     # 是否后台记录剪贴板历史（1/0）。
     [string]$ClipboardEnabled = '1',
     # 剪贴板历史保留天数（宿主已夹取到 1–90）。
@@ -52,6 +58,8 @@ Ensure-SnipDir (Join-Path $BaseDir 'logs')
 . (Join-Path $scriptDir 'win-snip-clipboard-watch.ps1')
 . (Join-Path $scriptDir 'win-snip-launcher.ps1')
 . (Join-Path $scriptDir 'win-snip-clipboard-panel.ps1')
+# 选区翻译（0.67.0）：必须在 result/theme/common 之后加载——它要复用结果窗与主题。
+. (Join-Path $scriptDir 'win-snip-selection.ps1')
 
 $copyToClipboard = ($CopyOnFinish -ne '0')
 $hotkeyId = 1
@@ -59,6 +67,10 @@ $script:LastCaptureAt = [DateTime]::MinValue
 # 热键行为：true = 先弹「截图 / 剪贴板」选择框；false = 保持老行为直接进遮罩。
 $script:SnipMenuMode = ($HotkeyMenu -ne '0')
 $global:SnipStats.ClipboardDays = $ClipboardDays
+# 选区翻译（2026-10-22）：热键先看有没有文字选区，有就翻译，没有才走上面的老路径。
+$script:SnipTranslateSelectionOn = ($SelectionTranslate -ne '0')
+$script:SnipSelectionCopyFallbackOn = ($SelectionCopyFallback -ne '0')
+$script:SnipTranslateTarget = $TranslateTarget
 
 # 先装异常兜底：之后任何回调出问题都只记日志，不再弹 .NET 崩溃框并结束进程。
 Enable-SnipCrashGuard
@@ -134,6 +146,58 @@ function Invoke-SnipClipboardPanel {
         $stats.State = 'idle'
         Update-SnipHeartbeat
     }
+}
+
+<#
+.SYNOPSIS
+    热键优先分支：当前窗口有文字选区就翻译它。
+.DESCRIPTION
+    返回 $true 表示"这次热键已经被选区翻译用掉了"，调用方不要再弹选择框/截图；
+    返回 $false 表示没有选区（或开关关着），按老路径继续。
+    读选区失败一律当作"没有选区"：用户按下热键的意图是拿到截图/菜单，
+    不能因为 UIA 抛了异常就什么都不发生。
+#>
+function Invoke-SnipSelectionHotkey {
+    if (-not $script:SnipTranslateSelectionOn) { return $false }
+    $stats = $global:SnipStats
+    if ($stats.State -ne 'idle') { return $false }
+
+    # 读选区期间就置成 translate：兜底会补一次 Ctrl+C，
+    # 剪贴板采集器看到这个状态就不会把工具自己的复制记进历史。
+    $stats.State = 'translate'
+    $text = ''
+    try {
+        $text = Get-SnipSelectedTextAuto -AllowCopy $script:SnipSelectionCopyFallbackOn
+    } catch {
+        Write-SnipLog ('选区读取失败（按无选区处理）：' + $_.Exception.Message)
+        $text = ''
+    }
+    if ([string]::IsNullOrEmpty($text)) {
+        # 没有选区：状态回到 idle，交给调用方走原来的选择框/截图。
+        # 顺手记一行窗口信息——用户反馈"选了却没翻译"时，能一眼看出是
+        # 该窗口不给 UIA 选区，还是兜底被安全策略（资源管理器类窗口）跳过了。
+        try {
+            Write-SnipLog ('未读到选区，走原路径：前台类名=' + [SnipSelection]::ForegroundClass() +
+                ' 进程=' + [SnipSelection]::ForegroundProcessName() +
+                ' 兜底开关=' + $script:SnipSelectionCopyFallbackOn)
+        } catch { }
+        $stats.State = 'idle'
+        return $false
+    }
+
+    Write-SnipLog ('热键命中选区：' + $text.Length + ' 字，直接翻译')
+    $stats.Error = $null
+    Update-SnipHeartbeat
+    try {
+        Invoke-SnipSelectionTranslate -Text $text -TargetLang $script:SnipTranslateTarget
+    } catch {
+        $stats.Error = '选区翻译失败：' + $_.Exception.Message
+        Write-SnipLog $stats.Error
+    } finally {
+        $stats.State = 'idle'
+        Update-SnipHeartbeat
+    }
+    return $true
 }
 
 <#
@@ -293,9 +357,16 @@ try {
         }
         if ($hits -gt 0 -or $hookHit) {
             Write-SnipLog ('收到热键：' + $HotkeyLabel)
-            if ($script:SnipMenuMode) { Invoke-SnipMenu } else { Invoke-SnipCapture }
-            # 选择框/截图期间钩子可能又累计了命中，丢弃掉，避免关掉窗口立刻又弹一次。
+            # 先看有没有文字选区：有就翻译并结束，没有才走原来的选择框/截图。
+            $handled = $false
+            try { $handled = Invoke-SnipSelectionHotkey } catch { $handled = $false }
+            if (-not $handled) {
+                if ($script:SnipMenuMode) { Invoke-SnipMenu } else { Invoke-SnipCapture }
+            }
+            # 选择框/截图/翻译期间钩子与消息队列可能又累计了命中，丢弃掉，
+            # 避免关掉窗口立刻又弹一次。
             if ($hookInstalled) { try { [void][WinSnipHook]::ConsumeHit() } catch { } }
+            [void](Receive-SnipHotkeyHits)
         }
 
         Invoke-SnipCommands

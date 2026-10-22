@@ -1,7 +1,8 @@
 ﻿# win-snip-clipboard-panel.ps1 —— 剪贴板历史面板
 #
-# 交互（2026-10-19 引入）：
-#   左侧列表（时间倒序）→ 右侧预览 → Enter / 双击复制回剪贴板，Delete 删除，Ctrl+F 搜索，Esc 关闭。
+# 交互（2026-10-19 引入；2026-10-22 改成"复制即关窗"）：
+#   左侧列表（时间倒序）→ 右侧预览 → Enter / 双击 / 「复制」按钮：复制回剪贴板并关闭面板，
+#   Delete 删除，Ctrl+F 搜索，Esc 关闭。复制失败时不关窗，留在原地显示原因。
 #
 # 为什么不只是"看一眼"：
 #   辉哥要的是"最近 15 天复制的所有内容"，所以面板里必须能再次复制、能删掉敏感条目，
@@ -544,6 +545,17 @@ function Show-SnipClipboardPanel {
         }
         $st.NoticeUntil = (Get-Date).AddSeconds(2)
         & $script:SnipClipboardPanelUpdateStatus
+        # 复制成功就等于这次面板任务完成，直接关窗把焦点还给用户（双击 / 复制按钮 / Enter 同一条路径）；
+        # 失败时留在原地，否则用户连失败原因都看不到。
+        if ($ok) {
+            try {
+                if ($null -ne $script:SnipClipboardPanelState -and $null -ne $script:SnipClipboardPanelState.Form) {
+                    $script:SnipClipboardPanelState.Form.Close()
+                }
+            } catch {
+                Write-SnipLog ('复制后关闭剪贴板面板失败：' + $_.Exception.Message)
+            }
+        }
     }
     $script:SnipClipboardPanelCopySelected = $copySelected
 

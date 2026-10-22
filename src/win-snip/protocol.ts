@@ -51,6 +51,21 @@ export interface WinSnipSettings {
    * 习惯直达的用户可以在面板里关掉，回到原行为。
    */
   hotkeyMenu: boolean
+  /**
+   * 热键优先翻译鼠标选中的文字（2026-10-22 辉哥需求）。
+   *
+   * 按下热键时先探测当前窗口里有没有文字选区：有就直接翻译选区并弹结果窗，
+   * 没有才回到「功能选择框 / 截图」老路径。关掉后热键行为完全回到从前。
+   */
+  translateSelection: boolean
+  /**
+   * 选区探测的兜底手段：UI Automation 读不到时，模拟 Ctrl+C 取选中文字。
+   *
+   * 代价是会临时读写剪贴板（取完还原原内容），且在「资源管理器里选中文件」时
+   * 会把文件放进剪贴板，所以原生侧对那几类窗口直接跳过。默认开：
+   * 微信、终端、部分 Electron 应用只吃这条路，否则用户会觉得"选了却没反应"。
+   */
+  selectionCopyFallback: boolean
   /** 后台记录剪贴板历史（只存本机，按天数自动清理）。 */
   clipboardEnabled: boolean
   /** 剪贴板历史保留天数，取值 1–90，越界在合并补丁时夹取到边界。 */
@@ -118,13 +133,23 @@ export interface WinSnipHeartbeat {
 export interface WinSnipVisionRequest {
   /** 请求 id（与文件名一致，宿主原样回写响应）。 */
   id: string
-  /** 处理类型：识别文字 或 翻译。 */
-  kind: 'ocr' | 'translate'
-  /** 被处理图片的绝对路径（必须位于 requests 目录内）。 */
-  imagePath: string
-  /** 翻译目标语言（kind=translate 时使用）。 */
+  /**
+   * 处理类型：
+   * - `ocr` 识别图内文字；
+   * - `translate` 识别图内文字并翻译；
+   * - `translateText` 直接翻译一段文本（鼠标选中的文字，不走图片）。
+   */
+  kind: 'ocr' | 'translate' | 'translateText'
+  /** 被处理图片的绝对路径（必须位于 requests 目录内）；kind=translateText 时缺省。 */
+  imagePath?: string
+  /** 待翻译文本（kind=translateText 时必填，长度由宿主侧再兜一次上限）。 */
+  text?: string
+  /** 翻译目标语言（kind=translate / translateText 时使用）。 */
   targetLang?: WinSnipTranslateTarget
 }
+
+/** 单次请求允许翻译的文本上限（字符数）：再长就是整篇文档了，该走会话里的模型。 */
+export const WIN_SNIP_TEXT_LIMIT = 12000
 
 /** 宿主回给原生助手的处理结果。 */
 export interface WinSnipVisionResponseExtras {

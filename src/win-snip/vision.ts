@@ -70,6 +70,17 @@ function describeTarget(target: WinSnipTranslateTarget): string {
 }
 
 /**
+ * 文本翻译的目标语言描述（不含"图中"字样）。
+ *
+ * 选区翻译吃的是纯文字，提示词里再写"图中是中文"会让模型困惑。
+ */
+function describeTextTarget(target: WinSnipTranslateTarget): string {
+  if (target === 'zh') return '简体中文'
+  if (target === 'en') return '英文'
+  return '中文或英文（原文是中文就译成英文，原文是英文就译成中文）'
+}
+
+/**
  * 识别提示词：只让模型"认字 + 分格"，对齐交给渲染层。
  *
  * 关键是禁止模型自己用空格对齐——实测那样会出现某几行多一个空格、
@@ -102,6 +113,23 @@ function translatePrompt(target: WinSnipTranslateTarget): string {
     '{"type":"text","text":"一行文字","indent":0} / {"type":"table","rows":[["列1","列2"]]} / {"type":"list","marker":"•","indent":0,"text":"条目"}',
     '要求：text 与 translation 两个 lines 的条目数量与顺序一一对应；',
     '表格不要自己用空格对齐或加竖线，单元格各自独立；缩进用 indent 表示。',
+  ].join('\n')
+}
+
+/**
+ * 纯文本翻译提示词（鼠标选区翻译用）。
+ *
+ * 与图片翻译的区别：不要求 JSON（没有排版要对齐），只要一段干净译文；
+ * 换行与段落结构必须保留，否则用户对不上原句。
+ */
+function translateTextPrompt(target: WinSnipTranslateTarget): string {
+  return [
+    '把下面这段文字翻译成' + describeTextTarget(target) + '。',
+    '要求：',
+    '1. 只输出译文本身，不要输出原文、不要解释、不要加引号或代码块标记；',
+    '2. 保留原有的换行与段落顺序，不要把多段合成一段；',
+    '3. 专有名词、术语、代码片段与数字保持原样；',
+    '4. 如果这段文字本身已经是目标语言，就原样返回，不要改写。',
   ].join('\n')
 }
 
@@ -290,27 +318,97 @@ export class WinSnipVision {
     const ref = await attachments.saveImage({ data: request.imageBytes, mediaType: 'image/png', name: 'win-snip.png' })
     const prompt = request.kind === 'ocr' ? OCR_PROMPT : translatePrompt(request.targetLang ?? 'auto')
 
+    const { raw, elapsedMs } = await this.streamOnce({
+      llm,
+      target,
+      prompt,
+      tag: request.kind,
+      attachment: ref,
+    })
+    if (raw.trim() === '') throw new Error('模型「' + target.model + '」没有返回内容（上游偶发空响应），请重试一次或换一个识别模型。')
+
+    if (request.kind === 'ocr') {
+      // 优先按结构化渲染（列一定对齐）；模型没照结构返回时退回纯文本归一化。
+      const document = parseLayoutDocument(raw)
+      const text = document !== undefined ? renderLayout(document) : normalizeLayout(stripFence(raw))
+      if (text.trim() === '') throw new Error('模型「' + target.model + '」没有识别出文字。')
+      return { text, model: target.model, elapsedMs }
+    }
+    return { ...parseTranslateOutput(raw), model: target.model, elapsedMs }
+  }
+
+  /**
+   * 翻译一段纯文本（鼠标选中的文字）。
+   *
+   * 与 run() 的区别：不登记任何图片附件，提示词只要译文，所以便宜也快，
+   * 结果也不做版面重排（原样保留换行）。
+   *
+   * @param request 待翻译文本、目标语言与可选模型 id。
+   * @throws Error 中文错误信息（已脱敏），由调用方写回响应文件。
+   */
+  async translateText(request: {
+    text: string
+    targetLang?: WinSnipTranslateTarget
+    model?: string
+  }): Promise<WinSnipVisionResult> {
+    const source = request.text.replace(/\r\n?/g, '\n').trim()
+    if (source === '') throw new Error('没有可翻译的文字。')
+    const { target, llm } = await this.pickTarget(request.model ?? '')
+
+    // 原文与提示词分两条 text block：模型对"指令"和"正文"的分界更清楚。
+    const { raw, elapsedMs } = await this.streamOnce({
+      llm,
+      target,
+      prompt: translateTextPrompt(request.targetLang ?? 'auto'),
+      tag: 'translate-text',
+      body: source,
+    })
+    if (raw.trim() === '') throw new Error('模型「' + target.model + '」没有返回内容（上游偶发空响应），请重试一次。')
+
+    const translation = normalizeLayout(stripFence(raw))
+    if (translation === '') throw new Error('模型「' + target.model + '」没有返回译文。')
+    // 原文一并回传：结果窗要左右对照，比只给译文更好用。
+    return { text: source, translation, model: target.model, elapsedMs }
+  }
+
+  /**
+   * 跑一次模型流式调用，拼出完整文本。
+   *
+   * @param options 目标模型、提示词、可选的图片附件或正文。
+   */
+  private async streamOnce(options: {
+    llm: LlmServiceLike
+    target: WinSnipModelTarget
+    prompt: string
+    tag: string
+    /** 截图路径用的图片附件。 */
+    attachment?: unknown
+    /** 纯文本路径用的正文（与提示词分成两条 text block）。 */
+    body?: string
+  }): Promise<{ raw: string; elapsedMs: number }> {
+    const content: Array<Record<string, unknown>> = [{ type: 'text', text: options.prompt }]
+    if (options.body !== undefined) content.push({ type: 'text', text: options.body })
+    if (options.attachment !== undefined) content.push({ type: 'image', attachment: options.attachment })
+
     const controller = new AbortController()
     const timer = setTimeout(() => { controller.abort() }, TIMEOUT_MS)
     const started = Date.now()
     let raw = ''
     try {
-      const stream = llm.stream({
-        provider: target.provider,
-        model: target.model,
+      const stream = options.llm.stream({
+        provider: options.target.provider,
+        model: options.target.model,
         temperature: 0,
-        // 识别是"看一眼抄下来"，不需要长篇输出；限长也避免模型啰嗦解释。
+        // 识别是"看一眼抄下来"，翻译是"给一段译文"，都不需要长篇输出；
+        // 限长也避免模型啰嗦解释。
         maxTokens: 4096,
         signal: controller.signal,
         messages: [{
           // DSH 的 Message 是四件套（id/role/content/source），少一个都会被适配器拒掉。
-          id: 'win-snip-' + request.kind + '-' + started.toString(36),
+          id: 'win-snip-' + options.tag + '-' + started.toString(36),
           role: 'user',
           source: { kind: 'user' },
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image', attachment: ref },
-          ],
+          content,
         }],
       })
       for await (const chunk of stream) {
@@ -326,16 +424,6 @@ export class WinSnipVision {
     } finally {
       clearTimeout(timer)
     }
-    const elapsedMs = Date.now() - started
-    if (raw.trim() === '') throw new Error('模型「' + target.model + '」没有返回内容（上游偶发空响应），请重试一次或换一个识别模型。')
-
-    if (request.kind === 'ocr') {
-      // 优先按结构化渲染（列一定对齐）；模型没照结构返回时退回纯文本归一化。
-      const document = parseLayoutDocument(raw)
-      const text = document !== undefined ? renderLayout(document) : normalizeLayout(stripFence(raw))
-      if (text.trim() === '') throw new Error('模型「' + target.model + '」没有识别出文字。')
-      return { text, model: target.model, elapsedMs }
-    }
-    return { ...parseTranslateOutput(raw), model: target.model, elapsedMs }
+    return { raw, elapsedMs: Date.now() - started }
   }
 }

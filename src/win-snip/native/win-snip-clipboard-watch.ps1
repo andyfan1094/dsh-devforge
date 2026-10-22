@@ -118,6 +118,10 @@ function Update-SnipClipboardWatcher {
         if (-not $Force -and $sequence -eq $state.LastSequence) { return }
         $state.LastSequence = $sequence
 
+        # 选区翻译自己会补一次 Ctrl+C：那次复制不是用户手动的动作，
+        # 只更新序列号、不记历史，免得每翻译一次就在剪贴板历史里留一条噪声。
+        if (-not $Force -and [string]$global:SnipStats.State -eq 'translate') { return }
+
         $entry = Read-SnipClipboardSnapshot
         if ($null -eq $entry) { return }
         if ($state.Hashes.Contains([string]$entry.hash)) { return }

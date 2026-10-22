@@ -74,3 +74,21 @@ test('路由常量：剪贴板路由路径固定，面板与宿主逐字一致',
   assert.equal(WIN_SNIP_API.capture, '/api/dsh-devforge/win-snip/capture')
   assert.equal(WIN_SNIP_API.settings, '/api/dsh-devforge/win-snip/settings')
 })
+
+test('选区翻译开关：默认开、补丁能关、脏值忽略', () => {
+  assert.equal(DEFAULT_WIN_SNIP_SETTINGS.translateSelection, true)
+  assert.equal(DEFAULT_WIN_SNIP_SETTINGS.selectionCopyFallback, true)
+  const off = mergeWinSnipSettings(DEFAULT_WIN_SNIP_SETTINGS, {
+    translateSelection: false,
+    selectionCopyFallback: false,
+  })
+  assert.equal(off.translateSelection, false)
+  assert.equal(off.selectionCopyFallback, false)
+  // 只关一个开关时另一个不受影响（两个开关是独立语义）。
+  const partial = mergeWinSnipSettings(off, { translateSelection: true })
+  assert.equal(partial.translateSelection, true)
+  assert.equal(partial.selectionCopyFallback, false)
+  // 字符串冒充布尔必须被忽略，保留原值。
+  const dirty = mergeWinSnipSettings(off, { translateSelection: 'yes' as unknown as boolean })
+  assert.equal(dirty.translateSelection, false)
+})
