@@ -22,6 +22,7 @@ import { PROJECTS_API } from './projects/protocol.ts'
 import { collectTokenUsageShared } from './usage/tokens.ts'
 import { createRequire } from 'node:module'
 import { probeWxAuto, readWechatSnapshot } from './wechat/data.ts'
+import { getWechatBot } from './wechat/bot.ts'
 import { isRunning as isWxAutoRunning, lastStartError as wxAutoLastError, launchedAt as wxAutoLaunchedAt, pid as wxAutoPid, startWxAuto, stopWxAuto } from './wechat/service.ts'
 
 /** 插件版本号（供面板标题展示）。 */
@@ -567,6 +568,29 @@ export function makeRoutes(
           writeJson(res, 200, stopWxAuto())
           return
         }
+        writeJson(res, 400, { ok: false, error: 'action 只能是 start / stop' })
+      },
+    },
+    {
+      // AI 自动回复开关与状态。
+      kind: 'exact',
+      path: '/api/dsh-devforge/wechat/bot',
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        const bot = getWechatBot()
+        if (req.method === 'GET') {
+          writeJson(res, 200, {
+            ok: true,
+            bot: bot?.status() ?? { enabled: false, replied: 0, pending: 0, lastError: '引擎未初始化', lastActivity: 0 },
+          })
+          return
+        }
+        if (req.method !== 'POST') { writeJson(res, 405, { ok: false, error: 'GET/POST only' }); return }
+        if (bot === null) { writeJson(res, 503, { ok: false, error: '引擎未初始化' }); return }
+        const body2 = await readJsonBody(req)
+        const action2 = body2 && typeof body2.action === 'string' ? body2.action : ''
+        if (action2 === 'start') { bot.start(); writeJson(res, 200, { ok: true, bot: bot.status() }); return }
+        if (action2 === 'stop') { bot.stop(); writeJson(res, 200, { ok: true, bot: bot.status() }); return }
         writeJson(res, 400, { ok: false, error: 'action 只能是 start / stop' })
       },
     },

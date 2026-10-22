@@ -76,6 +76,7 @@ import { DouyinReceiverProcess } from './douyin-live/receiver.ts'
 import { makeDouyinLiveRoutes } from './douyin-live/routes.ts'
 import { douyinLiveStore } from './douyin-live/store.ts'
 import { disposeWxAuto, startWxAuto } from './wechat/service.ts'
+import { setWechatBot, WechatBot } from './wechat/bot.ts'
 import { SiliconFlowService, type SiliconFlowCapabilityConfig } from './siliconflow/service.ts'
 import { makeSiliconFlowRoutes } from './siliconflow/routes.ts'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -1739,6 +1740,13 @@ const modagentaiService = new ModagentaiService(ctx, openAiService)
       if (!result.ok) console.warn('[dsh-devforge] wx-auto 启动失败：', result.message)
     })
     ctx.effect(() => () => { disposeWxAuto() }, 'dsh-devforge: wechat-console')
+  })
+
+  // 微信 AI 自动回复：与飞书通道同一思路（会话复用 + assistant/message 取回复）。
+  safeActivate(ctx, '微信 AI 自动回复', () => {
+    const bot = new WechatBot(ctx)
+    setWechatBot(bot)
+    ctx.effect(() => () => { bot.dispose(); setWechatBot(null) }, 'dsh-devforge: wechat-bot')
   })
 
   // 导出围栏工具供测试（非公开 API）

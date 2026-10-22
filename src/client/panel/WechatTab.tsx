@@ -1,13 +1,12 @@
 /**
  * 微信面板 —— 天工造梦操作台「微信」页签。
  *
- * 数据来自 wx-auto 控制台落盘的 SQLite（/api/dsh-devforge/wechat/snapshot），
- * 发送经同源代理转发到 wx-auto（/api/dsh-devforge/wechat/send），本页不直接连微信。
+ * 三块能力：
+ * 1. 会话浏览：左栏会话（头像 + 名字 + 预览），右栏消息流；
+ * 2. 手动发送：底部输入框，回车即发到当前会话；
+ * 3. AI 自动回复：顶部开关，打开后微信收到私聊消息由模型自动应答。
  *
- * 交互契约：
- * - 左侧会话列表可点选，右侧只看该会话的消息；
- * - 顶部显示 wx-auto 与微信进程的实时状态（在线 / 离线 / PID）；
- * - 底部输入框发送消息，发送期间禁用并给出结果提示。
+ * 数据与动作全部走同源路由（/api/dsh-devforge/wechat/*），不直连微信进程。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import css from './panel.module.css'
@@ -36,22 +35,35 @@ interface Snapshot {
   sessions: Array<{ session: string; name: string; lastText: string; lastTs: number; isGroup: boolean }>
 }
 
-/** 时间戳 → MM-DD HH:mm。 */
+interface BotState {
+  enabled: boolean
+  replied: number
+  pending: number
+  lastError: string
+  lastActivity: number
+}
+
+/** 时间戳 → 今天 HH:mm / MM-DD HH:mm。 */
 function fmtTime(ts: number): string {
   if (!ts) return ''
   const d = new Date(ts * 1000)
+  const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (d.toDateString() === now.toDateString()) return hm
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
 }
 
-/** 长文本压缩成单行预览。 */
-function preview(text: string, max = 32): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > max ? flat.slice(0, max) + '…' : flat
+/** 首字母/首字，用作头像。 */
+function initial(name: string): string {
+  const trimmed = name.trim()
+  if (trimmed === '') return '?'
+  return /^[A-Za-z]/.test(trimmed) ? trimmed[0]!.toUpperCase() : trimmed[0]!
 }
 
 export function WechatTab() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  const [bot, setBot] = useState<BotState | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
@@ -59,20 +71,27 @@ export function WechatTab() {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [busyService, setBusyService] = useState(false)
+  const [busyBot, setBusyBot] = useState(false)
+  const [search, setSearch] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const res = await fetch('/api/dsh-devforge/wechat/snapshot', { cache: 'no-store' })
-      const data = (await res.json()) as { ok: boolean; snapshot?: Snapshot; error?: string }
-      if (!data.ok || !data.snapshot) {
-        setError(data.error ?? '读取失败')
+      const [snapRes, botRes] = await Promise.all([
+        fetch('/api/dsh-devforge/wechat/snapshot', { cache: 'no-store' }),
+        fetch('/api/dsh-devforge/wechat/bot', { cache: 'no-store' }),
+      ])
+      const snapData = (await snapRes.json()) as { ok: boolean; snapshot?: Snapshot; error?: string }
+      const botData = (await botRes.json()) as { ok: boolean; bot?: BotState }
+      if (!snapData.ok || !snapData.snapshot) {
+        setError(snapData.error ?? '读取失败')
         return
       }
-      const snap = data.snapshot
+      const snap = snapData.snapshot
       setSnapshot(snap)
       setError(snap.ok ? '' : (snap.error ?? ''))
+      if (botData.ok && botData.bot) setBot(botData.bot)
       setSelected((current) => {
         if (current !== '' && snap.sessions.some((s) => s.session === current)) return current
         return snap.sessions[0]?.session ?? ''
@@ -86,13 +105,18 @@ export function WechatTab() {
 
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => {
-      void load(true)
-    }, 6000)
+    const timer = window.setInterval(() => { void load(true) }, 6000)
     return () => window.clearInterval(timer)
   }, [load])
 
-  /** 当前会话的消息。 */
+  /** 按搜索词过滤会话。 */
+  const sessions = useMemo(() => {
+    if (!snapshot) return []
+    const q = search.trim().toLowerCase()
+    if (q === '') return snapshot.sessions
+    return snapshot.sessions.filter((s) => s.name.toLowerCase().includes(q) || s.lastText.toLowerCase().includes(q))
+  }, [snapshot, search])
+
   const messages = useMemo(() => {
     if (!snapshot) return []
     return snapshot.messages.filter((m) => m.session === selected)
@@ -100,6 +124,7 @@ export function WechatTab() {
 
   const current = snapshot?.sessions.find((s) => s.session === selected)
 
+  /** 发送消息。 */
   const send = useCallback(async () => {
     const text = draft.trim()
     if (text === '' || sending) return
@@ -127,11 +152,7 @@ export function WechatTab() {
     }
   }, [draft, selected, sending, load])
 
-  useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
-  }, [messages.length])
-
-  /** 手动启停插件托管的 wx-auto 控制台。 */
+  /** 启停 wx-auto 控制台。 */
   const controlService = useCallback(async (action: 'start' | 'stop') => {
     setBusyService(true)
     setNotice(action === 'start' ? '正在启动控制台…' : '正在停止…')
@@ -143,7 +164,7 @@ export function WechatTab() {
       })
       const data = (await res.json()) as { ok: boolean; message?: string; error?: string }
       setNotice(data.message ?? data.error ?? (data.ok ? '完成' : '操作失败'))
-      window.setTimeout(() => void load(true), 800)
+      window.setTimeout(() => void load(true), 1000)
     } catch (e) {
       setNotice('操作失败：' + (e instanceof Error ? e.message : String(e)))
     } finally {
@@ -152,37 +173,60 @@ export function WechatTab() {
     }
   }, [load])
 
+  /** 启停 AI 自动回复。 */
+  const controlBot = useCallback(async (action: 'start' | 'stop') => {
+    setBusyBot(true)
+    setNotice(action === 'start' ? '正在开启 AI 自动回复…' : '正在关闭…')
+    try {
+      const res = await fetch('/api/dsh-devforge/wechat/bot', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const data = (await res.json()) as { ok: boolean; bot?: BotState; error?: string }
+      if (data.ok && data.bot) setBot(data.bot)
+      setNotice(data.ok ? (action === 'start' ? 'AI 自动回复已开启（仅私聊）' : 'AI 自动回复已关闭') : (data.error ?? '操作失败'))
+    } catch (e) {
+      setNotice('操作失败：' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusyBot(false)
+      window.setTimeout(() => setNotice(''), 5000)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
+  }, [messages.length, selected])
+
   return (
-    <div>
-      {/* 顶部：状态 + 刷新 */}
-      <div className={css['toolbar']}>
+    <div style={{ display: 'grid', gap: 12 }}>
+      {/* 顶部状态条 */}
+      <div className={css['toolbar']} style={{ flexWrap: 'wrap', gap: 8 }}>
         <span className={css['connectionDot']} data-online={snapshot?.online ? '' : undefined} />
-        <strong>{snapshot?.online ? '控制台在线' : '控制台离线'}</strong>
-        <span className={css['mutedText']}>
-          {snapshot?.online
-            ? `插件托管 · 微信进程 ${snapshot.wechatPid ?? '—'} · 联系人 ${snapshot.stats.contacts} · 群 ${snapshot.stats.groups} · 消息 ${snapshot.stats.messages}`
-            : '插件内置托管未运行：点「启动控制台」由插件拉起，或检查微信客户端是否已登录'}
+        <strong style={{ fontSize: 13 }}>{snapshot?.online ? '在线' : '离线'}</strong>
+        <span className={css['mutedText']} style={{ fontSize: 12 }}>
+          {snapshot?.online ? `托管中 · 微信 ${snapshot.wechatPid ?? '—'} · ${snapshot.stats.contacts} 联系人 · ${snapshot.stats.messages} 消息` : '控制台未运行'}
         </span>
         <span className={css['toolbarSpacer']} />
-        {!snapshot?.online && (
-          <button
-            type="button"
-            className={css['primaryButton']}
-            onClick={() => void controlService('start')}
-            disabled={busyService}
-          >
-            {busyService ? '启动中…' : '启动控制台'}
-          </button>
+        {bot?.enabled ? (
+          <span className={css['badge']} title={`已回复 ${bot.replied} 条${bot.pending > 0 ? `，等待中 ${bot.pending}` : ''}`}>
+            AI 已开 · {bot.replied} 回复
+          </span>
+        ) : (
+          <span className={css['mutedText']} style={{ fontSize: 12 }}>AI 关</span>
         )}
-        {snapshot?.online && (
-          <button
-            type="button"
-            className={css['ghostButton']}
-            onClick={() => void controlService('stop')}
-            disabled={busyService}
-            title="只停插件托管的子进程，外部启动的控制台不受影响"
-          >
-            停止托管
+        <button
+          type="button"
+          className={bot?.enabled ? css['dangerButton'] : css['primaryButton']}
+          disabled={busyBot || !snapshot?.online}
+          onClick={() => void controlBot(bot?.enabled ? 'stop' : 'start')}
+          title="自动回复微信私聊消息（群聊不回复）"
+        >
+          {busyBot ? '…' : bot?.enabled ? '关 AI' : '开 AI'}
+        </button>
+        {!snapshot?.online && (
+          <button type="button" className={css['ghostButton']} disabled={busyService} onClick={() => void controlService('start')}>
+            启动控制台
           </button>
         )}
         <button type="button" className={css['ghostButton']} onClick={() => void load()} disabled={loading}>
@@ -192,71 +236,142 @@ export function WechatTab() {
 
       {(error !== '' || notice !== '') && <div className={css['banner']}>{error !== '' ? error : notice}</div>}
 
+      {bot?.lastError && bot.lastError !== '' && (
+        <div className={css['banner']} style={{ fontSize: 12 }}>AI 最近错误：{bot.lastError}</div>
+      )}
+
       {snapshot === null && <div className={css['empty']}>正在读取微信数据…</div>}
       {snapshot !== null && snapshot.sessions.length === 0 && (
-        <div className={css['empty']}>库里还没有消息。先启动 wx-auto 控制台并等微信收到一条消息。</div>
+        <div className={css['empty']}>库里还没有消息。等微信收到一条消息，或点「启动控制台」。</div>
       )}
 
       {snapshot !== null && snapshot.sessions.length > 0 && (
-        <div className={css['dbAdminLayout']}>
-          {/* 会话列表 */}
-          <aside className={css['dbAdminSidebar']}>
-            <div className={css['sectionTitle']}>会话</div>
-            <div style={{ display: 'grid', gap: 2, overflowY: 'auto', maxHeight: 520 }}>
-              {snapshot.sessions.map((s) => (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 280px) minmax(0, 1fr)', gap: 12, minHeight: 420 }}>
+          {/* 会话栏 */}
+          <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', gap: 8, alignContent: 'start' }}>
+            <input
+              className={css['input']}
+              placeholder="搜索会话"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div style={{ display: 'grid', gap: 2, overflowY: 'auto', maxHeight: 460, alignContent: 'start' }}>
+              {sessions.map((s) => (
                 <button
                   key={s.session}
                   type="button"
-                  className={css['dbAdminTableItem']}
-                  data-active={s.session === selected ? '' : undefined}
                   onClick={() => setSelected(s.session)}
-                  style={{ textAlign: 'left', width: '100%' }}
-                  title={s.lastText}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '32px 1fr auto',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '7px 8px',
+                    border: 'none',
+                    borderRadius: 7,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    background: s.session === selected ? 'rgba(120,180,255,.14)' : 'transparent',
+                    color: 'inherit',
+                  }}
                 >
-                  <span className={css['dbAdminTableName']}>{s.name}</span>
-                  <span className={css['dbAdminTableCount']}>{s.isGroup ? '群' : '私'}</span>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: 'grid',
+                      placeItems: 'center',
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: s.isGroup ? 'rgba(255,190,90,.20)' : 'rgba(120,180,255,.20)',
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {initial(s.name)}
+                  </span>
+                  <span style={{ display: 'grid', gap: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                    <span className={css['mutedText']} style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.lastText.replace(/\s+/g, ' ').slice(0, 28)}
+                    </span>
+                  </span>
+                  <span className={css['mutedText']} style={{ fontSize: 10 }}>{fmtTime(s.lastTs)}</span>
                 </button>
               ))}
             </div>
-          </aside>
+          </div>
 
           {/* 消息区 */}
-          <main className={css['dbAdminMain']}>
-            <div className={css['sectionHeader']}>
+          <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 8, minWidth: 0 }}>
+            <div className={css['sectionHeader']} style={{ margin: 0 }}>
               <span className={css['sectionTitle']}>{current?.name ?? '选择会话'}</span>
-              {current && <span className={css['sectionHint']}>{messages.length} 条消息</span>}
+              {current && <span className={css['sectionHint']}>{messages.length} 条</span>}
             </div>
 
-            <div ref={listRef} style={{ overflowY: 'auto', maxHeight: 420, display: 'grid', gap: 6, paddingRight: 4 }}>
+            <div
+              ref={listRef}
+              style={{
+                overflowY: 'auto',
+                maxHeight: 400,
+                display: 'grid',
+                gap: 8,
+                paddingRight: 6,
+                alignContent: 'start',
+              }}
+            >
               {messages.length === 0 && <div className={css['empty']}>这个会话还没有消息</div>}
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    display: 'grid',
-                    gap: 2,
-                    padding: '7px 10px',
-                    borderRadius: 6,
-                    background: m.kind === 'sent' ? 'rgba(120,180,255,.10)' : 'rgba(255,255,255,.04)',
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>{m.kind === 'sent' ? '我' : (m.sender_name || m.sender || '对方')}</span>
-                    <span className={css['mutedText']} style={{ marginLeft: 'auto', fontSize: 11 }}>{fmtTime(m.ts)}</span>
+              {messages.map((m) => {
+                const mine = m.kind === 'sent'
+                return (
+                  <div key={m.id} style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', gap: 8, alignItems: 'flex-end' }}>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        display: 'grid',
+                        placeItems: 'center',
+                        width: 26,
+                        height: 26,
+                        borderRadius: 7,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        flexShrink: 0,
+                        background: mine ? 'rgba(120,180,255,.25)' : 'rgba(255,255,255,.10)',
+                      }}
+                    >
+                      {initial(mine ? '我' : (m.sender_name || m.sender || '对方'))}
+                    </span>
+                    <div style={{ display: 'grid', gap: 3, maxWidth: '72%' }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', justifyContent: mine ? 'flex-end' : 'flex-start' }}>
+                        <span style={{ fontSize: 11, fontWeight: 600 }}>{mine ? '我' : (m.sender_name || m.sender || '对方')}</span>
+                        <span className={css['mutedText']} style={{ fontSize: 10 }}>{fmtTime(m.ts)}</span>
+                      </div>
+                      <div
+                        style={{
+                          padding: '7px 11px',
+                          borderRadius: 9,
+                          fontSize: 13,
+                          lineHeight: '1.55',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          background: mine ? 'rgba(120,180,255,.14)' : 'rgba(255,255,255,.06)',
+                          border: '1px solid ' + (mine ? 'rgba(120,180,255,.22)' : 'rgba(255,255,255,.07)'),
+                        }}
+                      >
+                        {m.text.length > 500 ? m.text.slice(0, 500) + '…' : m.text}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {m.text.length > 400 ? m.text.slice(0, 400) + '…' : m.text}
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
-            {/* 发送区 */}
-            <div className={css['toolbar']} style={{ marginTop: 10 }}>
+            {/* 输入区 */}
+            <div className={css['toolbar']} style={{ margin: 0 }}>
               <input
                 className={css['input']}
                 style={{ flex: 1 }}
-                placeholder={snapshot.online ? '输入消息，回车发送（发到当前选中会话）' : '控制台离线，无法发送'}
+                placeholder={snapshot.online ? '输入消息，回车发送' : '控制台离线，无法发送'}
                 value={draft}
                 disabled={!snapshot.online || sending}
                 onChange={(e) => setDraft(e.target.value)}
@@ -276,10 +391,7 @@ export function WechatTab() {
                 {sending ? '发送中…' : '发送'}
               </button>
             </div>
-            <div className={css['sectionHint']} style={{ marginTop: 6 }}>
-              发送会短暂抢占微信窗口焦点 · 库文件 {snapshot.dbPath}
-            </div>
-          </main>
+          </div>
         </div>
       )}
     </div>
